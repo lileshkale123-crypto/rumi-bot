@@ -1,0 +1,13 @@
+name = "rumi-bot"
+main = "src/index.ts"
+compatibility_date = "2024-09-25"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rumi-db"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+
+# Secrets (set these with `wrangler secret put NAME`, never write them here):
+#   TELEGRAM_BOT_TOKEN
+#   WEBHOOK_SECRET
