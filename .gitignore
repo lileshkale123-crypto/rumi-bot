@@ -1,4 +1,6 @@
-node_modules/
-.wrangler/
-.dev.vars
-*.log
+.env
+venv/
+__pycache__/
+*.bak
+*.bak[0-9]
+patch_*.py
