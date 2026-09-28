@@ -58,3 +58,12 @@ CREATE TABLE IF NOT EXISTS rob_cooldowns (
 CREATE INDEX IF NOT EXISTS idx_wallets_cash ON wallets(cash DESC);
 CREATE INDEX IF NOT EXISTS idx_wallets_xp ON wallets(xp DESC);
 CREATE INDEX IF NOT EXISTS idx_wallets_gems ON wallets(gems DESC);
+
+CREATE TABLE IF NOT EXISTS bluff_games (
+    id TEXT PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    wager BIGINT NOT NULL,
+    status TEXT NOT NULL,
+    player_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

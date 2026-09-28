@@ -65,10 +65,11 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌟 Features", callback_data="features")],
         [
-            InlineKeyboardButton("👥 Community", url="https://t.me/lordzenithx"),
+            InlineKeyboardButton("👥 Community", url="https://t.me/YPTLEGENDS"),
             InlineKeyboardButton("🎮 Games", callback_data="games"),
         ],
-        [InlineKeyboardButton("📣 Updates", url="https://t.me/ZENITHREIGNS")],
+        [InlineKeyboardButton("📣 Updates", url="https://t.me/ZENITHREIGNS"),
+         InlineKeyboardButton("\U0001F451 Owner", url="https://t.me/lordzenithx")],
         [InlineKeyboardButton("➕ Add Rumi to your group", url=f"https://t.me/{bot_username}?startgroup=true")],
     ])
 
@@ -277,4 +278,19 @@ def guard_already_active_card(shield_until: datetime) -> str:
         f"⏳ <b>Time left:</b> <code>{_time_remaining(shield_until)}</code>"
         f"</blockquote>\n\n"
         f"<i>No charge. You can raise a new Guard once this one ends.</i>"
+    )
+
+
+def games_card() -> str:
+    pct = int(config.BLUFF_TAX_PERCENT * 100)
+    return (
+        "\U0001F0CF <b>SHADOW BLUFF</b>\n"
+        "<i>A duel of nerve in the dark.</i>\n\n"
+        "<blockquote>"
+        "\U0001F3B4 Everyone is dealt 4 hidden cards. Every hand adds up to the same total, so luck never decides.\n"
+        "\u2694\uFE0F 4 rounds: play one card each round. The highest card takes all the points on the board.\n"
+        f"\U0001F451 Most points wins the pot ({pct}% fee)."
+        "</blockquote>\n\n"
+        "<b>Play in a group:</b> <code>/bluff 500 4</code>\n"
+        f"<i>amount, then players ({config.BLUFF_MIN_PLAYERS}-{config.BLUFF_MAX_PLAYERS})</i>"
     )

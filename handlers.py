@@ -22,6 +22,7 @@ COMMAND_LIST = [
     ("/guard", "Raise a protective Guard"),
     ("/rob", "Attempt a heist on someone"),
     ("/rankings", "View the Rankings"),
+    ("/bluff", "Play Shadow Bluff with friends"),
 ]
 
 CATEGORY_META = {
@@ -64,7 +65,7 @@ async def features_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def games_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
-    await update.effective_message.reply_text("🎮 Games aren't live yet — coming in a future update!")
+    await update.effective_message.reply_html(ui.games_card())
 
 
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
