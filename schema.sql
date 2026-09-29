@@ -67,3 +67,10 @@ CREATE TABLE IF NOT EXISTS bluff_games (
     player_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+
+CREATE TABLE IF NOT EXISTS rob_xp_log (
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rob_xp_log ON rob_xp_log(user_id, created_at DESC);

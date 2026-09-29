@@ -29,9 +29,9 @@ SHIELD_DURATION_HOURS = 24
 
 # /rob
 ROB_COOLDOWN_MINUTES = 0
-ROB_MIN_VICTIM_BALANCE = 200          # victim must have at least this to be robbable
+ROB_MIN_VICTIM_BALANCE = 3000          # victim must have at least this to be robbable
 ROB_MIN_AMOUNT = 50              # smallest amount you can try to rob
-ROB_SUCCESS_CHANCE = 0.45
+ROB_SUCCESS_CHANCE = 6 / 7
 ROB_STEAL_PERCENT_MIN = 0.10
 ROB_STEAL_PERCENT_MAX = 0.30
 ROB_TAX_PERCENT = 0.10        # taken from the robber's loot
@@ -52,3 +52,19 @@ BLUFF_ROUND_SECONDS = 60
 BLUFF_RESULT_SECONDS = 5
 BLUFF_HAND_SUM_MIN = 16
 BLUFF_HAND_SUM_MAX = 28
+
+# ---- XP and levels ----
+XP_CLAIM = 20
+XP_ROB_SUCCESS = 25
+XP_ROB_FAIL = 5
+XP_BLUFF_PLAY = 15
+XP_BLUFF_WIN = 40
+
+# level = 1 + floor(sqrt(xp / XP_LEVEL_BASE)); level 2 needs XP_LEVEL_BASE xp
+XP_LEVEL_BASE = 100
+LEVEL_UP_CASH_PER_LEVEL = 200     # reward = new_level * this
+LEVEL_UP_GEM_EVERY = 5            # +1 gem on every 5th level
+
+ROB_MAX_AMOUNT = 10_000   # most one rob can take
+
+ROB_XP_PER_HOUR = 3   # only this many robs per hour give XP

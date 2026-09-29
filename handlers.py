@@ -127,6 +127,7 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             result["new_streak"],
             result["milestone_hit"],
             result["is_weekly_bonus"],
+            result.get("xp"),
         )
     )
 
@@ -268,9 +269,9 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     status = result["status"]
 
     if status == "success":
-        await update.message.reply_html(ui.rob_success_card(result["amount"], victim_name, result["tax"], result["net"]))
+        await update.message.reply_html(ui.rob_success_card(result["amount"], victim_name, result["tax"], result["net"]) + ui.xp_line(result.get("xp")))
     elif status == "failed":
-        await update.message.reply_html(ui.rob_fail_card(result["penalty"], victim_name))
+        await update.message.reply_html(ui.rob_fail_card(result["penalty"], victim_name) + ui.xp_line(result.get("xp")))
     elif status == "self_rob":
         await update.message.reply_html(ui.error_card("You can't rob yourself."))
     elif status == "cooldown":

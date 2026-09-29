@@ -288,9 +288,14 @@ async def celebrate(bot, g, res, winners):
     lines = "\n".join(
         f"💰 <b>{ui.escape_html(n)}</b> +<code>{S}{ui.format_number(gain)}</code>" for n, gain, _b in winners
     )
+    xp_extra = ""
+    for _uid, _xp in (res.get("xp") or {}).items():
+        if _uid == res["winners"][0]:
+            xp_extra = ui.xp_line(_xp).lstrip("\n") + "\n"
     caption = (
         f"👑 <b>{label}: {who}</b>\n"
         f"<blockquote>🏆 <b>Points:</b> <code>{pts}</code>\n{lines}</blockquote>\n"
+        f"{xp_extra}"
         "<i>A new Monarch of the night has risen. Dare to challenge them again.</i>"
     )
     try:

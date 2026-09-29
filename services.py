@@ -197,6 +197,7 @@ async def claim_daily(pool: asyncpg.Pool, user_id: int) -> dict:
                         "is_weekly_bonus": is_weekly_bonus,
                     },
                 )
+                xp_info = await award_xp(conn, user_id, config.XP_CLAIM)
 
             return {
                 "status": "claimed",
@@ -206,6 +207,7 @@ async def claim_daily(pool: asyncpg.Pool, user_id: int) -> dict:
                 "new_streak": new_streak,
                 "milestone_hit": milestone_hit,
                 "is_weekly_bonus": is_weekly_bonus,
+                "xp": xp_info,
             }
         except asyncpg.UniqueViolationError:
             return {"status": "already_claimed_race"}
@@ -362,7 +364,7 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int) -
                 return {"status": "victim_shielded"}
             if victim["cash"] < config.ROB_MIN_VICTIM_BALANCE:
                 return {"status": "victim_too_poor"}
-            max_allowed = int(victim["cash"] * config.ROB_STEAL_PERCENT_MAX)
+            max_allowed = min(int(victim["cash"] * config.ROB_STEAL_PERCENT_MAX), config.ROB_MAX_AMOUNT)
             if amount > max_allowed:
                 return {"status": "amount_too_high", "max_allowed": max_allowed}
 
@@ -389,6 +391,7 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int) -
                     related_user_id=robber_id, source="rob_command",
                 )
                 result = {"status": "success", "amount": stolen, "tax": tax, "net": net}
+                result["xp"] = await award_rob_xp(conn, robber_id, config.XP_ROB_SUCCESS)
             else:
                 percent = random.uniform(config.ROB_FAIL_PENALTY_PERCENT_MIN, config.ROB_FAIL_PENALTY_PERCENT_MAX)
                 penalty = min(robber["cash"], max(1, int(amount * percent)))
@@ -407,6 +410,7 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int) -
                         related_user_id=robber_id, source="rob_command",
                     )
                 result = {"status": "failed", "penalty": penalty}
+                result["xp"] = await award_rob_xp(conn, robber_id, config.XP_ROB_FAIL)
 
             await conn.execute(
                 """
@@ -436,3 +440,52 @@ async def get_leaderboard(pool: asyncpg.Pool, category: str, page: int, page_siz
         rows = await conn.fetch(query, page_size, offset)
         total = await conn.fetchval("SELECT COUNT(*) FROM wallets")
     return rows, total
+
+
+# ---------------------------------------------------------------------------
+# XP and levels
+# ---------------------------------------------------------------------------
+import math as _math
+
+
+def level_for_xp(xp: int) -> int:
+    return 1 + int(_math.sqrt(max(0, xp) / config.XP_LEVEL_BASE))
+
+
+async def award_xp(conn, user_id: int, amount: int) -> dict:
+    """Call inside an open transaction. Adds XP, applies level-up rewards."""
+    row = await conn.fetchrow(
+        "UPDATE wallets SET xp = xp + $1, updated_at = now() WHERE user_id = $2 RETURNING xp, level",
+        amount, user_id,
+    )
+    if row is None:
+        return {"xp_gained": 0, "leveled_up": False}
+    old_level = row["level"]
+    new_level = level_for_xp(row["xp"])
+    result = {"xp_gained": amount, "leveled_up": False, "new_level": old_level,
+              "cash_bonus": 0, "gem_bonus": 0}
+    if new_level > old_level:
+        cash = sum(lv * config.LEVEL_UP_CASH_PER_LEVEL for lv in range(old_level + 1, new_level + 1))
+        gems = sum(1 for lv in range(old_level + 1, new_level + 1) if lv % config.LEVEL_UP_GEM_EVERY == 0)
+        await conn.execute(
+            "UPDATE wallets SET level = $1, cash = cash + $2, gems = gems + $3, updated_at = now() WHERE user_id = $4",
+            new_level, cash, gems, user_id,
+        )
+        result.update({"leveled_up": True, "new_level": new_level, "cash_bonus": cash, "gem_bonus": gems})
+    return result
+
+
+
+async def award_rob_xp(conn, user_id: int, amount: int) -> dict:
+    """Rob XP with an hourly cap. Call inside the rob transaction."""
+    await conn.execute(
+        "DELETE FROM rob_xp_log WHERE user_id = $1 AND created_at < now() - interval '1 day'", user_id
+    )
+    used = await conn.fetchval(
+        "SELECT COUNT(*) FROM rob_xp_log WHERE user_id = $1 AND created_at > now() - interval '1 hour'",
+        user_id,
+    )
+    if used >= config.ROB_XP_PER_HOUR:
+        return {"xp_gained": 0, "leveled_up": False}
+    await conn.execute("INSERT INTO rob_xp_log (user_id, created_at) VALUES ($1, now())", user_id)
+    return await award_xp(conn, user_id, amount)

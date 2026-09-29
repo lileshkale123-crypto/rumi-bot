@@ -156,6 +156,10 @@ async def finish_game(pool, game_id, scores):
             pot = game["wager"] * len(players)
             tax = int(pot * config.BLUFF_TAX_PERCENT)
             prize = pot - tax
+            await conn.fetch(
+                "SELECT user_id FROM wallets WHERE user_id = ANY($1::bigint[]) ORDER BY user_id FOR UPDATE",
+                [int(p) for p in players],
+            )
             best = max(scores.values())
             winners = [u for u in players if scores[u] == best]
             share, extra = divmod(prize, len(winners))
@@ -174,9 +178,14 @@ async def finish_game(pool, game_id, scores):
                     idempotency_key=f"bluff:{game_id}:win:{uid}",
                 )
                 balances[uid] = w["cash"] + gain
+            import services
+            xp_map = {}
+            for uid in sorted(players):
+                amt = config.XP_BLUFF_PLAY + (config.XP_BLUFF_WIN if uid in winners else 0)
+                xp_map[uid] = await services.award_xp(conn, uid, amt)
             await conn.execute("UPDATE bluff_games SET status = 'finished' WHERE id = $1", game_id)
             return {"status": "ok", "winners": winners, "prize": prize, "share": share,
-                    "pot": pot, "tax": tax, "balances": balances}
+                    "pot": pot, "tax": tax, "balances": balances, "xp": xp_map}
 
 
 async def refund_unfinished(pool):

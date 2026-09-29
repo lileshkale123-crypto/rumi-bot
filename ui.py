@@ -111,7 +111,7 @@ def wallet_keyboard() -> InlineKeyboardMarkup:
 # ---------------------------------------------------------------------------
 
 def reward_claimed_card(cash_reward: int, gem_reward: int, lucky_bonus: int, new_streak: int,
-                          milestone_hit: int | None, is_weekly_bonus: bool) -> str:
+                          milestone_hit: int | None, is_weekly_bonus: bool, xp_info: dict | None = None) -> str:
     lines = ["🎁 <b>REWARD CLAIMED</b>", ""]
     reward_line = f"✨ <b>Reward:</b> <code>+{config.CURRENCY_SYMBOL}{format_number(cash_reward)} Coins</code>"
     if gem_reward > 0:
@@ -129,6 +129,15 @@ def reward_claimed_card(cash_reward: int, gem_reward: int, lucky_bonus: int, new
     if milestone_hit:
         lines.append("")
         lines.append(f"<i>🏅 Milestone reached: Day {milestone_hit}!</i>")
+
+    if xp_info and xp_info.get("xp_gained"):
+        lines.append("")
+        lines.append(f"⭐ <i>+{xp_info['xp_gained']} XP</i>")
+        if xp_info.get("leveled_up"):
+            bonus = f"+{config.CURRENCY_SYMBOL}{format_number(xp_info['cash_bonus'])}"
+            if xp_info["gem_bonus"]:
+                bonus += f" • +{xp_info['gem_bonus']} Gem"
+            lines.append(f"🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})")
 
     return "\n".join(lines)
 
@@ -294,3 +303,16 @@ def games_card() -> str:
         "<b>Play in a group:</b> <code>/bluff 500 4</code>\n"
         f"<i>amount, then players ({config.BLUFF_MIN_PLAYERS}-{config.BLUFF_MAX_PLAYERS})</i>"
     )
+
+
+
+def xp_line(xp_info) -> str:
+    if not xp_info or not xp_info.get("xp_gained"):
+        return ""
+    text = f"\n\n⭐ <i>+{xp_info['xp_gained']} XP</i>"
+    if xp_info.get("leveled_up"):
+        bonus = f"+{config.CURRENCY_SYMBOL}{format_number(xp_info['cash_bonus'])}"
+        if xp_info["gem_bonus"]:
+            bonus += f" • +{xp_info['gem_bonus']} Gem"
+        text += f"\n🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})"
+    return text
