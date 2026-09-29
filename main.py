@@ -78,6 +78,12 @@ def main() -> None:
 
     application.add_handler(CommandHandler("stopmafia", mafia_handlers.stop_command))
 
+    from telegram.ext import MessageHandler, filters
+    import ai_handlers
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, ai_handlers.ai_chat
+    ), group=5)
+
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     application.run_polling()
 

@@ -68,3 +68,16 @@ LEVEL_UP_GEM_EVERY = 5            # +1 gem on every 5th level
 ROB_MAX_AMOUNT = 10_000   # most one rob can take
 
 ROB_XP_PER_HOUR = 3   # only this many robs per hour give XP
+
+# ---- AI chat ----
+AI_MODEL = "gemini-3.8-flash"
+AI_DAILY_LIMIT = 300              # messages per user per day (IST midnight reset)
+AI_MAX_TOKENS = 300
+AI_HISTORY_MESSAGES = 12          # remembered per chat
+AI_FLOOD_SECONDS = 2              # min gap between replies in one chat
+AI_THINKING_BUDGET = None
+AI_TRIGGER_WORDS = ["rumi"]
+
+AI_MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"]   # tried in order
+
+AI_GREETINGS = ["hi+", "hey+", "hello+", "hlo+", "hola", "yo+", "sup", "namaste"]

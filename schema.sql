@@ -74,3 +74,20 @@ CREATE TABLE IF NOT EXISTS rob_xp_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_rob_xp_log ON rob_xp_log(user_id, created_at DESC);
+
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id BIGINT NOT NULL,
+    day DATE NOT NULL,
+    count INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS ai_memory (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_memory_chat ON ai_memory(chat_id, id DESC);
