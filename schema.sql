@@ -187,3 +187,17 @@ CREATE TABLE IF NOT EXISTS ax_couple_of_day (
     user_b BIGINT NOT NULL,
     compatibility INT NOT NULL
 );
+
+
+-- Vault, /work and /spin columns
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS vault BIGINT NOT NULL DEFAULT 0 CHECK (vault >= 0);
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_work_at TIMESTAMPTZ;
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_spin_at TIMESTAMPTZ;
+
+-- Mafia hall of fame
+CREATE TABLE IF NOT EXISTS mafia_stats (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id),
+    wins INT NOT NULL DEFAULT 0,
+    games INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

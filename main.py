@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 import bluff_handlers
+import economy_features
 import db
 import games
 import handlers
@@ -53,6 +54,13 @@ def main() -> None:
     ))
 
     import mafia_handlers
+    for _cmd, _fn in (("vault", economy_features.vault_command),
+                      ("deposit", economy_features.deposit_command),
+                      ("withdraw", economy_features.withdraw_command),
+                      ("work", economy_features.work_command),
+                      ("spin", economy_features.spin_command),
+                      ("mafiatop", economy_features.mafiatop_command)):
+        application.add_handler(CommandHandler(_cmd, _fn))
     application.add_handler(CommandHandler("mafia", mafia_handlers.mafia_command))
     application.add_handler(CallbackQueryHandler(
         mafia_handlers.lobby_callback, pattern="^mafia:(join|start|cancel):"

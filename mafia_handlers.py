@@ -552,6 +552,12 @@ async def send_game_over(context, g, winner) -> None:
         winners = [p for p in g.players.values() if p.role == winner]
     else:
         winners = [p for p in g.players.values() if p.team == winner]
+    try:
+        import economy_features
+        await economy_features.record_mafia_result(
+            context.bot_data["pool"], list(g.players.values()), winners)
+    except Exception as _e:
+        print("mafia stats failed:", _e)
     wnames = ", ".join(escape_html(p.name) for p in winners) or "nobody"
     roster = "\n".join(
         f"{'💀' if not p.alive else '•'} {escape_html(p.name)} — {p.label}"

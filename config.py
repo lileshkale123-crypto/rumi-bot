@@ -81,3 +81,12 @@ AI_TRIGGER_WORDS = ["rumi"]
 AI_MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"]   # tried in order
 
 AI_GREETINGS = ["hi+", "hey+", "hello+", "hlo+", "hola", "yo+", "sup", "namaste"]
+
+
+# Vault, /work, /spin
+VAULT_BASE_CAPACITY = 10_000
+VAULT_CAPACITY_PER_LEVEL = 2_500
+WORK_COOLDOWN = 3600
+WORK_MIN = 100
+WORK_MAX = 500
+SPIN_COOLDOWN = 86400
