@@ -83,8 +83,18 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     wallet = await services.get_wallet(pool, user.id)
     name = user.first_name or user.username or "Traveler"
 
+    _other = False
+    if not update.callback_query:
+        _rt = _get_reply_target(update)
+        if _rt and _rt.id != user.id:
+            await services.ensure_user_and_wallet(pool, _rt.id, _rt.username, _rt.first_name)
+            wallet = await services.get_wallet(pool, _rt.id)
+            name = _rt.first_name or _rt.username or "Traveler"
+            _other = True
     text = ui.wallet_card(name, wallet)
     keyboard = ui.wallet_keyboard()
+    if _other:
+        keyboard = None
 
     if update.callback_query:
         query = update.callback_query
@@ -235,11 +245,14 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reply_user = _get_reply_target(update)
     args = context.args
 
-    amount_arg = args[0] if reply_user and args else (args[1] if len(args) > 1 else None)
+    if not reply_user:
+        await update.message.reply_html(ui.error_card("Reply to their message with: /rob amount"))
+        return
+    amount_arg = args[0] if args else None
     try:
         amount = int(amount_arg)
     except (TypeError, ValueError):
-        await update.message.reply_html(ui.error_card("Usage: reply with /rob amount, or /rob @username amount, or /rob user_id amount"))
+        await update.message.reply_html(ui.error_card("Reply to their message with: /rob amount"))
         return
 
     if reply_user:
@@ -265,7 +278,9 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_html(ui.error_card("Usage: /rob @username, /rob user_id, or reply to a message with /rob"))
         return
 
-    result = await services.rob(pool, user.id, victim_id, amount)
+    result = await services.rob(pool, user.id, victim_id, amount,
+                                chat_id=update.effective_chat.id,
+                                message_id=update.message.reply_to_message.message_id)
     status = result["status"]
 
     if status == "success":
@@ -280,6 +295,8 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_html(ui.error_card("That user hasn't used Rumi yet."))
     elif status == "victim_shielded":
         await update.message.reply_html(ui.rob_victim_shielded_card())
+    elif status == "message_already_robbed":
+        await update.message.reply_html(ui.error_card("That message was already robbed. Reply to a different one."))
     elif status == "victim_too_poor":
         await update.message.reply_html(ui.rob_victim_too_poor_card())
     elif status == "amount_too_high":
