@@ -84,6 +84,27 @@ def main() -> None:
         filters.TEXT & ~filters.COMMAND, ai_handlers.ai_chat
     ), group=5)
 
+    import ax_track
+    ax_track.register(application)
+    import ax_welcome
+    ax_welcome.register(application)
+    import ax_notes
+    ax_notes.register(application)
+    import ax_settings
+    ax_settings.register(application)
+    import ax_afk
+    ax_afk.register(application)
+    import ax_love
+    ax_love.register(application)
+    import ax_quote
+    ax_quote.register(application)
+    import ax_menu
+    ax_menu.register(application)
+    import ax_menu
+    ax_menu.register(application)
+    import ax_mod
+    ax_mod.register(application)
+
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     application.run_polling()
 

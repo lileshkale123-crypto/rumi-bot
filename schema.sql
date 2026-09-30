@@ -91,3 +91,99 @@ CREATE TABLE IF NOT EXISTS ai_memory (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ai_memory_chat ON ai_memory(chat_id, id DESC);
+
+-- ===== Astraea features =====
+
+CREATE TABLE IF NOT EXISTS ax_groups (
+    chat_id BIGINT PRIMARY KEY,
+    title TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ax_connections (
+    user_id BIGINT PRIMARY KEY,
+    chat_id BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_chat_members (
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ax_user_stats (
+    user_id BIGINT PRIMARY KEY,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    message_count BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ax_warns (
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    count INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ax_settings (
+    chat_id BIGINT PRIMARY KEY,
+    flood_limit INT NOT NULL DEFAULT 0,
+    flood_window INT NOT NULL DEFAULT 5,
+    flood_mute INT NOT NULL DEFAULT 300,
+    welcome_text TEXT,
+    welcome_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    welcome_photo TEXT,
+    goodbye_text TEXT,
+    goodbye_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    goodbye_photo TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ax_notes (
+    chat_id BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    text_content TEXT,
+    file_id TEXT,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chat_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS ax_filters (
+    chat_id BIGINT NOT NULL,
+    trigger_text TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    text_content TEXT,
+    file_id TEXT,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chat_id, trigger_text)
+);
+
+CREATE TABLE IF NOT EXISTS ax_temp_punish (
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    ptype TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    reason TEXT,
+    PRIMARY KEY (chat_id, user_id, ptype)
+);
+
+CREATE TABLE IF NOT EXISTS ax_afk (
+    user_id BIGINT PRIMARY KEY,
+    reason TEXT,
+    start_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+    msg_count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ax_ship_cooldowns (
+    chat_id BIGINT PRIMARY KEY,
+    last_time TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_couple_of_day (
+    chat_id BIGINT PRIMARY KEY,
+    day DATE NOT NULL,
+    user_a BIGINT NOT NULL,
+    user_b BIGINT NOT NULL,
+    compatibility INT NOT NULL
+);
