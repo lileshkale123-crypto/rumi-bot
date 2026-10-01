@@ -3,6 +3,9 @@ import os
 
 from dotenv import load_dotenv
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from datetime import datetime, timedelta, timezone
+from telegram import Update
+from telegram.ext import ApplicationHandlerStop, TypeHandler
 
 import bluff_handlers
 import economy_features
@@ -16,6 +19,15 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+MAX_UPDATE_AGE = timedelta(minutes=10)
+
+
+async def ignore_old_updates(update, context):
+    msg = update.message
+    if msg and msg.date and datetime.now(timezone.utc) - msg.date > MAX_UPDATE_AGE:
+        raise ApplicationHandlerStop
+
+
 async def post_init(application: Application) -> None:
     pool = await db.init_pool()
     application.bot_data["pool"] = pool
@@ -27,6 +39,7 @@ async def post_init(application: Application) -> None:
 def main() -> None:
     token = os.environ["BOT_TOKEN"]
     application = Application.builder().token(token).post_init(post_init).build()
+    application.add_handler(TypeHandler(Update, ignore_old_updates), group=-1)
 
     application.add_handler(CommandHandler("start", handlers.start_command))
     application.add_handler(CommandHandler("wallet", handlers.wallet_command))
