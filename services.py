@@ -24,7 +24,23 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Wallet
 # ---------------------------------------------------------------------------
 
+_SEEN_USERS = {}
+_SEEN_TTL = 600
+
+
 async def ensure_user_and_wallet(pool: asyncpg.Pool, user_id: int, username: str | None, first_name: str | None) -> None:
+    # Cached: skips the database writes if this user was set up in the last 10 minutes.
+    import time as _t
+    key = (username, first_name)
+    seen = _SEEN_USERS.get(user_id)
+    now = _t.monotonic()
+    if seen and seen[0] == key and now - seen[1] < _SEEN_TTL:
+        return
+    await _ensure_user_and_wallet_db(pool, user_id, username, first_name)
+    _SEEN_USERS[user_id] = (key, now)
+
+
+async def _ensure_user_and_wallet_db(pool: asyncpg.Pool, user_id: int, username: str | None, first_name: str | None) -> None:
     """Creates the user + wallet + streak rows if they don't exist yet. Safe to call every command."""
     async with pool.acquire() as conn:
         async with conn.transaction():
