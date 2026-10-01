@@ -17,6 +17,10 @@ _greet = re.compile(r"^\s*(" + "|".join(config.AI_GREETINGS) + r")\b", re.I)
 
 
 async def ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.application.create_task(_ai_chat_inner(update, context), update=update)
+
+
+async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg, user, chat = update.effective_message, update.effective_user, update.effective_chat
     if msg is None or not msg.text or user is None or user.is_bot:
         return
@@ -54,7 +58,7 @@ async def ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         log.warning("ai chat failed: %s", e)
     if not reply:
-        await msg.reply_text("my brain is a little busy rn 🌸 try again in a moment")
+        await msg.reply_text("my brain is a little busy rn 🌸 try again in a moment", do_quote=True)
         return
     await ai_store.save_turn(pool, chat.id, prompt, reply)
-    await msg.reply_text(reply[:4000])
+    await msg.reply_text(reply[:4000], do_quote=True)

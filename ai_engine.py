@@ -28,7 +28,7 @@ async def gemini_chat(history: list[tuple[str, str]], text: str, model: str | No
         "generationConfig": gen,
     }
     headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
-    async with httpx.AsyncClient(timeout=25) as client:
+    async with httpx.AsyncClient(timeout=12) as client:
         r = await client.post(URL.format(model=model or config.AI_MODEL), json=body, headers=headers)
     if r.status_code != 200:
         raise GeminiError(r.status_code, r.text[:200])
@@ -52,13 +52,15 @@ async def chat(history, text):
     """Tries each model in config.AI_MODELS, retrying busy errors."""
     last = None
     for model in config.AI_MODELS:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 return await gemini_chat(history, text, model)
             except GeminiError as e:
                 last = e
                 if e.status in (429, 500, 502, 503, 504):
-                    await asyncio.sleep(2 * (attempt + 1))
+                    if e.status == 429:
+                        break
+                    await asyncio.sleep(1)
                     continue
                 break
             except httpx.HTTPError as e:
