@@ -57,6 +57,7 @@ async def chat(history, text):
                 return await gemini_chat(history, text, model)
             except GeminiError as e:
                 last = e
+                import logging as _lg; _lg.getLogger('ai_engine').warning('model %s failed: status %s', model, e.status)
                 if e.status in (429, 500, 502, 503, 504):
                     if e.status == 429:
                         break
