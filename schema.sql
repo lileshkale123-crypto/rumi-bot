@@ -201,3 +201,12 @@ CREATE TABLE IF NOT EXISTS mafia_stats (
     games INT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS rob_msg_log (
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    robber_id BIGINT NOT NULL,
+    victim_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chat_id, message_id)
+);

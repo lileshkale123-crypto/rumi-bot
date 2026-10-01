@@ -327,7 +327,8 @@ async def apply_ward(pool: asyncpg.Pool, user_id: int) -> dict:
 # /rob — PvP looting, protected by cooldown + shield checks
 # ---------------------------------------------------------------------------
 
-async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int) -> dict:
+async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int,
+              chat_id: int | None = None, message_id: int | None = None) -> dict:
     if robber_id == victim_id:
         return {"status": "self_rob"}
     if not isinstance(amount, int) or amount <= 0:
@@ -364,10 +365,18 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int) -
                 return {"status": "victim_shielded"}
             if victim["cash"] < config.ROB_MIN_VICTIM_BALANCE:
                 return {"status": "victim_too_poor"}
-            max_allowed = min(int(victim["cash"] * config.ROB_STEAL_PERCENT_MAX), config.ROB_MAX_AMOUNT)
+            max_allowed = max(1, min(int(victim["cash"] * config.ROB_STEAL_PERCENT_MAX), config.ROB_MAX_AMOUNT))
             if amount > max_allowed:
                 return {"status": "amount_too_high", "max_allowed": max_allowed}
 
+            if victim["cash"] < config.ROB_ONCE_PER_MSG_BELOW and message_id is not None:
+                ins = await conn.execute(
+                    "INSERT INTO rob_msg_log (chat_id, message_id, robber_id, victim_id) "
+                    "VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                    chat_id, message_id, robber_id, victim_id,
+                )
+                if ins.endswith(" 0"):
+                    return {"status": "message_already_robbed"}
             success = random.random() < config.ROB_SUCCESS_CHANCE
 
             if success:

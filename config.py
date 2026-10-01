@@ -29,8 +29,8 @@ SHIELD_DURATION_HOURS = 24
 
 # /rob
 ROB_COOLDOWN_MINUTES = 0
-ROB_MIN_VICTIM_BALANCE = 3000          # victim must have at least this to be robbable
-ROB_MIN_AMOUNT = 50              # smallest amount you can try to rob
+ROB_MIN_VICTIM_BALANCE = 2          # victim must have at least this to be robbable
+ROB_MIN_AMOUNT = 1              # smallest amount you can try to rob
 ROB_SUCCESS_CHANCE = 6 / 7
 ROB_STEAL_PERCENT_MIN = 0.10
 ROB_STEAL_PERCENT_MAX = 0.30
@@ -90,3 +90,5 @@ WORK_COOLDOWN = 3600
 WORK_MIN = 100
 WORK_MAX = 500
 SPIN_COOLDOWN = 86400
+
+ROB_ONCE_PER_MSG_BELOW = 3000
