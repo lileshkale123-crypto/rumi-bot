@@ -78,7 +78,7 @@ AI_FLOOD_SECONDS = 2              # min gap between replies in one chat
 AI_THINKING_BUDGET = None
 AI_TRIGGER_WORDS = ["rumi"]
 
-AI_MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"]   # tried in order
+AI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-3-flash-preview"]   # tried in order
 
 AI_GREETINGS = ["hi+", "hey+", "hello+", "hlo+", "hola", "yo+", "sup", "namaste"]
 
