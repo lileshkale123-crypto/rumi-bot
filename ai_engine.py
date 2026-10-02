@@ -48,7 +48,7 @@ class GeminiError(RuntimeError):
         self.status = status
 
 
-async def chat(history, text):
+async def _gemini_chat_all(history, text):
     """Tries each model in config.AI_MODELS, retrying busy errors."""
     last = None
     for model in config.AI_MODELS:
@@ -76,3 +76,49 @@ import pathlib
 _persona = pathlib.Path(__file__).with_name("persona.txt")
 if _persona.exists():
     SYSTEM_PROMPT = _persona.read_text(encoding="utf-8").strip()
+
+
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+async def groq_chat(history, text, model):
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        return None
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for r, t in history:
+        msgs.append({"role": "assistant" if r == "model" else "user", "content": t})
+    msgs.append({"role": "user", "content": text})
+    body = {"model": model, "messages": msgs, "temperature": 0.9,
+            "max_tokens": config.AI_MAX_TOKENS + 300}
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.post(GROQ_URL, json=body, headers={"Authorization": "Bearer " + key})
+    if r.status_code != 200:
+        raise GeminiError(r.status_code, r.text[:200])
+    try:
+        out = r.json()["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError):
+        return None
+    return out.strip() or None
+
+
+async def chat(history, text):
+    import logging as _lg
+    log = _lg.getLogger("ai_engine")
+    last = RuntimeError("no reply")
+    try:
+        out = await _gemini_chat_all(history, text)
+        if out:
+            return out
+    except Exception as ex:
+        last = ex
+        log.warning("all Gemini models failed, trying Groq")
+    for model in config.GROQ_MODELS:
+        try:
+            out = await groq_chat(history, text, model)
+            if out:
+                return out
+        except Exception as ex:
+            last = ex
+            log.warning("groq model %s failed: %s", model, getattr(ex, "status", ex))
+    raise last
