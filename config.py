@@ -79,7 +79,7 @@ AI_THINKING_BUDGET = 0
 AI_TRIGGER_WORDS = ["rumi"]
 
 # Groq fallback, used only when every Gemini model fails
-GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "allam-2-7b"]
+GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
 AI_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-flash-latest"]   # tried in order
 
