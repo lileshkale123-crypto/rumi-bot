@@ -23,11 +23,20 @@ PAGES = {
 }
 
 
+PAGES["chat"] = ("💬", "Chat and Economy",
+    "Say rumi or reply to my message and I'll chat with you.\n"
+    "I also react to messages with emojis.\n\n"
+    "/start: your snapshot and games\n"
+    "/wallet /claim /pay /guard /rob /rankings\n"
+    "/vault /deposit /withdraw /work /spin\n"
+    "/bluff /mafia /stopmafia /mafiatop")
+
+
 def home():
     text = ("✨ <b>Rumi Group Tools</b>\n<blockquote>Pick a category to see what I can do 💫\n"
             "Economy and games stay in /start 🌙</blockquote>")
     b = [btn(f"{i} {t}", f"axh:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
-    kb = InlineKeyboardMarkup([b[0:2], b[2:4], [b[4]], [btn("✖ Close", "axh:close", style="danger")]])
+    kb = InlineKeyboardMarkup([b[0:2], b[2:4], b[4:6], [btn("✖ Close", "axh:close", style="danger")]])
     return text, kb
 
 

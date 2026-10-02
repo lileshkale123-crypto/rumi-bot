@@ -23,6 +23,11 @@ COMMAND_LIST = [
     ("/rob", "Attempt a heist on someone"),
     ("/rankings", "View the Rankings"),
     ("/bluff", "Play Shadow Bluff with friends"),
+    ("/mafia", "Play Mafia with friends"),
+    ("/vault", "Keep coins safe in your Vault"),
+    ("/work", "Work for coins every hour"),
+    ("/spin", "Spin the daily wheel"),
+    ("/mafiatop", "Mafia leaderboard"),
 ]
 
 CATEGORY_META = {
@@ -58,7 +63,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def features_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _old_features_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
     await update.effective_message.reply_text("🌟 More features are coming soon — stay tuned!")
 
@@ -345,3 +350,10 @@ async def rankings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception:
         pass  # identical content or message too old to edit — ignore
     await query.answer()
+
+
+async def features_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import ax_menu
+    await update.callback_query.answer()
+    text, kb = ax_menu.home()
+    await update.effective_message.reply_html(text, reply_markup=kb)

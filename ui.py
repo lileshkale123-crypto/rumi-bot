@@ -301,7 +301,14 @@ def games_card() -> str:
         f"\U0001F451 Most points wins the pot ({pct}% fee)."
         "</blockquote>\n\n"
         "<b>Play in a group:</b> <code>/bluff 500 4</code>\n"
-        f"<i>amount, then players ({config.BLUFF_MIN_PLAYERS}-{config.BLUFF_MAX_PLAYERS})</i>"
+        f"<i>amount, then players ({config.BLUFF_MIN_PLAYERS}-{config.BLUFF_MAX_PLAYERS})</i>\n\n"
+        "\U0001F575 <b>MAFIA</b>\n"
+        "<i>Free party game, no coins needed.</i>\n\n"
+        "<blockquote>"
+        "Secret roles, night moves and day votes. Find the Mafia before they find you."
+        "</blockquote>\n\n"
+        "<b>Play in a group:</b> <code>/mafia</code>\n"
+        "<i>4-15 players. /stopmafia ends a stuck game.</i>"
     )
 
 
