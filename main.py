@@ -104,6 +104,8 @@ def main() -> None:
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, ai_handlers.ai_chat
     ), group=5)
+    import auto_react
+    auto_react.register(application)
 
     import ax_track
     ax_track.register(application)
