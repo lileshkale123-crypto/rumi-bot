@@ -133,3 +133,7 @@ async def quote_cmd(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("q", quote_cmd))
+
+
+# new drawing: steady size, emoji pictures
+from quote_render import render  # noqa: E402,F811
