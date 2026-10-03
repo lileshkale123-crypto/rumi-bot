@@ -210,3 +210,23 @@ CREATE TABLE IF NOT EXISTS rob_msg_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chat_id, message_id)
 );
+
+CREATE TABLE IF NOT EXISTS clans (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(16) NOT NULL,
+    leader_id BIGINT NOT NULL,
+    level INT NOT NULL DEFAULT 1,
+    vault_balance BIGINT NOT NULL DEFAULT 0 CHECK (vault_balance >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clans_name_lower ON clans (LOWER(name));
+
+CREATE TABLE IF NOT EXISTS clan_members (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id),
+    clan_id INT NOT NULL REFERENCES clans(id) ON DELETE CASCADE,
+    role VARCHAR(10) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_clan_members_clan ON clan_members (clan_id);
