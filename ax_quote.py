@@ -70,8 +70,8 @@ def render(name, text, avatar, uid):
     H = min(512, max(av + 2 * pad, bh + 2 * pad))
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     dr = ImageDraw.Draw(img)
-    bc = BUBBLES[uid % len(BUBBLES)] + (255,)
-    nc = NAMES[uid % len(NAMES)]
+    bc = (30, 36, 56, 255)  # steady look
+    nc = (102, 217, 232)
     ok = False
     if avatar:
         try:
@@ -92,7 +92,9 @@ def render(name, text, avatar, uid):
     for l in lines:
         dr.text((bx + px, y), l, font=bf, fill=(235, 238, 250))
         y += lh
-    return img
+    canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    canvas.paste(img, (0, (512 - H) // 2), img)
+    return canvas
 
 
 async def quote_cmd(update, context):
