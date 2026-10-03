@@ -129,6 +129,8 @@ def main() -> None:
     ax_mod.register(application)
     import ax_speak
     ax_speak.register(application)
+    import ax_topgroups
+    ax_topgroups.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
