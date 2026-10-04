@@ -135,6 +135,8 @@ def main() -> None:
     ax_tag.register(application)
     import clans
     clans.register(application)
+    import ax_kang
+    ax_kang.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
