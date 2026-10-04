@@ -5,7 +5,7 @@ import logging
 import time
 
 from PIL import Image
-from telegram import InputFile, InputSticker
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputSticker
 from telegram.error import BadRequest
 from telegram.ext import CommandHandler
 
@@ -68,7 +68,7 @@ async def kang_cmd(update, context):
         data = bytes(await f.download_as_bytearray())
         if ext == "png":
             data = await asyncio.to_thread(_to_png, data)
-        st = InputSticker(InputFile(data, filename=f"s.{ext}"), [emoji], kind)
+        st = InputSticker(InputFile(data, filename=f"s.{ext}", attach=True), [emoji], kind)
         try:
             await bot.get_sticker_set(name)
             await bot.add_sticker_to_set(u.id, name, st)
@@ -81,6 +81,8 @@ async def kang_cmd(update, context):
         log.warning("kang failed: %s", e)
         t = str(e).lower()
         if "peer_id" in t or "user_id" in t or "user not found" in t:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Start Rumi", url=f"https://t.me/{bot.username}?start=kang")]])
+            return await msg.reply_html("🧷 <b>One-time setup</b>\n<blockquote>Tap the button, press Start, then send /kang again.</blockquote>", reply_markup=kb)
             return await msg.reply_html("⚠️ Start me in private chat first, then try again.")
         if "too much" in t or "too many" in t:
             return await msg.reply_html("⚠️ That pack is full. Telegram allows no more stickers in it.")
