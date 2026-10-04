@@ -9,7 +9,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Inpu
 from telegram.error import BadRequest
 from telegram.ext import CommandHandler
 
+import html
 import quote_emoji as qe
+from telegram import InlineKeyboardButton as _B, InlineKeyboardMarkup as _K
 
 log = logging.getLogger(__name__)
 COOLDOWN = 5
@@ -91,9 +93,23 @@ async def kang_cmd(update, context):
         _last.pop(u.id, None)
         log.exception("kang crashed")
         return await msg.reply_html("😿 <b>Something slipped.</b> Please try again.")
+    count = "?"
+    try:
+        count = len((await bot.get_sticker_set(name)).stickers)
+    except Exception:
+        pass
+    link = f"https://t.me/addstickers/{name}"
+    kb = _K([
+        [_B("📦 Open Pack", url=link)],
+        [_B("📤 Share Pack", url=f"https://t.me/share/url?url={link}")],
+    ])
     await msg.reply_html(
-        f"🧷 <b>STICKER KANGED</b> {emoji}\n"
-        f'<blockquote><a href="https://t.me/addstickers/{name}">Open your {kind} pack</a></blockquote>'
+        f"🧷 <b>STICKER KANGED</b> {emoji}\n\n"
+        f"<blockquote>📦 <b>Pack:</b> <code>{html.escape(title)}</code>\n"
+        f"🗂 <b>Type:</b> <code>{kind.title()}</code>\n"
+        f"🔢 <b>Stickers:</b> <code>{count}</code></blockquote>\n"
+        "<i>Tap below to open your pack.</i>",
+        reply_markup=kb,
     )
 
 
