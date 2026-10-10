@@ -196,26 +196,10 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _respond_to_pay_result(update, result, amount, target_label)
         return
 
-    # Argument mode: "/pay @username 100" or "/pay 123456789 100"
-    if len(args) < 2:
-        await update.message.reply_html(
-            ui.error_card("Usage: /pay @username amount, /pay user_id amount, or reply to a message with /pay amount")
-        )
-        return
-
-    raw_target = args[0].lstrip("@")
-    try:
-        amount = int(args[1])
-    except ValueError:
-        await update.message.reply_html(ui.error_card("Usage: /pay @username amount"))
-        return
-
-    if raw_target.isdigit():
-        result = await services.pay_to_id(pool, user.id, int(raw_target), amount)
-    else:
-        result = await services.pay(pool, user.id, raw_target, amount)
-
-    await _respond_to_pay_result(update, result, amount, raw_target)
+    # Reply-only: paying by @username or user id is not allowed
+    await update.message.reply_html(
+        ui.error_card("Reply to their message with: /pay amount")
+    )
 
 
 # ---------------------------------------------------------------------------
