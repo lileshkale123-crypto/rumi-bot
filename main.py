@@ -141,6 +141,8 @@ def main() -> None:
     ax_ping.register(application)
     import ax_errors
     ax_errors.register(application)
+    import ax_reel
+    ax_reel.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
