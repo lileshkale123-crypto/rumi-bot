@@ -55,6 +55,7 @@ async def watcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not msg or not msg.text or not user or user.is_bot:
         return
+    log.warning('REEL saw text: %s', msg.text[:60])
     found = URL_RE.search(msg.text)
     if not found:
         return
