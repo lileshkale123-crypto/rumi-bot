@@ -98,5 +98,5 @@ async def watcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register(application: Application) -> None:
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, watcher), group=-1
+        MessageHandler(filters.TEXT & ~filters.COMMAND, watcher), group=-6
     )
