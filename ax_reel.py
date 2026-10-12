@@ -34,7 +34,7 @@ FAIL = (
 def _download(url, folder):
     opts = {
         "outtmpl": os.path.join(folder, "%(id)s.%(ext)s"),
-        "format": "bv*[height<=720]+ba/b[height<=720]/b",
+        "format": "b[height<=720]/b/bv*+ba",
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": False,
