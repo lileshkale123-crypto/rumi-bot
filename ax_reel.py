@@ -37,8 +37,8 @@ def _download(url, folder):
         "format": "bv*[height<=720]+ba/b[height<=720]/b",
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,
+        "no_warnings": False,
         "max_filesize": MAX_BYTES,
         "match_filter": yt_dlp.utils.match_filter_func("duration < 600"),
     }
@@ -87,7 +87,7 @@ async def watcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         await status.delete()
     except Exception:
-        log.exception("reel download failed")
+        log.exception("REELERR download failed")
         try:
             await status.edit_text(FAIL, parse_mode=ParseMode.HTML)
         except Exception:
