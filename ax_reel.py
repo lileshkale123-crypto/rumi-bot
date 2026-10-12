@@ -40,7 +40,6 @@ def _download(url, folder):
         "quiet": False,
         "no_warnings": False,
         "max_filesize": MAX_BYTES,
-        "match_filter": yt_dlp.utils.match_filter_func("duration < 600 | duration?"),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
