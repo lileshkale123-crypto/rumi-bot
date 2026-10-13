@@ -143,6 +143,8 @@ def main() -> None:
     ax_errors.register(application)
     import ax_reel
     ax_reel.register(application)
+    import ax_profile
+    ax_profile.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
