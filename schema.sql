@@ -230,3 +230,20 @@ CREATE TABLE IF NOT EXISTS clan_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clan_members_clan ON clan_members (clan_id);
+
+CREATE TABLE IF NOT EXISTS ax_warn_settings (
+    chat_id BIGINT PRIMARY KEY,
+    warn_limit INT NOT NULL DEFAULT 3,
+    warn_mode TEXT NOT NULL DEFAULT 'mute',
+    warn_mode_secs INT NOT NULL DEFAULT 86400,
+    warn_expire_secs INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ax_warn_log (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ax_warn_log_idx ON ax_warn_log (chat_id, user_id);

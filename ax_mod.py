@@ -248,8 +248,6 @@ def register(app):
         app.add_handler(CommandHandler(name, make_cmd(name)))
     app.add_handler(CommandHandler("tmute", make_temp("mute")))
     app.add_handler(CommandHandler("tban", make_temp("ban")))
-    app.add_handler(CommandHandler("warn", warn_cmd))
-    app.add_handler(CommandHandler("unwarn", unwarn_cmd))
     app.add_handler(CommandHandler("promote", promote_cmd))
     app.add_handler(CommandHandler("demote", demote_cmd))
     app.add_handler(CallbackQueryHandler(mod_callback, pattern="^axm:"))
