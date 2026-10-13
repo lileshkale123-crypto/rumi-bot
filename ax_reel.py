@@ -14,7 +14,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 log = logging.getLogger(__name__)
 
 SITES = (
-    r"instagram\.com", r"youtube\.com", r"youtu\.be", r"tiktok\.com",
+    r"instagram\.com", r"tiktok\.com",
     r"facebook\.com", r"fb\.watch", r"x\.com", r"twitter\.com",
     r"pinterest\.com", r"pin\.it", r"reddit\.com", r"threads\.net",
 )
@@ -37,8 +37,8 @@ def _download(url, folder):
         "format": "b[height<=720]/b/bv*+ba",
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "quiet": False,
-        "no_warnings": False,
+        "quiet": True,
+        "no_warnings": True,
         "max_filesize": MAX_BYTES,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -54,7 +54,6 @@ async def watcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not msg or not msg.text or not user or user.is_bot:
         return
-    log.warning('REEL saw text: %s', msg.text[:60])
     found = URL_RE.search(msg.text)
     if not found:
         return
