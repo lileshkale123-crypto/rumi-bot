@@ -22,6 +22,14 @@ def font(size, bold=False):
     return ImageFont.truetype(os.path.join(FD, name), size)
 
 
+def clean_name(n):
+    import unicodedata
+    n = unicodedata.normalize("NFKC", n or "")
+    keep = [c for c in n if ord(c) < 0x250 and unicodedata.category(c)[0] in "LNPZ"]
+    out = " ".join("".join(keep).split())
+    return out or "Player"
+
+
 def render(name, level, xp, cash, gems, wins, losses, clan, photo):
     W, H = 900, 480
     img = Image.new("RGB", (W, H))
@@ -98,8 +106,9 @@ async def profile_cmd(update, context):
     except Exception:
         photo = None
     name = target.first_name or "Player"
+    card_name = clean_name(name)
     buf = await asyncio.to_thread(
-        render, name, services.level_for_xp(w["xp"]), w["xp"], w["cash"],
+        render, card_name, services.level_for_xp(w["xp"]), w["xp"], w["cash"],
         w["gems"], w["wins"], w["losses"], row["name"] if row else None, photo)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔴 Close", callback_data=f"prof_close:{me.id}")]])
     await msg.reply_photo(buf, caption=f"<b>{html.escape(name)}</b>'s profile 💜",
