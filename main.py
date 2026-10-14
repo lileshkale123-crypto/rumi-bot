@@ -113,6 +113,10 @@ def main() -> None:
     ax_welcome.register(application)
     import ax_notes
     ax_notes.register(application)
+    import ax_extras
+    ax_extras.register(application)
+    import ax_backup
+    ax_backup.register(application)
     import ax_settings
     ax_settings.register(application)
     import ax_afk

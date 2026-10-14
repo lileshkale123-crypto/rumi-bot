@@ -175,6 +175,43 @@ PAGES = {
                "command. (Setting is saved; full effect comes in a later update.)"),
     "notes": ('📝', 'Notes', '<b>What it does</b>\n<blockquote>Notes are saved messages your group can read any time. Great for rules, links, FAQs and group info. Admins save them, everyone can read them.</blockquote>\n\n<b>Commands</b>\n/save name text: save a note. You can also reply to any message (text, photo, video, sticker, voice, file) with /save name and Rumi keeps it.\n/get name: show a note. Add noformat to see the raw text with all the codes, like /get rules noformat\n#name: typing #rules in the chat works exactly like /get rules\n/notes: list every note in this group\n/clear name: delete one note\n/clearallnotes: delete all notes\n/privatenotes on or off: when on, a note shows an Open note button and members read it in a private chat with Rumi, so the group stays clean\n\n<b>Example</b>\n<blockquote>/save rules Hi {first}, be kind and no spam</blockquote>\nMembers type #rules and see: Hi Aarav, be kind and no spam\n\n<b>Fillings</b> (replaced for each reader)\n{first} first name, {last} last name, {fullname} both, {username} username, {mention} a tap-to-open name, {id} user id, {chatname} group name\n\n<b>Random replies</b>\nPut %%% between answers and Rumi picks one each time.\nExample: /save hello Hey there %%% Hi hi %%% Welcome in\n\n<b>Buttons</b>\nAdd a link button with [Text](buttonurl://https://example.com)\nAdd :same to put it on the same row as the one before: [Text](buttonurl://https://example.com:same)\nColours: add :blue, :green or :red\nA button can also open another note: [Rules](buttonurl://#rules)\n\n<b>Special tags</b> (put them anywhere in the note)\n{private}: this note always opens in private\n{noprivate}: this note always shows in the group\n{admin}: only admins can read this note\n{nonotif}: send without a sound\n{protect}: stop forwarding and saving\n{mediaspoiler}: hide photos and videos behind a spoiler'),
     "filters": ('🔎', 'Filters', '<b>What it does</b>\n<blockquote>A filter is an automatic reply. When someone writes a trigger word, Rumi answers on its own. Great for greetings, FAQs and common questions.</blockquote>\n\n<b>Commands</b>\n/filter word reply: set an automatic reply. You can also reply to a photo, video, sticker or file with /filter word\n/filters: list every filter in this group\n/stop word: remove one filter\n/clearfilters: remove all filters\n\n<b>Example</b>\n<blockquote>/filter price Our plans start at 99 rupees</blockquote>\nNow when anyone writes the word price anywhere in a message, Rumi sends that reply.\n\n<b>Trigger options</b> (put these in front of the word)\nexact:word : Rumi replies only when the whole message is exactly that word.\nExample: /filter exact:hi Hello there\nprefix:word : Rumi replies when the message starts with that word.\nExample: /filter prefix:good Have a great day\nWith no option, Rumi replies when the word appears anywhere as a whole word.\n\n<b>Fillings</b> (replaced for each person)\n{first} first name, {last} last name, {fullname} both, {username} username, {mention} a tap-to-open name, {id} user id, {chatname} group name\nExample: /filter hello Hey {first}, welcome to {chatname}\n\n<b>Random replies</b>\nPut %%% between answers and Rumi picks one each time.\nExample: /filter gm Good morning %%% Gm gm %%% Rise and shine\n\n<b>Buttons</b>\nAdd a link button with [Text](buttonurl://https://example.com)\nAdd :same to share a row, and :blue, :green or :red for colours.\nA button can also open a saved note: [Rules](buttonurl://#rules)\n\n<b>Other tags</b>\n{nonotif}: send without a sound\n{protect}: stop forwarding and saving\n{mediaspoiler}: hide photos and videos behind a spoiler\n\n<b>What members see</b>\nMembers just write a message. Rumi replies to it with your saved answer. They never need a command.'),
+    "backup": ("📦", "Backup & Reset", """<b>What it does</b>
+<blockquote>Saves all of this group's Rumi settings into one small file, so you can restore them later or copy them to another group. Perfect when you set up a group carefully and never want to redo it 💫</blockquote>
+
+<b>What is saved</b>
+Notes, filters, rules, locks, blocklist, allowlist, welcome and goodbye texts, captcha, antiflood, antiraid, report, pin, cleaning, disabled commands, log channel, warn settings and other group settings.
+
+<b>What is never touched</b>
+Wallets, coins, ranks, warns of members, approved members, AFK and anything personal. Backups only hold group settings.
+
+<b>Commands</b>
+/export: sends you the backup file. Any admin can use it.
+/import: loads a backup file into this group. Only the group creator can use it.
+/reset: clears all Rumi settings of this group. Only the group creator can use it, and it asks to confirm first.
+
+<b>How to export</b>
+Type /export in your group. Rumi sends a file named like rumi_backup_12345.json. Keep it safe, it is your backup.
+
+<b>How to import</b>
+1. Send the backup file into the group you want to fill.
+2. Reply to that file with /import
+3. Rumi loads everything and tells you how many entries were added.
+Important: import replaces the settings of the sections found in the file. Anything in those sections that is not in the file is removed. If something goes wrong, nothing is changed.
+
+<b>How to reset</b>
+Type /reset. Rumi shows two buttons: Yes, reset and Cancel. Only the group creator can press them. After Yes, every setting listed above is wiped and the group starts fresh.
+
+<b>Example</b>
+<blockquote>Group A is perfect. In group A: /export
+Open group B, forward the file there, reply to it with /import
+Group B now has the same notes, filters and rules ✨</blockquote>
+
+<b>What members see</b>
+Members see nothing special. Only admins and the creator use these commands. If a normal member tries, Rumi politely says it is for admins or the creator only.
+
+<b>Good to know</b>
+Active raid timers and the last welcome message are not saved on purpose, so an old raid mode never comes back by mistake.
+"""),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"
