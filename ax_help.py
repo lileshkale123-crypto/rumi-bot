@@ -83,6 +83,47 @@ PAGES = {
              "/unpinall\n/pinned: jump to the pinned message\n"
              "/antichannelpin on: undo Telegram's auto-pin of channel posts\n"
              "/cleanlinked on: delete posts from the linked channel"),
+    "welcome": ("👋", "Welcome",
+               "/welcome on or off: greet new members\n"
+               "/setwelcome text: set the message (or send a photo with it)\n"
+               "/resetwelcome: back to default\n"
+               "/goodbye, /setgoodbye, /resetgoodbye: same for leavers\n"
+               "/cleanwelcome on: delete the old welcome\n"
+               "/welcomehelp: all fillings, random replies and buttons"),
+    "captcha": ("🔐", "Captcha",
+               "/captcha on or off: mute new joiners until verified\n"
+               "/captchamode button, math or text\n"
+               "/captchakick on or off: remove people who do not verify\n"
+               "/captchakicktime 5m: time allowed to verify\n"
+               "/captchamutetime 1h: mute after verifying (0 = none)\n"
+               "/setcaptchatext text: custom button text\n"
+               "/resetcaptchatext: back to default\n"
+               "Needs /welcome on first."),
+    "clean": ("🧹", "Cleaning",
+               "/cleancommand all, admin, user or other: delete command messages\n"
+               "/keepcommand: stop deleting a type\n"
+               "/cleancommandtypes: what the types mean\n"
+               "/cleanservice all, join, leave, photo, pin, title, videochat, other\n"
+               "/keepservice or /nocleanservice: stop cleaning a type\n"
+               "/cleanservicetypes: what the types mean"),
+    "disable": ("🚫", "Disabling",
+               "/disable command: members cannot use it\n"
+               "/enable command: allow it again\n"
+               "/disabled: list disabled commands\n"
+               "/disableable: what cannot be disabled\n"
+               "/disabledel on: delete the blocked command\n"
+               "/disableadmin on: block admins too"),
+    "logs": ("📋", "Log Channel",
+               "/setlog -100123...: link a log channel (bot must be admin there)\n"
+               "/unsetlog: remove it\n"
+               "/logchannel: show the link\n"
+               "/nolog category: stop logging one category\n"
+               "/log category: log it again\n"
+               "/logcategories: list categories"),
+    "misc3": ("⚙️", "Admin Settings",
+               "/anonadmin on: anonymous admins can use admin commands\n"
+               "/adminerror on or off: reply when a member uses an admin command\n"
+               "/silentactions on: hide ban, mute and warn notices (needs /setlog)"),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"

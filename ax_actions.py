@@ -70,6 +70,23 @@ async def run(context, chat_id, user, action, reason=None):
         extra = ""
     if reason:
         extra += f"\n📝 {esc(reason)}"
+    try:
+        import ax_log
+        cat = {'warn': 'warn', 'tban': 'ban', 'ban': 'ban',
+               'tmute': 'mute', 'mute': 'mute',
+               'kick': 'kick'}.get(name, 'settings')
+        await ax_log.send_log(
+            bot, pool, chat_id, cat,
+            f'<b>{name}</b>: {esc(user.first_name)} '
+            f'(<code>{user.id}</code>){extra}')
+    except Exception:
+        pass
+    try:
+        import ax_misc3
+        if chat_id in ax_misc3.SILENT:
+            return
+    except Exception:
+        pass
     if silent:
         return
     try:

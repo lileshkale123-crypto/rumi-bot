@@ -177,6 +177,22 @@ def main() -> None:
     ax_reports.register(application)
     import ax_pins
     ax_pins.register(application)
+    import ax_welcome2
+    ax_welcome2.register(application)
+    import ax_captcha
+    ax_captcha.register(application)
+    import ax_captcha2
+    ax_captcha2.register(application)
+    import ax_cleancmd
+    ax_cleancmd.register(application)
+    import ax_cleanservice
+    ax_cleanservice.register(application)
+    import ax_disable
+    ax_disable.register(application)
+    import ax_log
+    ax_log.register(application)
+    import ax_misc3
+    ax_misc3.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete

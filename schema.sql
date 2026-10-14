@@ -317,3 +317,64 @@ CREATE TABLE IF NOT EXISTS ax_pin_settings (
     antichannelpin BOOLEAN NOT NULL DEFAULT FALSE,
     cleanlinked BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS clean_welcome BOOLEAN DEFAULT FALSE;
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS last_welcome_id BIGINT;
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS welcome_noformat BOOLEAN DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS ax_captcha_settings (
+    chat_id BIGINT PRIMARY KEY,
+    enabled BOOLEAN DEFAULT FALSE,
+    mode TEXT DEFAULT 'button',
+    mute_secs INT DEFAULT 0,
+    kick BOOLEAN DEFAULT TRUE,
+    kick_secs INT DEFAULT 300,
+    rules BOOLEAN DEFAULT FALSE,
+    btn_text TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ax_captcha_pending (
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    answer TEXT,
+    msg_id BIGINT,
+    expires TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ax_cleancmd (
+    chat_id BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    PRIMARY KEY (chat_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS ax_cleanservice (
+    chat_id BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    PRIMARY KEY (chat_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS ax_disabled (
+    chat_id BIGINT NOT NULL,
+    cmd TEXT NOT NULL,
+    PRIMARY KEY (chat_id, cmd)
+);
+
+CREATE TABLE IF NOT EXISTS ax_disable_settings (
+    chat_id BIGINT PRIMARY KEY,
+    del_msg BOOLEAN DEFAULT FALSE,
+    admin_too BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS ax_log_settings (
+    chat_id BIGINT PRIMARY KEY,
+    log_chat BIGINT,
+    off_cats TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS ax_misc_settings (
+    chat_id BIGINT PRIMARY KEY,
+    anon_admin BOOLEAN DEFAULT FALSE,
+    admin_error BOOLEAN DEFAULT TRUE,
+    silent_actions BOOLEAN DEFAULT FALSE
+);

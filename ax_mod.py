@@ -86,6 +86,19 @@ def make_cmd(kind):
         except Exception as e:
             await say(update, f"⚠️ <b>Couldn't do that</b>\n<blockquote>{esc(e)}</blockquote>")
             return
+        try:
+            import ax_log
+            cat = {'mute': 'mute', 'unmute': 'mute', 'ban': 'ban',
+                   'unban': 'ban', 'kick': 'kick'}.get(kind)
+            if cat:
+                await ax_log.send_log(
+                    context.bot, context.bot_data['pool'],
+                    update.effective_chat.id, cat,
+                    f'<b>{kind}</b>: {esc(target.first_name)} '
+                    f'(<code>{target.id}</code>)\n'
+                    f'By: {esc(update.effective_user.first_name)}')
+        except Exception:
+            pass
         icon, title = META[kind]
         kb = None
         if kind in UNDO:

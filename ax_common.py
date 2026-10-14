@@ -20,12 +20,25 @@ def btn(text, data=None, url=None, style=None):
     return InlineKeyboardButton(text, callback_data=data, **kw)
 
 
+import time as _time
+ANON_ON = set()
+_ADMIN_CACHE = {}
+
+
 async def is_admin(bot, chat_id, user_id) -> bool:
+    if user_id == 1087968824:
+        return chat_id in ANON_ON
+    now = _time.time()
+    hit = _ADMIN_CACHE.get((chat_id, user_id))
+    if hit and now - hit[1] < 60:
+        return hit[0]
     try:
         m = await bot.get_chat_member(chat_id, user_id)
-        return m.status in ADMIN_STATES
+        ok = m.status in ADMIN_STATES
     except Exception:
         return False
+    _ADMIN_CACHE[(chat_id, user_id)] = (ok, now)
+    return ok
 
 
 async def bot_is_admin(bot, chat_id) -> bool:

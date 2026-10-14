@@ -4,6 +4,8 @@ import os
 from telegram.constants import ParseMode
 from telegram.ext import CommandHandler, MessageHandler, filters
 
+from telegram import LinkPreviewOptions
+import ax_fill
 from ax_common import esc, is_admin
 
 IMG = "assets/rumi-start-v2.png"
@@ -71,25 +73,58 @@ def make_set(kind):
 async def announce(context, chat, kind, member):
     if member.id == context.bot.id:
         return
-    text, enabled, photo = await get(context.bot_data["pool"], chat.id, kind)
+    pool = context.bot_data["pool"]
+    text, enabled, photo = await get(pool, chat.id, kind)
     if not enabled:
         return
-    tpl = text or DEFAULTS[kind]
-    try:
-        body = tpl.format(first_name=esc(member.first_name), chat_name=esc(chat.title or "this group"))
-    except Exception:
-        body = tpl
-    kw = {"parse_mode": ParseMode.HTML}
+    raw = ax_fill.pick(text or DEFAULTS[kind])
+    body, rows, flags = ax_fill.parse(raw)
+    body = ax_fill.fill(body, member, chat)
+    kb = ax_fill.keyboard(rows)
+    kw = {"parse_mode": ParseMode.HTML,
+          "disable_notification": flags["nonotif"],
+          "protect_content": flags["protect"]}
+    if kb:
+        kw["reply_markup"] = kb
+    if kind == "welcome":
+        try:
+            async with pool.acquire() as c:
+                r = await c.fetchrow(
+                    "SELECT clean_welcome cw, last_welcome_id lw "
+                    "FROM ax_settings WHERE chat_id=$1", chat.id)
+            if r and r["cw"] and r["lw"]:
+                await context.bot.delete_message(chat.id, r["lw"])
+        except Exception:
+            pass
+    sent = None
     try:
         if photo:
-            await context.bot.send_photo(chat.id, photo, caption=body, **kw)
+            sent = await context.bot.send_photo(
+                chat.id, photo, caption=body,
+                has_spoiler=flags["mediaspoiler"], **kw)
         elif kind == "welcome" and os.path.exists(IMG):
             with open(IMG, "rb") as f:
-                await context.bot.send_photo(chat.id, f, caption=body, **kw)
+                sent = await context.bot.send_photo(
+                    chat.id, f, caption=body,
+                    has_spoiler=flags["mediaspoiler"], **kw)
         else:
-            await context.bot.send_message(chat.id, body, **kw)
+            sent = await context.bot.send_message(
+                chat.id, body,
+                link_preview_options=LinkPreviewOptions(
+                    is_disabled=not flags["preview"]), **kw)
     except Exception:
-        await context.bot.send_message(chat.id, body)
+        try:
+            sent = await context.bot.send_message(chat.id, body)
+        except Exception:
+            sent = None
+    if kind == "welcome" and sent:
+        try:
+            async with pool.acquire() as c:
+                await c.execute(
+                    "UPDATE ax_settings SET last_welcome_id=$1 "
+                    "WHERE chat_id=$2", sent.message_id, chat.id)
+        except Exception:
+            pass
 
 
 async def on_join(update, context):
