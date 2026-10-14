@@ -47,6 +47,9 @@ async def flood_watcher(update, context):
     _hits[key] = []
     if await is_admin(context.bot, chat.id, user.id):
         return
+    import ax_approve
+    if await ax_approve.is_approved(context.bot_data["pool"], chat.id, user.id):
+        return
     try:
         await context.bot.restrict_chat_member(
             chat.id, user.id, permissions=ChatPermissions(can_send_messages=False),

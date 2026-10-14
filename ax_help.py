@@ -36,6 +36,26 @@ PAGES = {
               "/del: reply to one message to remove it\n"
               "/purgefrom then /purgeto: mark the start, then reply to the end\n\n"
               "I need the Delete messages permission. Telegram only lets me remove messages from the last 48 hours."),
+    "approve": ("✅", "Approvals",
+                "Approved users skip locks, blocklists and flood checks.\n\n"
+                "/approve: reply or @username\n/unapprove\n/approved: list everyone\n"
+                "/unapproveall\n/approval: check someone's status"),
+    "locks": ("🔒", "Locks",
+              "Locked things get deleted for normal members. Admins and approved users are exempt.\n\n"
+              "/lock sticker photo: lock one or more types\n/unlock sticker\n/locks: see what is locked\n"
+              "/locktypes: every lock type\n/lockwarns on: breaking a lock adds a warning\n\n"
+              "Custom punishment: /lock invitelink ### no ads {ban}\n"
+              "Reset it: /lock invitelink ###\n\n"
+              "Allowlist: /allowlist @channel or a link, /rmallowlist, /rmallowlistall"),
+    "blocklist": ("🚫", "Blocklists",
+                  "Messages with blocklisted words get deleted.\n\n"
+                  "/addblocklist word reason\n/addblocklist \"a sentence\" reason\n"
+                  "/addblocklist (hi, hey) reason: several at once\n/rmblocklist word\n/blocklist\n\n"
+                  "Wildcards: ? one character, * a run of characters, ** anything\n"
+                  "Prefixes: exact:hi and prefix:hi\n\n"
+                  "Settings: /blocklistmode warn (or ban, mute, kick, tban, tmute)\n"
+                  "/blocklistdelete on or off\n/setblocklistreason text\n\n"
+                  "Per word: /addblocklist boo Scary {tmute 6h} or {warn} {nodel}"),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"

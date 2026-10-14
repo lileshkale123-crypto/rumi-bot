@@ -247,3 +247,43 @@ CREATE TABLE IF NOT EXISTS ax_warn_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ax_warn_log_idx ON ax_warn_log (chat_id, user_id);
+
+CREATE TABLE IF NOT EXISTS ax_approved (
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ax_locks (
+    chat_id BIGINT NOT NULL,
+    lock_type TEXT NOT NULL,
+    action TEXT,
+    reason TEXT,
+    PRIMARY KEY (chat_id, lock_type)
+);
+
+CREATE TABLE IF NOT EXISTS ax_lock_settings (
+    chat_id BIGINT PRIMARY KEY,
+    lockwarns BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS ax_allowlist (
+    chat_id BIGINT NOT NULL,
+    item TEXT NOT NULL,
+    PRIMARY KEY (chat_id, item)
+);
+
+CREATE TABLE IF NOT EXISTS ax_blocklist (
+    chat_id BIGINT NOT NULL,
+    trigger TEXT NOT NULL,
+    reason TEXT,
+    PRIMARY KEY (chat_id, trigger)
+);
+
+CREATE TABLE IF NOT EXISTS ax_blocklist_settings (
+    chat_id BIGINT PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'nothing',
+    mode_secs INT NOT NULL DEFAULT 3600,
+    delete_msg BOOLEAN NOT NULL DEFAULT TRUE,
+    default_reason TEXT
+);
