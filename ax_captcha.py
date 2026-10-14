@@ -48,10 +48,12 @@ async def join(update, context):
         if m.is_bot or m.id == context.bot.id:
             continue
         if await ax_approve.is_approved(pool, chat.id, m.id):
+            __import__('logging').warning('CAPTCHA skip: approved %s', m.id)
             continue
         try:
             await context.bot.restrict_chat_member(chat.id, m.id, MUTED)
-        except Exception:
+        except Exception as e:
+            __import__('logging').warning('CAPTCHA mute failed: %r', e)
             return
         q, ans = challenge(s["mode"])
         name = esc(m.first_name or "friend")
