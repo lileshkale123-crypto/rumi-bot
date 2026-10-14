@@ -117,6 +117,12 @@ def main() -> None:
     ax_extras.register(application)
     import ax_backup
     ax_backup.register(application)
+    import ax_topics
+    ax_topics.register(application)
+    import ax_connect
+    ax_connect.register(application)
+    import ax_lang
+    ax_lang.register(application)
     import ax_settings
     ax_settings.register(application)
     import ax_afk

@@ -212,6 +212,92 @@ Members see nothing special. Only admins and the creator use these commands. If 
 <b>Good to know</b>
 Active raid timers and the last welcome message are not saved on purpose, so an old raid mode never comes back by mistake.
 """),
+    "topics": ("🗂", "Topics", """<b>What it does</b>
+<blockquote>Topics split one big group into neat rooms, like Memes, Music or Support. These commands let admins create and manage those rooms without opening group settings 💫</blockquote>
+
+<b>Before you start</b>
+1. Turn on Topics in your group settings (the group must be a supergroup).
+2. Make Rumi an admin with the Manage Topics right.
+
+<b>Commands</b>
+/newtopic name: creates a new topic.
+/renametopic name: renames the topic you are standing in.
+/closetopic: closes the current topic, so only admins can write there.
+/reopentopic: opens a closed topic again for everyone.
+/deletetopic: deletes the current topic and everything inside it.
+
+<b>Examples</b>
+<blockquote>/newtopic Memes and fun
+Rumi creates a topic called Memes and fun.
+
+Inside that topic:
+/renametopic Chill zone
+/closetopic
+/reopentopic</blockquote>
+
+<b>Good to know</b>
+/renametopic, /closetopic, /reopentopic and /deletetopic must be sent inside the topic you want to change. /newtopic can be sent anywhere in the group.
+/deletetopic cannot be undone, so use it carefully.
+
+<b>What members see</b>
+Members only see the result: a new room appears, a name changes, or a room becomes read-only. If a normal member tries these commands, Rumi politely says they are for admins only.
+
+<b>If something fails</b>
+Most of the time it means Rumi is missing the Manage Topics right, or the group does not have Topics turned on. Fix that and try again ✨
+"""),
+    "connect": ("🔗", "Connections", """<b>What it does</b>
+<blockquote>Links your private chat with Rumi to one of your groups. It is the first step to managing a group from your DM, without cluttering the group chat 💫</blockquote>
+
+<b>Commands</b>
+/connect group_id: links you to a group. You must be an admin there, and Rumi must be inside it.
+/connection: shows which group you are linked to right now.
+/disconnect: removes the link.
+/reconnect: shows a button to link your last group again in one tap.
+
+<b>All of these are used in a private chat with Rumi, not inside the group.</b>
+
+<b>How to find the group id</b>
+Add me to the group, then ask an admin to send /id there. Copy the number. It usually starts with -100.
+
+<b>Example</b>
+<blockquote>In my private chat with Rumi:
+/connect -1001234567890
+Rumi answers: you are linked to My Group.
+
+Later:
+/connection shows the linked group
+/disconnect removes the link
+/reconnect brings it back with one tap ✨</blockquote>
+
+<b>Good to know</b>
+You can be linked to one group at a time. Connecting to another group replaces the old link.
+Only admins of that group can connect to it, so nobody can link themselves to a group they do not manage.
+
+<b>What members see</b>
+Nothing. Connections happen privately in your DM, so the group stays clean.
+
+<b>Coming next</b>
+Once linked, more group commands will be usable from your DM. For now the link is saved and ready ✨
+"""),
+    "lang": ("🌐", "Language", """<b>What it does</b>
+<blockquote>Lets every member pick the language Rumi uses with them. Right now English and Hindi are available, and more languages will come later 💫</blockquote>
+
+<b>Command</b>
+/setlang: shows language buttons. Tap the one you like and Rumi saves it.
+
+<b>Example</b>
+<blockquote>/setlang
+Rumi shows: English and Hindi buttons.
+Tap Hindi, and Rumi confirms in Hindi ✨</blockquote>
+
+<b>Good to know</b>
+Your choice is personal. It is saved only for you, so a friend in the same group can use a different language.
+You can change it any time by sending /setlang again.
+At the moment the language applies to the language menu itself. Other Rumi messages will be translated step by step in future updates.
+
+<b>What members see</b>
+Two buttons and a short confirmation message. Nothing else changes in the group.
+"""),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"

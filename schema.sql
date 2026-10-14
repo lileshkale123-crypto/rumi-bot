@@ -383,3 +383,9 @@ CREATE TABLE IF NOT EXISTS ax_note_settings (
     chat_id BIGINT PRIMARY KEY,
     private BOOLEAN NOT NULL DEFAULT FALSE
 );
+ALTER TABLE ax_connections ADD COLUMN IF NOT EXISTS last_chat_id BIGINT;
+
+CREATE TABLE IF NOT EXISTS ax_user_lang (
+    user_id BIGINT PRIMARY KEY,
+    lang TEXT NOT NULL DEFAULT 'en'
+);
