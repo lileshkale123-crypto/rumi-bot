@@ -378,3 +378,8 @@ CREATE TABLE IF NOT EXISTS ax_misc_settings (
     admin_error BOOLEAN DEFAULT TRUE,
     silent_actions BOOLEAN DEFAULT FALSE
 );
+
+CREATE TABLE IF NOT EXISTS ax_note_settings (
+    chat_id BIGINT PRIMARY KEY,
+    private BOOLEAN NOT NULL DEFAULT FALSE
+);

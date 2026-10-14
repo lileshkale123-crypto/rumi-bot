@@ -3,9 +3,11 @@ import re
 
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-from telegram.ext import CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationHandlerStop, CommandHandler, MessageHandler, filters
 
 from ax_common import esc, is_admin
+import ax_fill
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 H = ParseMode.HTML
 KINDS = ("photo", "video", "animation", "sticker", "voice", "audio", "document")
@@ -36,17 +38,40 @@ def extract(reply, rest):
     return "text", rest or None, None
 
 
-async def deliver(msg, ctype, text, fid):
+async def deliver(msg, ctype, text, fid, raw=False, cid=None):
+    kb = None
+    kw = {}
+    flags = {}
+    if text and not raw:
+        body, rows, flags = ax_fill.parse(ax_fill.pick(text))
+        text = ax_fill.fill(body, msg.from_user, msg.chat)
+        _cid = cid or msg.chat.id
+        _un = msg.get_bot().username
+        kb = ax_fill.keyboard(rows, note_url=lambda n: f"https://t.me/{_un}?start=note_{_cid}_{n.lower()}")
+        if flags.get("nonotif"):
+            kw["disable_notification"] = True
+        if flags.get("protect"):
+            kw["protect_content"] = True
+
     async def go(pm):
         if ctype == "text":
-            await msg.reply_text(text or "…", parse_mode=pm)
+            await msg.reply_text(text or "…", parse_mode=pm,
+                                 reply_markup=kb, **kw)
         elif ctype == "sticker":
-            await msg.reply_sticker(fid)
+            await msg.reply_sticker(fid, reply_markup=kb, **kw)
         else:
-            await getattr(msg, "reply_" + ctype)(fid, caption=text, parse_mode=pm)
+            extra = {}
+            if ctype in ("photo", "video", "animation") and flags.get("mediaspoiler"):
+                extra["has_spoiler"] = True
+            await getattr(msg, "reply_" + ctype)(
+                fid, caption=text, parse_mode=pm,
+                reply_markup=kb, **kw, **extra)
+
     try:
-        await go(H)
+        await go(None if raw else H)
     except BadRequest:
+        if raw:
+            raise
         await go(None)
 
 
@@ -129,9 +154,120 @@ async def get_cmd(update, context):
         await say(update, "🔎 <b>Not found</b>\n<blockquote>No such note here. Try /notes 💫</blockquote>")
         return
     try:
-        await deliver(update.effective_message, r["content_type"], r["text_content"], r["file_id"])
+        await serve(update, context, r, context.args[0].lower(), raw=len(context.args) > 1 and context.args[1].lower() == "noformat")
     except Exception as e:
         await say(update, f"⚠️ <b>Couldn't send it</b>\n<blockquote>{esc(e)}</blockquote>")
+
+
+def match_trigger(trig, low):
+    if trig.startswith("exact:"):
+        return low.strip() == trig[6:]
+    if trig.startswith("prefix:"):
+        return low.startswith(trig[7:])
+    return re.search(r"(?<!\w)" + re.escape(trig) + r"(?!\w)", low) is not None
+
+
+def split_tags(text):
+    t = text or ""
+    f = {}
+    for k in ("admin", "private", "noprivate"):
+        f[k] = ("{" + k + "}") in t
+        t = t.replace("{" + k + "}", "")
+    return (t.strip() or None), f
+
+
+async def serve(update, context, r, name, raw=False):
+    msg, user, chat = update.effective_message, update.effective_user, update.effective_chat
+    text, f = split_tags(r["text_content"])
+    if raw:
+        text = r["text_content"]
+    if f["admin"] and not await is_admin(context.bot, chat.id, user.id):
+        await say(update, "🔒 <b>Admins only</b>\n<blockquote>This note is for admins ✨</blockquote>")
+        return
+    private = f["private"]
+    if not private and not f["noprivate"]:
+        async with context.bot_data["pool"].acquire() as c:
+            private = bool(await c.fetchval(
+                "SELECT private FROM ax_note_settings WHERE chat_id=$1", chat.id))
+    param = "note_%d_%s" % (chat.id, name)
+    if private and chat.type != "private" and re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", param):
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "📖 Open note", url="https://t.me/%s?start=%s" % (context.bot.username, param))]])
+        await msg.reply_text(
+            "📝 <b>%s</b>\n<blockquote>Tap the button to read this note in private ✨</blockquote>" % esc(name),
+            parse_mode=H, reply_markup=kb)
+        return
+    await deliver(msg, r["content_type"], text, r["file_id"], raw=raw)
+
+
+async def privatenotes_cmd(update, context):
+    if not await admin_only(update, context):
+        return
+    chat = update.effective_chat
+    arg = context.args[0].lower() if context.args else ""
+    async with context.bot_data["pool"].acquire() as c:
+        if arg in ("on", "yes", "true", "off", "no", "false"):
+            val = arg in ("on", "yes", "true")
+            await c.execute(
+                "INSERT INTO ax_note_settings (chat_id, private) VALUES ($1,$2) "
+                "ON CONFLICT (chat_id) DO UPDATE SET private=$2", chat.id, val)
+            if val:
+                await say(update, "🔐 <b>Private notes on</b>\n<blockquote>Notes now open in DM with a button ✨</blockquote>")
+            else:
+                await say(update, "📢 <b>Private notes off</b>\n<blockquote>Notes are sent right here in the group ✨</blockquote>")
+            return
+        cur = bool(await c.fetchval(
+            "SELECT private FROM ax_note_settings WHERE chat_id=$1", chat.id))
+    await say(update, "🔐 <b>Private notes: %s</b>\n<blockquote>Use /privatenotes on or off</blockquote>" % ("on" if cur else "off"))
+
+
+async def dm_note(update, context):
+    msg, user = update.effective_message, update.effective_user
+    m = re.match(r"^/start(?:@\w+)?\s+note_(-?\d+)_(.+)$", msg.text or "")
+    if not m or user is None:
+        return
+    cid, name = int(m.group(1)), m.group(2).lower()[:50]
+    async with context.bot_data["pool"].acquire() as c:
+        r = await c.fetchrow(
+            "SELECT content_type, text_content, file_id FROM ax_notes "
+            "WHERE chat_id=$1 AND name=$2", cid, name)
+    if not r:
+        await msg.reply_text(
+            "🔎 <b>Not found</b>\n<blockquote>That note is gone or never existed ✨</blockquote>",
+            parse_mode=H)
+        raise ApplicationHandlerStop
+    text, f = split_tags(r["text_content"])
+    if f["admin"] and not await is_admin(context.bot, cid, user.id):
+        await msg.reply_text(
+            "🔒 <b>Admins only</b>\n<blockquote>This note is for admins ✨</blockquote>",
+            parse_mode=H)
+        raise ApplicationHandlerStop
+    try:
+        await deliver(msg, r["content_type"], text, r["file_id"], cid=cid)
+    except Exception:
+        pass
+    raise ApplicationHandlerStop
+
+
+async def hash_watcher(update, context):
+    msg, user = update.effective_message, update.effective_user
+    if not msg or not msg.text or user is None or user.is_bot:
+        return
+    parts = msg.text[1:].split(None, 1)
+    if not parts:
+        return
+    word = parts[0].lower()[:50]
+    async with context.bot_data["pool"].acquire() as c:
+        r = await c.fetchrow(
+            "SELECT content_type, text_content, file_id FROM ax_notes "
+            "WHERE chat_id=$1 AND name=$2",
+            update.effective_chat.id, word)
+    if not r:
+        return
+    try:
+        await serve(update, context, r, word)
+    except Exception:
+        pass
 
 
 async def filter_watcher(update, context):
@@ -144,7 +280,7 @@ async def filter_watcher(update, context):
             chat.id)
     low = msg.text.lower()
     for r in rows:
-        if re.search(r"(?<!\w)" + re.escape(r["trigger_text"]) + r"(?!\w)", low):
+        if match_trigger(r["trigger_text"], low):
             try:
                 await deliver(msg, r["content_type"], r["text_content"], r["file_id"])
             except Exception:
@@ -153,6 +289,13 @@ async def filter_watcher(update, context):
 
 
 def register(app):
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.Regex(r"^/start(?:@\w+)?\s+note_"),
+        dm_note), group=-10)
+    app.add_handler(CommandHandler("privatenotes", privatenotes_cmd))
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.GROUPS & filters.Regex(r"^#"),
+        hash_watcher), group=1)
     N = ("ax_notes", "name", "note")
     F = ("ax_filters", "trigger_text", "filter")
     app.add_handler(CommandHandler("save", make_save(*N, "/save name your text\nOr reply to any media with /save name")))
