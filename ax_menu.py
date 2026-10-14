@@ -7,9 +7,6 @@ from ax_common import btn
 
 H = ParseMode.HTML
 PAGES = {
-    "mod": ("🛡️", "Moderation", "Admins only. Reply, or use @username / user ID.\n\n"
-            "/warn /unwarn: 3 warnings mute\n/mute /unmute\n/ban /unban /kick\n"
-            "/tmute /tban: timed, e.g. 30m, 2h, 1d\n/promote /demote"),
     "set": ("⚙️", "Settings", "/settings: open the menu\n/setflood 6: anti-spam\n"
             "/setwelcome text or photo\n/setgoodbye text or photo\n"
             "Tags: {first_name} {chat_name}"),
@@ -36,6 +33,7 @@ def home():
     text = ("✨ <b>Rumi Group Tools</b>\n<blockquote>Pick a category to see what I can do 💫\n"
             "Economy and games stay in /start 🌙</blockquote>")
     b = [btn(f"{i} {t}", f"axh:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
+    b.insert(0, btn("🛡️ Moderation", "axhm:home", style="primary"))
     kb = InlineKeyboardMarkup([b[0:2], b[2:4], b[4:6], [btn("✖ Close", "axh:close", style="danger")]])
     return text, kb
 
