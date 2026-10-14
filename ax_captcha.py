@@ -55,26 +55,29 @@ async def join(update, context):
         except Exception as e:
             __import__('logging').warning('CAPTCHA mute failed: %r', e)
             return
-        q, ans = challenge(s["mode"])
-        name = esc(m.first_name or "friend")
-        if q:
-            body = (f"🔐 <b>Verify, {name}</b>\n<blockquote>{q}\n"
-                    f"Send the answer here ✨</blockquote>")
-            kb = None
-        else:
-            body = (f"🔐 <b>Welcome, {name}</b>\n<blockquote>Tap the "
-                    f"button to prove you are human ✨</blockquote>")
-            label = s["btn_text"] or "✅ I am human"
-            kb = InlineKeyboardMarkup([[btn(label, f"axc:{m.id}")]])
-        sent = await context.bot.send_message(
-            chat.id, body, parse_mode=ParseMode.HTML, reply_markup=kb)
-        exp = datetime.now(timezone.utc) + timedelta(seconds=s["kick_secs"])
-        async with pool.acquire() as c:
-            await c.execute(
-                "INSERT INTO ax_captcha_pending VALUES ($1,$2,$3,$4,$5) "
-                "ON CONFLICT (chat_id,user_id) DO UPDATE SET answer=$3, "
-                "msg_id=$4, expires=$5", chat.id, m.id, ans,
-                sent.message_id, exp)
+        try:
+            q, ans = challenge(s["mode"])
+            name = esc(m.first_name or "friend")
+            if q:
+                body = (f"🔐 <b>Verify, {name}</b>\n<blockquote>{q}\n"
+                        f"Send the answer here ✨</blockquote>")
+                kb = None
+            else:
+                body = (f"🔐 <b>Welcome, {name}</b>\n<blockquote>Tap the "
+                        f"button to prove you are human ✨</blockquote>")
+                label = s["btn_text"] or "✅ I am human"
+                kb = InlineKeyboardMarkup([[btn(label, f"axc:{m.id}")]])
+            sent = await context.bot.send_message(
+                chat.id, body, parse_mode=ParseMode.HTML, reply_markup=kb)
+            exp = datetime.now(timezone.utc) + timedelta(seconds=s["kick_secs"])
+            async with pool.acquire() as c:
+                await c.execute(
+                    "INSERT INTO ax_captcha_pending VALUES ($1,$2,$3,$4,$5) "
+                    "ON CONFLICT (chat_id,user_id) DO UPDATE SET answer=$3, "
+                    "msg_id=$4, expires=$5", chat.id, m.id, ans,
+                    sent.message_id, exp)
+        except Exception:
+            __import__('logging').exception('CAPTCHA send failed')
 
 
 async def finish(context, chat_id, user_id, s):

@@ -75,6 +75,13 @@ async def run(context, chat_id, user, action, reason=None):
         cat = {'warn': 'warn', 'tban': 'ban', 'ban': 'ban',
                'tmute': 'mute', 'mute': 'mute',
                'kick': 'kick'}.get(name, 'settings')
+        _r = str(reason or "")
+        if _r.startswith("Flooding"):
+            cat = "flood"
+        elif _r.startswith("Locked"):
+            cat = "lock"
+        elif _r.startswith("Blocklisted"):
+            cat = "blocklist"
         await ax_log.send_log(
             bot, pool, chat_id, cat,
             f'<b>{name}</b>: {esc(user.first_name)} '

@@ -30,7 +30,7 @@ async def is_admin(bot, chat_id, user_id) -> bool:
         return chat_id in ANON_ON
     now = _time.time()
     hit = _ADMIN_CACHE.get((chat_id, user_id))
-    if hit and now - hit[1] < 60:
+    if hit and now - hit[1] < 15:
         return hit[0]
     try:
         m = await bot.get_chat_member(chat_id, user_id)

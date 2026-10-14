@@ -27,6 +27,12 @@ def card(icon, title, name, extra=""):
 
 async def say(update, text, kb=None):
     try:
+        import ax_misc3
+        if "Admins only" in text and update.effective_chat.id in ax_misc3.QUIET:
+            return None
+    except Exception:
+        pass
+    try:
         import ax_actiontopic
         tid = ax_actiontopic.MAP.get(update.effective_chat.id)
     except Exception:
