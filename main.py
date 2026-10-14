@@ -121,6 +121,8 @@ def main() -> None:
     ax_topics.register(application)
     import ax_connect
     ax_connect.register(application)
+    import ax_connect2
+    ax_connect2.register(application)
     import ax_actiontopic
     ax_actiontopic.register(application)
     import ax_lang
@@ -205,6 +207,8 @@ def main() -> None:
     ax_log.register(application)
     import ax_misc3
     ax_misc3.register(application)
+    import ax_dmproxy
+    ax_dmproxy.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
