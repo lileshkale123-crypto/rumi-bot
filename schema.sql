@@ -299,3 +299,21 @@ CREATE TABLE IF NOT EXISTS ax_raid_settings (
 ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_mode TEXT NOT NULL DEFAULT 'tmute';
 ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_mode_secs INT NOT NULL DEFAULT 0;
 ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_clear BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS ax_rules (
+    chat_id BIGINT PRIMARY KEY,
+    rules_text TEXT,
+    private BOOLEAN NOT NULL DEFAULT FALSE,
+    button_text TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ax_report_settings (
+    chat_id BIGINT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS ax_pin_settings (
+    chat_id BIGINT PRIMARY KEY,
+    antichannelpin BOOLEAN NOT NULL DEFAULT FALSE,
+    cleanlinked BOOLEAN NOT NULL DEFAULT FALSE
+);

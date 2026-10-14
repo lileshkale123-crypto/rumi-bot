@@ -68,6 +68,21 @@ PAGES = {
              "/antiraid: switch on (or /antiraid 3h for a set time)\n/antiraid off\n"
              "/raidtime 6h: how long raid mode lasts\n/raidactiontime 1h: how long joiners are banned\n"
              "/autoantiraid 15: starts by itself if 15 people join in a minute\n/autoantiraid off"),
+    "rules": ("📜", "Rules",
+              "/rules: read the group rules\n/setrules text: set them (admins)\n/resetrules\n"
+              "/privaterules on: /rules is sent to their PM\n"
+              "/setrulesbutton text and /resetrulesbutton: name of the rules button"),
+    "report": ("🚨", "Reports",
+               "Members can call the admins to a bad message.\n\n"
+               "Reply to the message with /report or @admin\n"
+               "/reports on or off (admins)\n\n"
+               "Admins cannot report, and admins cannot be reported."),
+    "pins": ("📌", "Pins",
+             "/pin: reply to a message (add loud to notify everyone)\n"
+             "/permapin text: I send and pin your text\n/unpin: reply to unpin one, or unpins the latest\n"
+             "/unpinall\n/pinned: jump to the pinned message\n"
+             "/antichannelpin on: undo Telegram's auto-pin of channel posts\n"
+             "/cleanlinked on: delete posts from the linked channel"),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"
