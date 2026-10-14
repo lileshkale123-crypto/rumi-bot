@@ -28,13 +28,27 @@ PAGES["chat"] = ("💬", "Chat and Economy",
     "/vault /deposit /withdraw /work /spin\n"
     "/bluff /mafia /stopmafia /mafiatop")
 
+PAGES["more"] = ("\u2728", "More Commands",
+    "/clan: build or join a Clan\n"
+    "/topgroups: see the top groups\n"
+    "/tagall: mention everyone (admins)\n"
+    "/admins: call the group admins\n"
+    "/speak: Rumi speaks\n"
+    "/kang: take a sticker for yourself\n"
+    "/id: get a user or chat ID\n"
+    "/ping: check if Rumi is awake\n"
+    "/setlang: choose English or Hindi\n"
+    "/privacy: what Rumi keeps\n"
+    "/donate: support Rumi\n"
+    "/modhelp: full moderation guide")
+
 
 def home():
     text = ("✨ <b>Rumi Group Tools</b>\n<blockquote>Pick a category to see what I can do 💫\n"
-            "Economy and games stay in /start 🌙</blockquote>")
+            "Economy and games are in the Chat page 🌙</blockquote>")
     b = [btn(f"{i} {t}", f"axh:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
     b.insert(0, btn("🛡️ Moderation", "axhm:home", style="primary"))
-    kb = InlineKeyboardMarkup([b[0:2], b[2:4], b[4:6], [btn("✖ Close", "axh:close", style="danger")]])
+    kb = InlineKeyboardMarkup([*[b[i:i+2] for i in range(0, len(b), 2)], [btn("✖ Close", "axh:close", style="danger")]])
     return text, kb
 
 
@@ -63,6 +77,14 @@ async def menu_cb(update, context):
         pass
 
 
+async def start_menu_cb(update, context):
+    q = update.callback_query
+    await q.answer()
+    text, kb = home()
+    await q.message.reply_text(text, parse_mode=H, reply_markup=kb)
+
+
 def register(app):
     app.add_handler(CommandHandler("features", features_cmd))
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^axh:"))
+    app.add_handler(CallbackQueryHandler(start_menu_cb, pattern="^startmenu$"))

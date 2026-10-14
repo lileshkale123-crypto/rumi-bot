@@ -298,6 +298,27 @@ At the moment the language applies to the language menu itself. Other Rumi messa
 <b>What members see</b>
 Two buttons and a short confirmation message. Nothing else changes in the group.
 """),
+    "extras": ("🎈", "Extras", """<b>What it does</b>
+<blockquote>Small helpful commands that anyone can use. No setup needed, just type them 💫</blockquote>
+
+<b>Commands</b>
+/runs: Rumi shows a playful message about you running away. Just for fun.
+/limits: shows Telegram's limits for message length, captions, buttons and note names. Handy when a long note fails to send.
+/privacy: explains what Rumi keeps so its features can work, and what it never asks for.
+/markdownhelp: shows the text tags Rumi understands in notes, filters and welcome texts, like bold, italic, spoiler and links.
+/donate: tells you the best way to support Rumi.
+
+<b>Example</b>
+<blockquote>/limits
+Rumi lists: a text message holds up to 4096 characters, a caption up to 1024, and a message can carry up to 100 buttons ✨</blockquote>
+
+<b>Good to know</b>
+These commands work in groups and in private chat.
+/markdownhelp is a quick reminder. The full guide, with fillings and buttons, is in the Notes page of /help.
+
+<b>What members see</b>
+A short, friendly message with a quote box. Nothing is saved or changed.
+"""),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"
@@ -307,7 +328,7 @@ Two buttons and a short confirmation message. Nothing else changes in the group.
 
 
 def mod_home():
-    text = "🛡️ <b>Moderation</b>\n<blockquote>Pick a topic to see how each command works 💫</blockquote>"
+    text = "🛡️ <b>Moderation</b>\n<blockquote>Pick a topic to see how each command works.\nBlue = topics, green = back, red = close 💫</blockquote>"
     b = [btn(f"{i} {t}", f"axhm:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
     rows = [b[j:j + 2] for j in range(0, len(b), 2)]
     rows.append([btn("⬅ Back", "axh:home"), btn("✖ Close", "axh:close", style="danger")])

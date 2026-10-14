@@ -389,3 +389,8 @@ CREATE TABLE IF NOT EXISTS ax_user_lang (
     user_id BIGINT PRIMARY KEY,
     lang TEXT NOT NULL DEFAULT 'en'
 );
+
+CREATE TABLE IF NOT EXISTS ax_action_topics (
+    chat_id BIGINT PRIMARY KEY,
+    thread_id BIGINT NOT NULL
+);

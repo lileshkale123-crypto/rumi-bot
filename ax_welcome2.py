@@ -32,6 +32,10 @@ def make_toggle(kind):
             return
         msg, chat = update.effective_message, update.effective_chat
         pool = context.bot_data["pool"]
+        if context.args and context.args[0].lower() == "noformat":
+            t, e, p = await get(pool, chat.id, kind)
+            await msg.reply_text(t or DEFAULTS[kind])
+            return
         v = _yn(context.args[0] if context.args else "")
         if v is None:
             t, e, p = await get(pool, chat.id, kind)

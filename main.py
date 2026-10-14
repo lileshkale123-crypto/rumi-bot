@@ -121,6 +121,8 @@ def main() -> None:
     ax_topics.register(application)
     import ax_connect
     ax_connect.register(application)
+    import ax_actiontopic
+    ax_actiontopic.register(application)
     import ax_lang
     ax_lang.register(application)
     import ax_settings

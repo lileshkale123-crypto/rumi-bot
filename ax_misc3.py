@@ -60,10 +60,12 @@ def make(col, name, store, invert=False):
             return
         pool, cid = g
         v = _yn(context.args)
+        cur = ((cid not in store) if invert else (cid in store))
         msg = update.effective_message
         if v is None:
             await msg.reply_text(
-                f"<blockquote>Use /{name} on or off</blockquote>",
+                f"{'✅' if cur else '🚫'} <b>{name} is {'on' if cur else 'off'}</b>\n"
+                f"<blockquote>Use /{name} on or off to change it</blockquote>",
                 parse_mode=H)
             return
         if name == "silentactions" and v:

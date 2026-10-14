@@ -18,16 +18,12 @@ PLACEHOLDER_PHOTO_URL = "https://raw.githubusercontent.com/lileshkale123-crypto/
 COMMAND_LIST = [
     ("/wallet", "Check your Wallet"),
     ("/claim", "Claim your daily Reward"),
-    ("/pay", "Send coins to a friend"),
     ("/guard", "Raise a protective Guard"),
+    ("/pay", "Send coins to a friend"),
     ("/rob", "Attempt a heist on someone"),
-    ("/rankings", "View the Rankings"),
-    ("/bluff", "Play Shadow Bluff with friends"),
-    ("/mafia", "Play Mafia with friends"),
-    ("/vault", "Keep coins safe in your Vault"),
-    ("/work", "Work for coins every hour"),
     ("/spin", "Spin the daily wheel"),
-    ("/mafiatop", "Mafia leaderboard"),
+    ("/work", "Work for coins every hour"),
+    ("/help", "Open the full guide"),
 ]
 
 CATEGORY_META = {

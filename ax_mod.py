@@ -26,6 +26,18 @@ def card(icon, title, name, extra=""):
 
 
 async def say(update, text, kb=None):
+    try:
+        import ax_actiontopic
+        tid = ax_actiontopic.MAP.get(update.effective_chat.id)
+    except Exception:
+        tid = None
+    if tid:
+        try:
+            return await update.get_bot().send_message(
+                update.effective_chat.id, text, parse_mode=ParseMode.HTML,
+                reply_markup=kb, message_thread_id=tid)
+        except Exception:
+            pass
     await update.effective_message.reply_text(
         text, parse_mode=ParseMode.HTML, reply_markup=kb)
 

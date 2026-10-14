@@ -62,15 +62,18 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
 
 
 def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    def _b(text, data=None, url=None, style=None):
+        kw = {"api_kwargs": {"style": style}} if style else {}
+        if url:
+            return InlineKeyboardButton(text, url=url, **kw)
+        return InlineKeyboardButton(text, callback_data=data, **kw)
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌟 Features", callback_data="features")],
-        [
-            InlineKeyboardButton("👥 Community", url="https://t.me/YPTLEGENDS"),
-            InlineKeyboardButton("🎮 Games", callback_data="games"),
-        ],
-        [InlineKeyboardButton("📣 Updates", url="https://t.me/ZENITHREIGNS"),
-         InlineKeyboardButton("\U0001F451 Owner", url="https://t.me/lordzenithx")],
-        [InlineKeyboardButton("➕ Add Rumi to your group", url=f"https://t.me/{bot_username}?startgroup=true")],
+        [_b("\u2795 Add Rumi to your group", url=f"https://t.me/{bot_username}?startgroup=true", style="success")],
+        [_b("\U0001F4D6 Help", data="startmenu", style="primary"),
+         _b("\U0001F3AE Games", data="games")],
+        [_b("\U0001F465 Community", url="https://t.me/YPTLEGENDS"),
+         _b("\U0001F4E3 Updates", url="https://t.me/ZENITHREIGNS")],
+        [_b("\U0001F451 Owner", url="https://t.me/lordzenithx")],
     ])
 
 
