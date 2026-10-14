@@ -167,6 +167,10 @@ def main() -> None:
     ax_locks.register(application)
     import ax_blocklist
     ax_blocklist.register(application)
+    import ax_raid
+    ax_raid.register(application)
+    import ax_flood
+    ax_flood.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete

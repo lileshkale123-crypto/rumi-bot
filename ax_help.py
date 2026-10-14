@@ -56,6 +56,18 @@ PAGES = {
                   "Settings: /blocklistmode warn (or ban, mute, kick, tban, tmute)\n"
                   "/blocklistdelete on or off\n/setblocklistreason text\n\n"
                   "Per word: /addblocklist boo Scary {tmute 6h} or {warn} {nodel}"),
+    "flood": ("🌊", "Antiflood",
+              "Stops people sending too many messages too fast.\n\n"
+              "/flood: see your settings\n/setflood 7: trigger after 7 messages\n"
+              "/setfloodtimer 10 30s: 10 messages within 30 seconds\n/setfloodtimer off\n"
+              "/floodmode ban, mute, kick, tban or tmute (example: /floodmode tmute 3h)\n"
+              "/clearflood on: also delete the flood messages\n\n"
+              "Admins and approved users are never affected."),
+    "raid": ("🚨", "Antiraid",
+             "During a raid, every new member is temp-banned.\n\n"
+             "/antiraid: switch on (or /antiraid 3h for a set time)\n/antiraid off\n"
+             "/raidtime 6h: how long raid mode lasts\n/raidactiontime 1h: how long joiners are banned\n"
+             "/autoantiraid 15: starts by itself if 15 people join in a minute\n/autoantiraid off"),
     "admin": ("👮", "Admin Tools",
               "/promote and /demote: reply or @username\n"
               "/adminlist: who runs this group\n"

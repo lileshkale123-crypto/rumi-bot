@@ -287,3 +287,15 @@ CREATE TABLE IF NOT EXISTS ax_blocklist_settings (
     delete_msg BOOLEAN NOT NULL DEFAULT TRUE,
     default_reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ax_raid_settings (
+    chat_id BIGINT PRIMARY KEY,
+    raid_until TIMESTAMPTZ,
+    raid_secs INT NOT NULL DEFAULT 21600,
+    action_secs INT NOT NULL DEFAULT 3600,
+    auto_limit INT NOT NULL DEFAULT 0
+);
+
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_mode TEXT NOT NULL DEFAULT 'tmute';
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_mode_secs INT NOT NULL DEFAULT 0;
+ALTER TABLE ax_settings ADD COLUMN IF NOT EXISTS flood_clear BOOLEAN NOT NULL DEFAULT FALSE;

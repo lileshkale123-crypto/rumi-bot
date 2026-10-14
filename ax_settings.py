@@ -51,12 +51,8 @@ async def flood_watcher(update, context):
     if await ax_approve.is_approved(context.bot_data["pool"], chat.id, user.id):
         return
     try:
-        await context.bot.restrict_chat_member(
-            chat.id, user.id, permissions=ChatPermissions(can_send_messages=False),
-            until_date=int(now) + mute)
-        await msg.reply_text(
-            f"🚫 <b>Slow down</b>\n<blockquote>👤 <b>{esc(user.first_name)}</b> was muted for "
-            f"<b>{mute // 60} min</b> for sending too fast 💫</blockquote>", parse_mode=H)
+        import ax_flood
+        await ax_flood.punish(context, chat, user, msg, mute)
     except Exception:
         pass
 
