@@ -6,7 +6,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ax_common import esc
 
-BTN = re.compile(r"\[([^\]]+)\]\(buttonurl://([^)\s]+?)(:same)?\)")
+BTN = re.compile(
+    r"\[([^\]]+)\]\(buttonurl://([^)\s]+?)((?::(?:same|blue|green|red))*)\)")
+STYLES = {"blue": "primary", "green": "success", "red": "danger"}
 FLAGS = ("{preview}", "{nonotif}", "{protect}", "{mediaspoiler}")
 
 
@@ -20,11 +22,17 @@ def parse(text):
     """Split raw text into (body, rows, flags). Buttons marked :same share a row."""
     rows = []
     for m in BTN.finditer(text):
-        label, url, same = m.group(1), m.group(2), m.group(3)
-        if same and rows:
-            rows[-1].append((label, url))
+        label, url, opts = m.group(1), m.group(2), m.group(3) or ''
+        words = [w for w in opts.split(':') if w]
+        style = None
+        for w in words:
+            if w in STYLES:
+                style = STYLES[w]
+        item = (label, url, style)
+        if 'same' in words and rows:
+            rows[-1].append(item)
         else:
-            rows.append([(label, url)])
+            rows.append([item])
     body = BTN.sub("", text)
     flags = {f.strip("{}"): (f in body) for f in FLAGS}
     for f in FLAGS:
@@ -62,10 +70,11 @@ def keyboard(rows, rules_url=None, rules_same=False, note_url=None):
     out = []
     for r in rows:
         line = []
-        for label, url in r:
+        for label, url, style in r:
             if url.startswith("#") and note_url:
                 url = note_url(url[1:])
-            line.append(InlineKeyboardButton(label, url=url))
+            kw = {"api_kwargs": {"style": style}} if style else {}
+            line.append(InlineKeyboardButton(label, url=url, **kw))
         out.append(line)
     if rules_url:
         b = InlineKeyboardButton("📜 Rules", url=rules_url)

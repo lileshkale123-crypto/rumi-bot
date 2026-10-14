@@ -90,14 +90,47 @@ async def cleanwelcome(update, context):
 
 
 async def welcomehelp(update, context):
-    await update.effective_message.reply_text(
-        "📖 <b>Welcome fillings</b>\n<blockquote>"
-        "{first} {last} {fullname} {username} {mention} {id} {chatname}\n"
-        "{preview} {nonotif} {protect} {mediaspoiler}\n"
-        "Random: split replies with %%%\n"
-        "Button: [text](buttonurl://https://example.com)\n"
-        "Same row: add :same after the url</blockquote>",
-        parse_mode=ParseMode.HTML)
+    r = update.effective_message.reply_text
+    H = ParseMode.HTML
+    await r(
+        "👋 <b>Welcome guide 1/3: the basics</b>\n"
+        "<blockquote>/setwelcome your text sets the message.\n"
+        "Send a photo with /setwelcome as caption to add a picture.\n"
+        "/welcome on or off turns it on or off.\n"
+        "/resetwelcome goes back to the default.\n"
+        "/cleanwelcome on deletes the old welcome when a new one comes.</blockquote>\n"
+        "<b>Fillings</b> are words in curly brackets that change per person:\n"
+        "<blockquote>{first} first name\n{last} last name\n"
+        "{fullname} both names\n{username} @username, or name if none\n"
+        "{mention} a tap-able name\n{id} their id\n{chatname} group name</blockquote>"
+        "Example: <code>/setwelcome Hi {first}, welcome to {chatname}!</code>\n"
+        "Shows: <i>Hi Asha, welcome to My Group!</i>", parse_mode=H)
+    await r(
+        "🎛 <b>Welcome guide 2/3: buttons</b>\n"
+        "<blockquote>Format: [Text](buttonurl://link)\n"
+        "Put it at the end of your welcome text.</blockquote>\n"
+        "<b>Same row:</b> add <code>:same</code> to put a button beside the "
+        "one before it.\n"
+        "<b>Colours:</b> telegram allows only three, plus normal:\n"
+        "<blockquote>:blue 🔵 main action\n:green 🟢 good or safe\n"
+        ":red 🔴 warning\nno word = normal grey-tinted button</blockquote>"
+        "Colours and :same can be combined in any order.\n"
+        "Other colours (brown, purple...) are not possible, telegram decides.",
+        parse_mode=H)
+    await r(
+        "✨ <b>Welcome guide 3/3: examples</b>\n"
+        "<b>One blue button:</b>\n"
+        "<code>Welcome {first}!\n"
+        "[Our site](buttonurl://https://example.com:blue)</code>\n\n"
+        "<b>Two buttons on one row:</b>\n"
+        "<code>[Google](buttonurl://https://google.com:green)\n"
+        "[Bing](buttonurl://https://bing.com:same:red)</code>\n\n"
+        "<b>Random welcome</b> (bot picks one each time, split with %%%):\n"
+        "<code>Hello {first}! %%% Hey {first}, glad you came! "
+        "%%% Welcome {mention}!</code>\n\n"
+        "<b>Extras:</b> {preview} shows link previews, {nonotif} sends "
+        "silently, {protect} blocks forwarding, {mediaspoiler} hides the "
+        "photo until tapped.", parse_mode=H)
 
 
 def register(app):
