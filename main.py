@@ -177,6 +177,10 @@ def main() -> None:
     ax_watch.register(application)
     import ax_cheat
     ax_cheat.register(application)
+    import ax_funmode
+    ax_funmode.register(application)
+    import ax_kill
+    ax_kill.register(application)
     import ax_purge
     ax_purge.register(application)
     import ax_admin2
