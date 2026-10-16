@@ -61,6 +61,7 @@ async def render(pool, sort, page):
     nav.append(btn(f"{page}/{pages}", "noop"))
     if page < pages:
         nav.append(btn("▶", f"axp:{sort}:{page + 1}"))
+    nav.append(btn("🕵️ Cheats", "axc:r"))
     kb = InlineKeyboardMarkup([
         [btn("💵 Richest", "axp:cash:1", style="primary" if sort not in ("members", "donors") else None),
          btn("👥 Members", "axp:members:1", style="primary" if sort == "members" else None),

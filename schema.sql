@@ -395,3 +395,21 @@ CREATE TABLE IF NOT EXISTS ax_action_topics (
     thread_id BIGINT NOT NULL
 );
 ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_topup_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS ax_watchlist (
+    chat_id BIGINT PRIMARY KEY,
+    note TEXT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ax_watch_log (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT,
+    user_id BIGINT,
+    name TEXT,
+    body TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_log_chat ON ax_watch_log(chat_id, created_at);

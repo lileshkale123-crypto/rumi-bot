@@ -173,6 +173,10 @@ def main() -> None:
     ax_adminpanel.register(application)
     import ax_adminpanel2
     ax_adminpanel2.register(application)
+    import ax_watch
+    ax_watch.register(application)
+    import ax_cheat
+    ax_cheat.register(application)
     import ax_purge
     ax_purge.register(application)
     import ax_admin2

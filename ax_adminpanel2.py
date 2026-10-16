@@ -67,7 +67,7 @@ async def view(context, chat_id, page):
     if page < pages:
         nav.append(btn("▶", f"axg:v:{chat_id}:{page + 1}"))
     link_btn = btn("🔗 Open group", url=link) if link else btn("🔗 Make invite link", f"axg:link:{chat_id}")
-    kb = InlineKeyboardMarkup([nav, [link_btn], [btn("⬅ Back to panel", "axp:cash:1")]])
+    kb = InlineKeyboardMarkup([nav, [link_btn], [btn("🕵️ Watch & read", f"axw:r:{chat_id}")], [btn("⬅ Back to panel", "axp:cash:1")]])
     return text, kb
 
 
