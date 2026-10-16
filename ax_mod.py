@@ -282,4 +282,4 @@ def register(app):
     app.add_handler(CommandHandler("promote", promote_cmd))
     app.add_handler(CommandHandler("demote", demote_cmd))
     app.add_handler(CallbackQueryHandler(mod_callback, pattern="^axm:"))
-    app.job_queue.run_repeating(check_expired, interval=30, first=15)
+    app.job_queue.run_repeating(check_expired, interval=300, first=15)

@@ -157,4 +157,4 @@ def register(app):
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, answer),
         group=-1)
-    app.job_queue.run_repeating(expire_job, interval=30, first=20)
+    app.job_queue.run_repeating(expire_job, interval=60, first=20)
