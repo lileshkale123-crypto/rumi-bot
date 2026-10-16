@@ -81,7 +81,12 @@ async def start_menu_cb(update, context):
     q = update.callback_query
     await q.answer()
     text, kb = home()
-    await q.message.reply_text(text, parse_mode=H, reply_markup=kb)
+    try:
+        await q.edit_message_text(text, parse_mode=H, reply_markup=kb)
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            return
+        await q.message.reply_text(text, parse_mode=H, reply_markup=kb)
 
 
 def register(app):

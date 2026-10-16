@@ -330,7 +330,7 @@ A short, friendly message with a quote box. Nothing is saved or changed.
 def mod_home():
     text = "🛡️ <b>Moderation</b>\n<blockquote>Pick a topic to see how each command works.\nBlue = topics, green = back, red = close 💫</blockquote>"
     b = [btn(f"{i} {t}", f"axhm:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
-    rows = [b[j:j + 2] for j in range(0, len(b), 2)]
+    rows = [b[j:j + 3] for j in range(0, len(b), 3)]
     rows.append([btn("⬅ Back", "axh:home"), btn("✖ Close", "axh:close", style="danger")])
     return text, InlineKeyboardMarkup(rows)
 
