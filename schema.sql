@@ -413,3 +413,13 @@ CREATE TABLE IF NOT EXISTS ax_watch_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_watch_log_chat ON ax_watch_log(chat_id, created_at);
+
+CREATE TABLE IF NOT EXISTS ax_bot_bans (
+    user_id BIGINT PRIMARY KEY,
+    banned_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ax_kill_status (
+    user_id BIGINT PRIMARY KEY,
+    dead_until TIMESTAMPTZ NOT NULL
+);

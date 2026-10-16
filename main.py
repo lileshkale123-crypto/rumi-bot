@@ -31,6 +31,8 @@ async def ignore_old_updates(update, context):
 async def post_init(application: Application) -> None:
     pool = await db.init_pool()
     application.bot_data["pool"] = pool
+    import ax_ban
+    await ax_ban._load(pool)
     refunded = await games.refund_unfinished(pool)
     if refunded:
         print(f"Refunded {refunded} unfinished Shadow Bluff game(s).")
@@ -181,6 +183,10 @@ def main() -> None:
     ax_funmode.register(application)
     import ax_kill
     ax_kill.register(application)
+    import ax_broadcast
+    ax_broadcast.register(application)
+    import ax_ban
+    ax_ban.register(application)
     import ax_purge
     ax_purge.register(application)
     import ax_admin2

@@ -141,6 +141,29 @@ async def watch_callback(update, context):
         return
     parts = q.data.split(":")
     act = parts[1]
+    if act == "m":
+        chat_id = int(parts[2])
+        from ax_funmode import FUN_CMDS
+        import ax_disable
+        pool = context.bot_data["pool"]
+        async with pool.acquire() as c:
+            n = await c.fetchval(
+                "SELECT COUNT(*) FROM ax_disabled WHERE chat_id=$1 AND cmd = ANY($2::text[])",
+                chat_id, FUN_CMDS)
+            if n >= len(FUN_CMDS):
+                await c.execute(
+                    "DELETE FROM ax_disabled WHERE chat_id=$1 AND cmd = ANY($2::text[])",
+                    chat_id, FUN_CMDS)
+                msg = "\U0001f50a Fun unmuted in that group."
+            else:
+                for cmd in FUN_CMDS:
+                    await c.execute(
+                        "INSERT INTO ax_disabled (chat_id, cmd) VALUES ($1,$2) "
+                        "ON CONFLICT DO NOTHING", chat_id, cmd)
+                msg = "\U0001f507 Fun muted in that group."
+        ax_disable._cache.pop(chat_id, None)
+        await q.answer(msg, show_alert=True)
+        return
     chat_id = int(parts[2])
     page = int(parts[3]) if len(parts) > 3 else 1
     if act in ("on", "off"):
