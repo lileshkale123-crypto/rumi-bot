@@ -423,3 +423,10 @@ CREATE TABLE IF NOT EXISTS ax_kill_status (
     user_id BIGINT PRIMARY KEY,
     dead_until TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ax_referrals (
+    new_user_id BIGINT PRIMARY KEY,
+    referrer_id BIGINT NOT NULL,
+    rewarded BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
