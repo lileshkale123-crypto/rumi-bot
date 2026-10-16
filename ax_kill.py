@@ -18,7 +18,7 @@ async def kill_cmd(update, context):
         return
     target = msg.reply_to_message.from_user if msg.reply_to_message else None
     if target is None or target.is_bot:
-        await msg.reply_text("Reply to someone's message with /kill 🔪")
+        await msg.reply_text("Reply to someone's message with /kill \U0001f52a")
         return
     pool = context.bot_data["pool"]
     amount = random.randint(MIN_KILL, MAX_KILL)
@@ -29,14 +29,13 @@ async def kill_cmd(update, context):
         await c.execute("UPDATE wallets SET cash=$1 WHERE user_id=$2", new_cash, user.id)
         await c.execute(
             "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-            "balance_after, related_user_id, source) VALUES ($1,'credit','cash',$2,$3,$4,$5,$6)",
+            "balance_after, related_user_id, source) VALUES ($1,\'credit\',\'cash\',$2,$3,$4,$5,$6)",
             user.id, amount, w["cash"], new_cash, target.id, "kill_command")
     name = user.first_name or "Someone"
     victim = target.first_name or "them"
-    await msg.reply_text(
-        f"🔪 <b>{name}</b> took out <b>{victim}</b> and found <code>{amount}</code> cash on the body.",
-        parse_mode=H)
-
+    line1 = chr(0x1F464) + " <b>" + name + "</b> killed <b>" + victim + "</b>!"
+    line2 = chr(0x1F4B0) + " Earned: <code>" + str(amount) + "</code> cash"
+    await msg.reply_text(line1 + "\n" + line2, parse_mode=H)
 
 def register(app):
     app.add_handler(CommandHandler("kill", kill_cmd))
