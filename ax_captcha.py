@@ -76,6 +76,7 @@ async def join(update, context):
                     "ON CONFLICT (chat_id,user_id) DO UPDATE SET answer=$3, "
                     "msg_id=$4, expires=$5", chat.id, m.id, ans,
                     sent.message_id, exp)
+            NEED[0] = True
         except Exception:
             __import__('logging').exception('CAPTCHA send failed')
 
@@ -133,7 +134,12 @@ async def answer(update, context):
         await finish(context, chat.id, update.effective_user.id, s)
 
 
+NEED = [True]
+
+
 async def expire_job(context):
+    if not NEED[0]:
+        return
     pool = context.bot_data["pool"]
     async with pool.acquire() as c:
         rows = await c.fetch(
@@ -148,6 +154,9 @@ async def expire_job(context):
                 await context.bot.unban_chat_member(r["chat_id"], r["user_id"])
         except Exception:
             pass
+    async with pool.acquire() as c:
+        if not await c.fetchval("SELECT count(*) FROM ax_captcha_pending"):
+            NEED[0] = False
 
 
 def register(app):

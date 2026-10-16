@@ -255,6 +255,7 @@ def make_temp(kind):
                 "INSERT INTO ax_temp_punish (chat_id, user_id, ptype, expires_at, reason) VALUES ($1,$2,$3,$4,$5) "
                 "ON CONFLICT (chat_id, user_id, ptype) DO UPDATE SET expires_at=$4, reason=$5",
                 chat_id, target.id, kind, until, reason)
+        NEED[0] = True
         icon, title = META[kind]
         extra = f"\n⏳ For <b>{esc(d[0])}</b>" + (f"\n📝 {esc(reason)}" if reason else "")
         undo, label = UNDO[kind]
@@ -263,7 +264,12 @@ def make_temp(kind):
     return cmd
 
 
+NEED = [True]
+
+
 async def check_expired(context):
+    if not NEED[0]:
+        return
     pool = context.bot_data["pool"]
     async with pool.acquire() as c:
         rows = await c.fetch("SELECT chat_id, user_id, ptype FROM ax_temp_punish WHERE expires_at <= now()")
@@ -272,6 +278,9 @@ async def check_expired(context):
             await perform("unmute" if r["ptype"] == "mute" else "unban", context.bot, pool, r["chat_id"], r["user_id"])
         except Exception:
             await clear_timer(pool, r["chat_id"], r["user_id"], r["ptype"])
+    async with pool.acquire() as c:
+        if not await c.fetchval("SELECT count(*) FROM ax_temp_punish"):
+            NEED[0] = False
 
 
 def register(app):

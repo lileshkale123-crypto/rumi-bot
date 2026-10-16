@@ -48,6 +48,7 @@ async def punish(context, pool, chat_id, uid, mode, secs):
                 "INSERT INTO ax_temp_punish (chat_id, user_id, ptype, expires_at, reason) "
                 "VALUES ($1,$2,$3,$4,'warn limit') ON CONFLICT (chat_id, user_id, ptype) "
                 "DO UPDATE SET expires_at=$4", chat_id, uid, kind, until)
+        ax_mod.NEED[0] = True
     else:
         await ax_mod.perform(mode, context.bot, pool, chat_id, uid)
 
