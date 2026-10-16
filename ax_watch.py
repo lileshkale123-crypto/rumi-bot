@@ -93,15 +93,15 @@ async def read_view(context, chat_id, page=1):
             f"<i>Page {page}/{pages} (page 1 = newest)</i>")
     nav = []
     if page > 1:
-        nav.append(btn("Newer", f"axw:p:{chat_id}:{page - 1}"))
+        nav.append(btn("Newer", f"axwz:p:{chat_id}:{page - 1}"))
     nav.append(btn(f"{page}/{pages}", "noop"))
     if page < pages:
-        nav.append(btn("Older", f"axw:p:{chat_id}:{page + 1}"))
+        nav.append(btn("Older", f"axwz:p:{chat_id}:{page + 1}"))
     act = "off" if watched else "on"
     label = "Stop watching" if watched else "Start watching"
     kb = InlineKeyboardMarkup([
         nav,
-        [btn("Refresh", f"axw:p:{chat_id}:1"), btn(label, f"axw:{act}:{chat_id}")],
+        [btn("Refresh", f"axwz:p:{chat_id}:1"), btn(label, f"axwz:{act}:{chat_id}")],
         [btn("Back to group", f"axg:v:{chat_id}:1")],
     ])
     return text, kb
@@ -158,4 +158,4 @@ def register(app):
     app.add_handler(CommandHandler("watch", watch_cmd))
     app.add_handler(CommandHandler("unwatch", unwatch_cmd))
     app.add_handler(CommandHandler("readlog", readlog_cmd))
-    app.add_handler(CallbackQueryHandler(watch_callback, pattern="^axw:"))
+    app.add_handler(CallbackQueryHandler(watch_callback, pattern="^axwz:"))
