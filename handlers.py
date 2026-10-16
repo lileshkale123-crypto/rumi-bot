@@ -9,6 +9,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+import html
 import config
 import services
 import ui
@@ -270,6 +271,18 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if status == "success":
         await update.message.reply_html(ui.rob_success_card(result["amount"], victim_name, result["tax"], result["net"]) + ui.xp_line(result.get("xp")))
+        if result.get("amount", 0) > 2000:
+            try:
+                _rn = html.escape(user.first_name or "Someone")
+                _cn = html.escape(update.effective_chat.title or "a chat")
+                await context.bot.send_message(
+                    victim_id,
+                    "\U0001F6A8 <b>You were robbed</b>\n"
+                    "<blockquote><b>%s</b> took <b>%d</b> coins from you in %s</blockquote>"
+                    % (_rn, result["amount"], _cn),
+                    parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
     elif status == "failed":
         await update.message.reply_html(ui.rob_fail_card(result["penalty"], victim_name) + ui.xp_line(result.get("xp")))
     elif status == "self_rob":

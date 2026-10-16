@@ -394,3 +394,4 @@ CREATE TABLE IF NOT EXISTS ax_action_topics (
     chat_id BIGINT PRIMARY KEY,
     thread_id BIGINT NOT NULL
 );
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_topup_at TIMESTAMPTZ;

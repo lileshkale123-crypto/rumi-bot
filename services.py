@@ -27,6 +27,35 @@ IST = timezone(timedelta(hours=5, minutes=30))
 _SEEN_USERS = {}
 _SEEN_TTL = 600
 
+TOPUP_CAP = 300
+TOPUP_AMOUNT = 150
+TOPUP_HOURS = 4
+
+
+async def _topup(pool, user_id):
+    """Starter coins: refill users below the cap, only when they are seen."""
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""
+                UPDATE wallets SET
+                    cash = CASE
+                        WHEN last_topup_at IS NULL THEN GREATEST(cash, $2::bigint)
+                        WHEN cash < $2::bigint THEN LEAST($2::bigint, cash + $3::bigint *
+                            FLOOR(EXTRACT(EPOCH FROM (now() - last_topup_at)) / {TOPUP_HOURS * 3600})::bigint)
+                        ELSE cash END,
+                    last_topup_at = now(),
+                    updated_at = now()
+                WHERE user_id = $1
+                  AND (last_topup_at IS NULL
+                       OR now() - last_topup_at >= interval '{TOPUP_HOURS} hours')
+                """,
+                user_id, TOPUP_CAP, TOPUP_AMOUNT)
+    except Exception:
+        import logging as _lg
+        _lg.exception("topup failed")
+
+
 
 async def ensure_user_and_wallet(pool: asyncpg.Pool, user_id: int, username: str | None, first_name: str | None) -> None:
     # Cached: skips the database writes if this user was set up in the last 10 minutes.
@@ -37,6 +66,7 @@ async def ensure_user_and_wallet(pool: asyncpg.Pool, user_id: int, username: str
     if seen and seen[0] == key and now - seen[1] < _SEEN_TTL:
         return
     await _ensure_user_and_wallet_db(pool, user_id, username, first_name)
+    await _topup(pool, user_id)
     _SEEN_USERS[user_id] = (key, now)
 
 
@@ -381,7 +411,7 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int,
                 return {"status": "victim_shielded"}
             if victim["cash"] < config.ROB_MIN_VICTIM_BALANCE:
                 return {"status": "victim_too_poor"}
-            max_allowed = max(1, min(int(victim["cash"] * config.ROB_STEAL_PERCENT_MAX), config.ROB_MAX_AMOUNT))
+            max_allowed = max(1, min(int(victim["cash"]), config.ROB_MAX_AMOUNT))
             if amount > max_allowed:
                 return {"status": "amount_too_high", "max_allowed": max_allowed}
 
