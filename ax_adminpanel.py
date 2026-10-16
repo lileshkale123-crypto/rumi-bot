@@ -62,8 +62,9 @@ async def render(pool, sort, page):
     if page < pages:
         nav.append(btn("▶", f"axp:{sort}:{page + 1}"))
     kb = InlineKeyboardMarkup([
-        [btn("💵 Richest", "axp:cash:1", style="primary" if sort != "members" else None),
-         btn("👥 Members", "axp:members:1", style="primary" if sort == "members" else None)],
+        [btn("💵 Richest", "axp:cash:1", style="primary" if sort not in ("members", "donors") else None),
+         btn("👥 Members", "axp:members:1", style="primary" if sort == "members" else None),
+         btn("⭐ Donors", "axp:donors:1", style="primary" if sort == "donors" else None)],
         *[group_btns[j:j + 5] for j in range(0, len(group_btns), 5)],
         nav,
     ])
@@ -84,7 +85,11 @@ async def panel_callback(update, context):
         await q.answer()
         return
     _, sort, page = q.data.split(":")
-    text, kb = await render(context.bot_data["pool"], sort, int(page))
+    if sort == "donors":
+        import ax_donate
+        text, kb = await ax_donate.donors_page(context.bot_data["pool"], int(page))
+    else:
+        text, kb = await render(context.bot_data["pool"], sort, int(page))
     try:
         await q.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
     except Exception:

@@ -115,6 +115,8 @@ def main() -> None:
     ax_notes.register(application)
     import ax_extras
     ax_extras.register(application)
+    import ax_donate
+    ax_donate.register(application)
     import ax_backup
     ax_backup.register(application)
     import ax_topics
