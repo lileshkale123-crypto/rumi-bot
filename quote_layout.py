@@ -5,6 +5,7 @@ import re
 from PIL import Image, ImageDraw, ImageFont
 
 import quote_emoji as qe
+import quote_fb as qf
 
 TERMUX = "/data/data/com.termux/files/usr/share/fonts/TTF/"
 BOLD = ["assets/fonts/DejaVuSans-Bold.ttf", TERMUX + "DejaVuSans-Bold.ttf",
@@ -23,7 +24,7 @@ def font(paths, size):
 
 
 def tw(t, f):
-    return _D.textlength(t, font=f)
+    return qf.tw(t, f)
 
 
 def tokens(text, f, avail):
@@ -82,5 +83,5 @@ def draw_row(img, dr, x, y, line, f, fill):
                 em = em.resize((int(getattr(f, "size", 26) * 1.1),) * 2, Image.LANCZOS)
                 img.paste(em, (int(x) + 1, y + 2), em)
         elif kind == "w":
-            dr.text((x, y), val, font=f, fill=fill)
+            qf.draw(dr, x, y, val, f, fill)
         x += w

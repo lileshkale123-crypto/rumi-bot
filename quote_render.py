@@ -57,6 +57,4 @@ def render(name, text, avatar, uid):
     for ln in lines:
         L.draw_row(img, dr, bx + PX, y, ln, f, TEXT)
         y += lh
-    canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    canvas.paste(img, (0, (512 - H) // 2), img)
-    return canvas
+    return img

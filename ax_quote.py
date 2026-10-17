@@ -64,7 +64,7 @@ async def quote_cmd(update, context):
         out = io.BytesIO()
         img.save(out, format="PNG")
         out.seek(0)
-        await msg.reply_sticker(sticker=out)
+        await msg.reply_sticker(sticker=out, read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
     except Exception as e:
         await msg.reply_text(f"⚠️ <b>Couldn't make the sticker</b>\n<blockquote>{e}</blockquote>", parse_mode=H)
 
