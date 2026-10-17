@@ -193,6 +193,8 @@ def main() -> None:
     ax_referral.register(application)
     import ax_shop
     ax_shop.register(application)
+    import ax_channel
+    ax_channel.register(application)
     import ax_purge
     ax_purge.register(application)
     import ax_admin2

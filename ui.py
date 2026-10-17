@@ -57,7 +57,8 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
         f"✨ XP: {xp}\n\n"
         f"🎮 <b>Available Commands</b>\n"
         f"{command_lines}\n\n"
-        f"<b>Tip:</b> tap a button below to get started."
+        f"<b>Tip:</b> tap a button below to get started.\n\n"
+        f"<blockquote>\U0001F6E1 <b>Own a channel?</b> Add Rumi as admin and get one tidy post plus private alerts if your members drop. Tap Add to your channel below \u2728</blockquote>"
     )
 
 
@@ -73,6 +74,7 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
          _b("\U0001F3AE Games", data="games", style="success")],
         [_b("\U0001F465 Community", url="https://t.me/YPTLEGENDS", style="primary"),
          _b("\U0001F4E3 Updates", url="https://t.me/ZENITHREIGNS", style="primary")],
+        [_b("\U0001F6E1 Add to your channel", url=f"https://t.me/{bot_username}?startchannel=true&admin=post_messages+edit_messages+delete_messages+invite_users", style="success")],
         [_b("\U0001F451 Owner", url="https://t.me/lordzenithx", style="danger")],
     ])
 

@@ -57,6 +57,29 @@ PAGES["shop"] = ("🛍", "Title Shop",
     "Titles are yours forever, buying never lowers your XP or level, "
     "and the buttons only work for the person who opened the menu.")
 
+PAGES["channel"] = ("\U0001F6E1", "Channel Protection",
+    "Add Rumi to your channel as admin and it keeps an eye on it for you. "
+    "It never spams your channel.\n\n"
+    "<b>How to start</b>\n"
+    "1. Tap Add to your channel on /start.\n"
+    "2. Pick your channel and keep the suggested admin rights.\n"
+    "3. Rumi posts one short Protected by Rumi message with two buttons.\n\n"
+    "<b>What the channel sees</b>\n"
+    "Only that one post. It deletes itself after 3.5 hours, so your feed stays clean. "
+    "Nothing else is ever posted there.\n\n"
+    "<b>What you get privately</b>\n"
+    "Every few hours Rumi checks your member count. If it drops a lot (10 members or 10 percent, "
+    "whichever is bigger), Rumi sends you one private message with the old and new count. "
+    "You must have pressed /start with Rumi once so it can message you.\n\n"
+    "<b>Example</b>\n"
+    "Your channel goes from 500 to 430 members overnight. You get a private message: "
+    "went from 500 to 430, minus 70.\n\n"
+    "<b>What Rumi cannot do</b>\n"
+    "Telegram gives bots no control over reports, so Rumi does not claim to block them. "
+    "It helps you notice trouble early.\n\n"
+    "<b>Good to know</b>\n"
+    "Removing Rumi from the channel stops all checks. Your data for that channel is deleted.")
+
 PAGES["more"] = ("\u2728", "More Commands",
     "/clan: build or join a Clan\n"
     "/topgroups: see the top groups\n"

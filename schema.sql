@@ -439,3 +439,19 @@ CREATE TABLE IF NOT EXISTS ax_shop_owned (
     PRIMARY KEY (user_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ax_shop_equipped ON ax_shop_owned(user_id) WHERE equipped;
+
+CREATE TABLE IF NOT EXISTS ax_channels (
+    chat_id BIGINT PRIMARY KEY,
+    title TEXT,
+    added_by BIGINT,
+    last_count INT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ax_chan_cleanup (
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    delete_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ax_chan_cleanup_due ON ax_chan_cleanup(delete_at);

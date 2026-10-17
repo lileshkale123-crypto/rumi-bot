@@ -24,6 +24,8 @@ COMMAND_LIST = [
     ("/rob", "Attempt a heist on someone"),
     ("/spin", "Spin the daily wheel"),
     ("/work", "Work for coins every hour"),
+    ("/shop", "Buy titles to show off"),
+    ("/q", "Turn a reply into a sticker"),
     ("/help", "Open the full guide"),
 ]
 
