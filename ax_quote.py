@@ -7,6 +7,7 @@ from telegram.constants import ParseMode
 from telegram.ext import CommandHandler
 
 from quote_render import render
+import quote_remote as qr
 
 H = ParseMode.HTML
 
@@ -56,7 +57,9 @@ async def quote_cmd(update, context):
     if want_two and rp.reply_to_message:
         msgs = [rp.reply_to_message, rp]
     try:
-        imgs = [c for c in [await _card(context.bot, m) for m in msgs] if c is not None]
+        tm = [m for m in msgs if (m.text or m.caption)]
+        rimg = await qr.remote(context.bot.token, tm) if tm else None
+        imgs = [rimg] if rimg is not None else [c for c in [await _card(context.bot, m) for m in msgs] if c is not None]
         if not imgs:
             await msg.reply_text("🌸 <b>No text found</b>\n<blockquote>I can only quote text messages 🌸</blockquote>", parse_mode=H)
             return
