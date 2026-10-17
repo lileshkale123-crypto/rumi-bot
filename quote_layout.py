@@ -30,7 +30,7 @@ def tokens(text, f, avail):
     out = []
     for kind, val in qe.split(text):
         if kind == "e":
-            out.append(("e", val, ES + 3))
+            out.append(("e", val, int(getattr(f, "size", 26) * 1.1) + 3))
             continue
         for p in re.findall(r"\n|[^\S\n]+|\S+", val):
             if p == "\n":
@@ -79,7 +79,7 @@ def draw_row(img, dr, x, y, line, f, fill):
         if kind == "e":
             em = qe.fetch(val)
             if em is not None:
-                em = em.resize((ES, ES), Image.LANCZOS)
+                em = em.resize((int(getattr(f, "size", 26) * 1.1),) * 2, Image.LANCZOS)
                 img.paste(em, (int(x) + 1, y + 2), em)
         elif kind == "w":
             dr.text((x, y), val, font=f, fill=fill)
