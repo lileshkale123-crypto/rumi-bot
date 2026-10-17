@@ -195,6 +195,8 @@ def main() -> None:
     ax_shop.register(application)
     import ax_channel
     ax_channel.register(application)
+    import ax_channel2
+    ax_channel2.register(application)
     import ax_purge
     ax_purge.register(application)
     import ax_admin2

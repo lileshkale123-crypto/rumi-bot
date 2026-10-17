@@ -455,3 +455,7 @@ CREATE TABLE IF NOT EXISTS ax_chan_cleanup (
     PRIMARY KEY (chat_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ax_chan_cleanup_due ON ax_chan_cleanup(delete_at);
+
+ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS last_promo TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS week_count INT;
+ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS week_at TIMESTAMPTZ NOT NULL DEFAULT now();

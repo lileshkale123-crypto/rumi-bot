@@ -58,7 +58,7 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
         f"🎮 <b>Available Commands</b>\n"
         f"{command_lines}\n\n"
         f"<b>Tip:</b> tap a button below to get started.\n\n"
-        f"<blockquote>\U0001F6E1 <b>Own a channel?</b> Add Rumi as admin and get one tidy post plus private alerts if your members drop. Tap Add to your channel below \u2728</blockquote>"
+        f"<blockquote>\U0001F6E1 <b>Own a channel?</b> Add Rumi as admin and get a short branded post every 2 days plus private alerts if your members drop. Tap Add to your channel below \u2728</blockquote>"
     )
 
 
