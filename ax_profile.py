@@ -30,7 +30,7 @@ def clean_name(n):
     return out or "Player"
 
 
-def render(name, level, xp, cash, gems, wins, losses, clan, photo):
+def render(name, level, xp, cash, gems, wins, losses, clan, photo, title=None):
     W, H = 900, 480
     img = Image.new("RGB", (W, H))
     d = ImageDraw.Draw(img)
@@ -58,6 +58,8 @@ def render(name, level, xp, cash, gems, wins, losses, clan, photo):
 
     d.text((270, 70), name[:18], font=font(40, True), fill=(255, 255, 255))
     d.text((270, 125), f"Level {level}", font=font(26, True), fill=(255, 200, 120))
+    if title:
+        d.text((450, 130), title, font=font(22, True), fill=(255, 230, 160))
 
     base = config.XP_LEVEL_BASE
     lo, hi = (level - 1) ** 2 * base, level ** 2 * base
@@ -107,9 +109,17 @@ async def profile_cmd(update, context):
         photo = None
     name = target.first_name or "Player"
     card_name = clean_name(name)
+    import ax_shop
+    try:
+        card_title = await ax_shop.get_title(pool, target.id)
+    except Exception:
+        card_title = None
+    if card_title:
+        card_title = clean_name(card_title)
     buf = await asyncio.to_thread(
         render, card_name, services.level_for_xp(w["xp"]), w["xp"], w["cash"],
-        w["gems"], w["wins"], w["losses"], row["name"] if row else None, photo)
+        w["gems"], w["wins"], w["losses"], row["name"] if row else None, photo,
+        card_title)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔴 Close", callback_data=f"prof_close:{me.id}")]])
     await msg.reply_photo(buf, caption=f"<b>{html.escape(name)}</b>'s profile 💜",
                           parse_mode="HTML", reply_markup=kb)

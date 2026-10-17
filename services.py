@@ -486,7 +486,7 @@ async def get_leaderboard(pool: asyncpg.Pool, category: str, page: int, page_siz
         raise ValueError("Invalid leaderboard category")  # never interpolate raw user input into SQL
     offset = (page - 1) * page_size
     query = f"""
-        SELECT COALESCE(u.first_name, u.username, 'Player') as name, w.{category} as value
+        SELECT COALESCE(u.first_name, u.username, 'Player') as name, w.{category} as value, w.user_id as uid
         FROM wallets w JOIN users u ON u.id = w.user_id
         ORDER BY w.{category} DESC
         LIMIT $1 OFFSET $2

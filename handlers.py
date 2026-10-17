@@ -317,7 +317,13 @@ async def _render_leaderboard(pool, category: str, page: int):
     rows, total = await services.get_leaderboard(pool, category, page, config.LEADERBOARD_PAGE_SIZE)
     total_pages = max(1, -(-total // config.LEADERBOARD_PAGE_SIZE))  # ceiling division
     meta = CATEGORY_META[category]
-    entries = [{"name": r["name"], "value": r["value"]} for r in rows]
+    entries = [{"name": r["name"], "value": r["value"], "uid": r["uid"]} for r in rows]
+    try:
+        import ax_shop
+        for e in entries:
+            e["title"] = await ax_shop.get_title(pool, e["uid"])
+    except Exception:
+        pass
     text = ui.leaderboard_card(meta["title"], meta["emoji"], entries, page, total_pages, meta["is_currency"])
     keyboard = ui.leaderboard_keyboard(category, page, total_pages)
     return text, keyboard

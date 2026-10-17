@@ -430,3 +430,12 @@ CREATE TABLE IF NOT EXISTS ax_referrals (
     rewarded BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS ax_shop_owned (
+    user_id BIGINT NOT NULL,
+    item_id TEXT NOT NULL,
+    equipped BOOLEAN NOT NULL DEFAULT FALSE,
+    purchased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ax_shop_equipped ON ax_shop_owned(user_id) WHERE equipped;

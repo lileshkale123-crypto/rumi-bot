@@ -243,7 +243,7 @@ def leaderboard_card(title: str, emoji: str, entries: list, page: int, total_pag
         rank = (page - 1) * config.LEADERBOARD_PAGE_SIZE + i + 1
         medal = medals[rank - 1] if rank <= 3 else f"<code>#{rank:02d}</code>"
         value = f"{config.CURRENCY_SYMBOL}{format_number(entry['value'])}" if is_currency else format_number(entry["value"])
-        body_lines.append(f"{medal} <b>{escape_html(entry['name'])}</b> <code>{value}</code>")
+        body_lines.append(f"{medal} <b>{escape_html(entry['name'])}</b>{' · ' + escape_html(entry['title']) if entry.get('title') else ''} <code>{value}</code>")
 
     if body_lines:
         lines.append(f"<blockquote>{chr(10).join(body_lines)}</blockquote>")

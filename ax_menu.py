@@ -28,6 +28,35 @@ PAGES["chat"] = ("💬", "Chat and Economy",
     "/vault /deposit /withdraw /work /spin\n"
     "/bluff /mafia /stopmafia /mafiatop")
 
+PAGES["shop"] = ("🛍", "Title Shop",
+    "Spend cash or gems on titles. Your equipped title shows on your /profile card and next to your name in /rankings.\n\n"
+    "<b>/shop</b>\n"
+    "Opens the shop with every title and its price. Owned titles show a tick. Tap a button to buy. "
+    "You need to have used /start once so you have a wallet.\n\n"
+    "<b>/titles</b>\n"
+    "Shows the titles you own. Tap one to wear it, tap Remove title to wear none. You can switch any time for free.\n\n"
+    "<b>Cash titles</b>\n"
+    "🌱 Fresh Face $20,000\n"
+    "🎀 Sweetheart $50,000\n"
+    "🎲 Lucky Charm $125,000\n"
+    "🥷 Shadow $250,000\n"
+    "💸 Money Maker $500,000\n"
+    "🔪 Menace $750,000\n"
+    "👑 Royal $1,000,000\n\n"
+    "<b>Gem titles</b>\n"
+    "💎 Gem Lord 150 gems\n"
+    "🌙 Moonlit Legend 400 gems\n"
+    "🦋 Rumi's Chosen 1,000 gems\n\n"
+    "<b>Example</b>\n"
+    "Type /shop, tap Royal, then type /titles and tap Royal to wear it. "
+    "Now /profile shows Royal under your level.\n\n"
+    "<b>What members see</b>\n"
+    "Everyone sees your title beside your name in /rankings. "
+    "On the profile card it is shown as plain gold text, in the rankings it also has its emoji.\n\n"
+    "<b>Good to know</b>\n"
+    "Titles are yours forever, buying never lowers your XP or level, "
+    "and the buttons only work for the person who opened the menu.")
+
 PAGES["more"] = ("\u2728", "More Commands",
     "/clan: build or join a Clan\n"
     "/topgroups: see the top groups\n"
