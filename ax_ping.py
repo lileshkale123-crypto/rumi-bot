@@ -6,9 +6,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     pool = context.bot_data["pool"]
-    t0 = time.perf_counter()
-    await pool.fetchval("SELECT 1")
-    db_ms = (time.perf_counter() - t0) * 1000
+    async with pool.acquire() as c:
+        t0 = time.perf_counter()
+        for _ in range(5):
+            await c.fetchval("SELECT 1")
+        db_ms = (time.perf_counter() - t0) * 1000 / 5
     t1 = time.perf_counter()
     sent = await msg.reply_text("🏓 Pinging...")
     api_ms = (time.perf_counter() - t1) * 1000
