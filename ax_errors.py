@@ -14,6 +14,14 @@ _QUIET = (
 )
 
 
+def _wants_notice(update) -> bool:
+    if update.callback_query:
+        return True
+    m = update.effective_message
+    t = (m.text or m.caption or '') if m else ''
+    return t.startswith('/')
+
+
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE) -> None:
     err = context.error
     if isinstance(err, (Conflict, NetworkError, RetryAfter)):
@@ -23,7 +31,7 @@ async def on_error(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.warning("harmless bad request: %s", err)
         return
     log.error("Unhandled error", exc_info=err)
-    if isinstance(update, Update) and update.effective_chat and update.effective_message:
+    if isinstance(update, Update) and update.effective_chat and update.effective_message and _wants_notice(update):
         cid = update.effective_chat.id
         now = time.time()
         if now - _last_notice.get(cid, 0) < 30:
