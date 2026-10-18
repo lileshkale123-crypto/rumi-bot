@@ -26,6 +26,9 @@ COMMAND_LIST = [
     ("/work", "Work for coins every hour"),
     ("/shop", "Buy titles to show off"),
     ("/q", "Turn a reply into a sticker"),
+    ("/pact", "Swear a Blood Pact"),
+    ("/betray", "Break your pact"),
+    ("/bounty", "Put a price on someone"),
     ("/td", "Play Truth or Dare"),
     ("/truth", "Get a truth question"),
     ("/dare", "Get a dare"),
@@ -278,6 +281,11 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if status == "success":
         await update.message.reply_html(ui.rob_success_card(result["amount"], victim_name, result["tax"], result["net"]) + ui.xp_line(result.get("xp")))
+        if result.get("bounty"):
+            await update.message.reply_html(
+                "📜 <b>BOUNTY CLAIMED</b>\n<blockquote>🎯 %s collected <b>$%s</b> Coins from the underworld board 😜</blockquote>"
+                % (html.escape(user.first_name or "Player"), format(result["bounty"], ","))
+            )
         if result.get("amount", 0) > 2000:
             try:
                 _rn = html.escape(user.first_name or "Someone")

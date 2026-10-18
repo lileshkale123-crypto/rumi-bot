@@ -459,3 +459,16 @@ CREATE INDEX IF NOT EXISTS idx_ax_chan_cleanup_due ON ax_chan_cleanup(delete_at)
 ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS last_promo TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS week_count INT;
 ALTER TABLE ax_channels ADD COLUMN IF NOT EXISTS week_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE TABLE IF NOT EXISTS blood_pacts (
+    player1_id BIGINT NOT NULL,
+    player2_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (player1_id, player2_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pact_p1 ON blood_pacts(player1_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pact_p2 ON blood_pacts(player2_id);
+CREATE TABLE IF NOT EXISTS bounties (
+    target_id BIGINT PRIMARY KEY,
+    bounty_amount BIGINT NOT NULL CHECK (bounty_amount > 0)
+);

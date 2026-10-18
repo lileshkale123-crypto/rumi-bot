@@ -440,6 +440,8 @@ async def rob(pool: asyncpg.Pool, robber_id: int, victim_id: int, amount: int,
                 )
                 result = {"status": "success", "amount": stolen, "tax": tax, "net": net}
                 result["xp"] = await award_rob_xp(conn, robber_id, config.XP_ROB_SUCCESS)
+                import chat_events
+                result["bounty"] = await chat_events.claim_bounty(conn, robber_id, victim_id)
             else:
                 percent = random.uniform(config.ROB_FAIL_PENALTY_PERCENT_MIN, config.ROB_FAIL_PENALTY_PERCENT_MAX)
                 penalty = min(robber["cash"], max(1, int(amount * percent)))
