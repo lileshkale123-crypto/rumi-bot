@@ -237,6 +237,8 @@ def main() -> None:
     ax_misc3.register(application)
     import ax_dmproxy
     ax_dmproxy.register(application)
+    import ax_truthdare
+    ax_truthdare.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete

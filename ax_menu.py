@@ -14,7 +14,8 @@ PAGES = {
               "/clear name\n/clearallnotes\n\n/filter word reply: auto-reply\n"
               "/filters\n/stop word\n/clearfilters\n\nReply to any media with /save or /filter."),
     "fun": ("💞", "Fun & Social", "/ship: random pair, +10 XP each\n/match: reply to someone\n"
-            "/couple: couple of the day, $500 each\n/q: reply to make a quote sticker"),
+            "/couple: couple of the day, $500 each\n/q: reply to make a quote sticker\n"
+            "/td: Truth or Dare lobby\n/truth: random truth\n/dare: random dare"),
     "you": ("🪪", "Profile & Status", "/info: yourself, or a reply or @username\n"
             "/afk reason: mark yourself away\n/afk off"),
 }
