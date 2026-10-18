@@ -8,7 +8,13 @@ async def init_pool() -> asyncpg.Pool:
     """Creates the connection pool and applies the schema. Call once at startup."""
     global _pool
     dsn = os.environ["DATABASE_URL"]
-    _pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
+    class _NoResetConn(asyncpg.Connection):
+        def get_reset_query(self):
+            return ""
+
+    _pool = await asyncpg.create_pool(
+        dsn=dsn, min_size=1, max_size=10, connection_class=_NoResetConn
+    )
 
     schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
     with open(schema_path, "r", encoding="utf-8") as f:
