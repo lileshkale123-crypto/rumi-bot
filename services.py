@@ -71,36 +71,29 @@ async def ensure_user_and_wallet(pool: asyncpg.Pool, user_id: int, username: str
 
 
 async def _ensure_user_and_wallet_db(pool: asyncpg.Pool, user_id: int, username: str | None, first_name: str | None) -> None:
-    """Creates the user + wallet + streak rows if they don't exist yet. Safe to call every command."""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                """
-                INSERT INTO users (id, username, first_name, created_at, updated_at)
-                VALUES ($1, $2, $3, now(), now())
-                ON CONFLICT (id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    updated_at = now()
-                """,
-                user_id, username, first_name,
-            )
-            await conn.execute(
-                """
-                INSERT INTO wallets (user_id, cash, gems, xp, level, created_at, updated_at)
-                VALUES ($1, 0, 0, 0, 1, now(), now())
-                ON CONFLICT (user_id) DO NOTHING
-                """,
-                user_id,
-            )
-            await conn.execute(
-                """
-                INSERT INTO streaks (user_id, current_streak, longest_streak, last_claim_date, milestones_claimed)
-                VALUES ($1, 0, 0, NULL, '[]'::jsonb)
-                ON CONFLICT (user_id) DO NOTHING
-                """,
-                user_id,
-            )
+    """Creates user + wallet + streak rows in ONE round trip. Safe to call every command."""
+    await pool.execute(
+        """
+        WITH u AS (
+            INSERT INTO users (id, username, first_name, created_at, updated_at)
+            VALUES ($1, $2, $3, now(), now())
+            ON CONFLICT (id) DO UPDATE SET
+                username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                updated_at = now()
+            RETURNING id
+        ), w AS (
+            INSERT INTO wallets (user_id, cash, gems, xp, level, created_at, updated_at)
+            VALUES ($1, 0, 0, 0, 1, now(), now())
+            ON CONFLICT (user_id) DO NOTHING
+            RETURNING user_id
+        )
+        INSERT INTO streaks (user_id, current_streak, longest_streak, last_claim_date, milestones_claimed)
+        VALUES ($1, 0, 0, NULL, '[]'::jsonb)
+        ON CONFLICT (user_id) DO NOTHING
+        """,
+        user_id, username, first_name,
+    )
 
 
 async def get_wallet(pool: asyncpg.Pool, user_id: int) -> asyncpg.Record | None:
