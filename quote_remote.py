@@ -35,11 +35,23 @@ def _msg_full(m, with_reply=False):
     return d
 
 
+def _build(msgs):
+    if len(msgs) == 2:
+        a, b = msgs
+        d = _msg(b)
+        au = a.from_user
+        d["replyMessage"] = {"name": (au.full_name if au else "Someone"),
+                             "text": (a.text or a.caption or ""),
+                             "chatId": (au.id if au else 0), "entities": []}
+        return [d]
+    return [_msg(m) for m in msgs]
+
+
 async def remote(token, msgs):
     try:
         payload = {"type": "quote", "format": "png", "backgroundColor": "#1b1429",
                    "width": 512, "height": 768, "scale": 2, "botToken": token,
-                   "emojiBrand": "apple", "messages": [_msg_full(m, False) for m in msgs]}
+                   "emojiBrand": "apple", "messages": _build(msgs)}
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(URL + "/generate", json=payload)
         if r.status_code != 200:
