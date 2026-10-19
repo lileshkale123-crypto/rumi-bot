@@ -73,6 +73,10 @@ async def remote(token, msgs, roles=None, color=None, reply=False):
         box = im.split()[3].getbbox()
         if box:
             im = im.crop(box)
+        pad = max(1, round(max(im.size) * 0.09))
+        cv = Image.new("RGBA", (im.width, im.height + pad), (0, 0, 0, 0))
+        cv.paste(im, (0, 0))
+        im = cv
         s = 512 / max(im.size)
         return im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS)
     except Exception as e:

@@ -1,4 +1,5 @@
 """Extras for /q: colour names, argument parser, /qcolors and /mypacks."""
+import difflib
 import html
 import logging
 import re
@@ -10,9 +11,9 @@ from telegram.ext import CommandHandler
 log = logging.getLogger(__name__)
 MAX_N = 5
 COLORS = {
-    "red": "#b3261e", "blue": "#1e5fd6", "pink": "#ff66aa",
-    "green": "#1f8a4c", "purple": "#7b3fe4", "orange": "#e8710a",
-    "yellow": "#e0b000", "teal": "#0f9d9a", "grey": "#4b5563",
+    "red": "#a8232b", "blue": "#16419b", "pink": "#ffc1dc",
+    "green": "#16663a", "purple": "#7b3fe4", "orange": "#ffcf9e",
+    "yellow": "#fff0a0", "teal": "#0b6f6d", "grey": "#4b5563",
     "gray": "#4b5563", "black": "#000000", "white": "#ffffff",
 }
 SHOW = (("red", "🔴"), ("blue", "🔵"), ("pink", "🌸"), ("green", "🟢"),
@@ -46,6 +47,11 @@ def parse_args(args):
                 h = "".join(c * 2 for c in h)
             out["color"] = "#" + h
     return out
+
+
+def hint(word):
+    m = difflib.get_close_matches(word.lower(), list(COLORS), n=1, cutoff=0.6)
+    return " Did you mean <code>%s</code>?" % m[0] if m else ""
 
 
 def _name(u):

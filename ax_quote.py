@@ -105,7 +105,8 @@ async def quote_cmd(update, context):
     if p["bad"]:
         await msg.reply_html(
             "🎨 <b>Didn't know</b> <code>%s</code>\n<blockquote>Try /qcolors "
-            "to see colour names.</blockquote>" % _html.escape(p["bad"][0]))
+            "to see colour names.%s</blockquote>"
+            % (_html.escape(p["bad"][0]), qx.hint(p["bad"][0])))
     msgs = multi or [rp]
     if want_two and rp.reply_to_message:
         msgs = [rp.reply_to_message, rp]
