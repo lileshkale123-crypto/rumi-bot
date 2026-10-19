@@ -8,7 +8,9 @@ from telegram.ext import CommandHandler
 
 from quote_render import render
 import quote_remote as qr
+import html as _html
 import quote_cache as qc
+import ax_qextra as qx
 
 H = ParseMode.HTML
 
@@ -80,19 +82,37 @@ def _stack(imgs):
 
 async def quote_cmd(update, context):
     msg = update.effective_message
+    p = qx.parse_args(context.args)
     rp = msg.reply_to_message
+    multi = None
+    if p["n"] > 1:
+        if rp:
+            multi = qc.span(msg.chat_id, rp.message_id, p["n"], msg.message_id)
+        else:
+            multi = qc.last(msg.chat_id, msg.message_id, p["n"])
+        if len(multi) < 2:
+            await msg.reply_html(
+                "🌸 <b>Not enough messages yet, %s</b>\n<blockquote>I only remember "
+                "messages sent since my last restart. Try again after a few more.</blockquote>"
+                % qx._name(update.effective_user))
+            return
+        rp = rp or multi[0]
     if not rp:
         await msg.reply_text("💬 <b>Reply to a message</b>\n<blockquote>Use /q on any text message, or /q r to include the message it replied to ✨</blockquote>", parse_mode=H)
         return
     rp = qc.get(update.effective_chat.id, rp.message_id) or rp
-    want_two = bool(context.args) and context.args[0].lower() == "r"
-    msgs = [rp]
+    want_two = p["r"] and p["n"] == 1
+    if p["bad"]:
+        await msg.reply_html(
+            "🎨 <b>Didn't know</b> <code>%s</code>\n<blockquote>Try /qcolors "
+            "to see colour names.</blockquote>" % _html.escape(p["bad"][0]))
+    msgs = multi or [rp]
     if want_two and rp.reply_to_message:
         msgs = [rp.reply_to_message, rp]
     try:
         tm = [m for m in msgs if (m.text or m.caption)]
         roles = await _roles(context.bot, msg.chat_id, tm)
-        rimg = await qr.remote(context.bot.token, tm, roles) if tm else None
+        rimg = await qr.remote(context.bot.token, tm, roles, color=p["color"], reply=want_two) if tm else None
         imgs = [rimg] if rimg is not None else [c for c in [await _card(context.bot, m) for m in msgs] if c is not None]
         if not imgs:
             await msg.reply_text("🌸 <b>No text found</b>\n<blockquote>I can only quote text messages 🌸</blockquote>", parse_mode=H)

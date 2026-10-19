@@ -46,8 +46,8 @@ def _tag(items, roles):
     return items
 
 
-def _build(msgs):
-    if len(msgs) == 2:
+def _build(msgs, reply=False):
+    if reply and len(msgs) == 2:
         a, b = msgs
         d = _msg(b)
         au = a.from_user
@@ -58,11 +58,11 @@ def _build(msgs):
     return [_msg(m) for m in msgs]
 
 
-async def remote(token, msgs, roles=None):
+async def remote(token, msgs, roles=None, color=None, reply=False):
     try:
-        payload = {"type": "quote", "format": "png", "backgroundColor": "#1b1429",
+        payload = {"type": "quote", "format": "png", "backgroundColor": color or "#1b1429",
                    "width": 512, "height": 768, "scale": 2, "botToken": token,
-                   "emojiBrand": "apple", "messages": _tag(_build(msgs), roles)}
+                   "emojiBrand": "apple", "messages": _tag(_build(msgs, reply), roles)}
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(URL + "/generate", json=payload)
         if r.status_code != 200:

@@ -14,7 +14,7 @@ PAGES = {
               "/clear name\n/clearallnotes\n\n/filter word reply: auto-reply\n"
               "/filters\n/stop word\n/clearfilters\n\nReply to any media with /save or /filter."),
     "fun": ("💞", "Fun & Social", "/ship: random pair, +10 XP each\n/match: reply to someone\n"
-            "/couple: couple of the day, $500 each\n/q: reply to make a quote sticker\n"
+            "/couple: couple of the day, $500 each\n/q: reply to make a quote sticker\n/qcolors: pick quote colours\n"
             "/td: Truth or Dare lobby\n/truth: random truth\n/dare: random dare\n"
             "/pact: reply to swear a Blood Pact\n/betray: break it, costs $50,000\n/bounty: reply + amount"),
     "you": ("🪪", "Profile & Status", "/info: yourself, or a reply or @username\n"
@@ -88,7 +88,7 @@ PAGES["more"] = ("\u2728", "More Commands",
     "/tagall: mention everyone (admins)\n"
     "/admins: call the group admins\n"
     "/speak: Rumi speaks\n"
-    "/kang: take a sticker for yourself\n"
+    "/kang: take a sticker for yourself\n/mypacks: see your sticker packs\n"
     "/id: get a user or chat ID\n"
     "/ping: check if Rumi is awake\n"
     "/setlang: choose English or Hindi\n"

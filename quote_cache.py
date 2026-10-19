@@ -11,6 +11,25 @@ def get(chat_id, message_id):
     return _cache.get(chat_id, {}).get(message_id)
 
 
+def span(chat_id, start_id, n, before_id):
+    d = _cache.get(chat_id) or {}
+    if start_id not in d:
+        return []
+    out, on = [], False
+    for mid, m in d.items():
+        on = on or mid == start_id
+        if on and mid < before_id:
+            out.append(m)
+            if len(out) >= n:
+                break
+    return out
+
+
+def last(chat_id, before_id, n):
+    d = _cache.get(chat_id) or {}
+    return [m for mid, m in d.items() if mid < before_id][-n:]
+
+
 async def _remember(update, context):
     m = update.effective_message
     if m is None or not (m.text or m.caption):

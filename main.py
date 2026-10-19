@@ -157,6 +157,8 @@ def main() -> None:
     clans.register(application)
     import ax_kang
     ax_kang.register(application)
+    import ax_qextra
+    ax_qextra.register(application)
     import ax_ping
     ax_ping.register(application)
     import ax_errors

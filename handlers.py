@@ -26,6 +26,8 @@ COMMAND_LIST = [
     ("/work", "Work for coins every hour"),
     ("/shop", "Buy titles to show off"),
     ("/q", "Turn a reply into a sticker"),
+    ("/qcolors", "See quote colours"),
+    ("/mypacks", "See your sticker packs"),
     ("/pact", "Swear a Blood Pact"),
     ("/betray", "Break your pact"),
     ("/bounty", "Put a price on someone"),
