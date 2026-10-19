@@ -35,6 +35,17 @@ def _msg_full(m, with_reply=False):
     return d
 
 
+def _tag(items, roles):
+    if not roles:
+        return items
+    for d in items:
+        val = roles.get(d.get("from", {}).get("id"))
+        if val:
+            d["senderTag"] = val[1] or val[0]
+            d["senderTagRole"] = val[0]
+    return items
+
+
 def _build(msgs):
     if len(msgs) == 2:
         a, b = msgs
@@ -47,11 +58,11 @@ def _build(msgs):
     return [_msg(m) for m in msgs]
 
 
-async def remote(token, msgs):
+async def remote(token, msgs, roles=None):
     try:
         payload = {"type": "quote", "format": "png", "backgroundColor": "#1b1429",
                    "width": 512, "height": 768, "scale": 2, "botToken": token,
-                   "emojiBrand": "apple", "messages": _build(msgs)}
+                   "emojiBrand": "apple", "messages": _tag(_build(msgs), roles)}
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(URL + "/generate", json=payload)
         if r.status_code != 200:
@@ -59,6 +70,9 @@ async def remote(token, msgs):
             return None
         raw = base64.b64decode(r.json()["result"]["image"])
         im = Image.open(io.BytesIO(raw)).convert("RGBA")
+        box = im.split()[3].getbbox()
+        if box:
+            im = im.crop(box)
         s = 512 / max(im.size)
         return im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS)
     except Exception as e:

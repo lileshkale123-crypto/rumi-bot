@@ -33,6 +33,37 @@ async def _card(bot, m):
     return await asyncio.to_thread(render, name, text, avatar, u.id if u else 0)
 
 
+_ROLE_CACHE = {}
+
+
+async def _roles(bot, chat_id, msgs):
+    import time
+    out = {}
+    now = time.time()
+    for m in msgs:
+        u = m.from_user
+        if u is None or m.chat.type not in ("group", "supergroup"):
+            continue
+        key = (chat_id, u.id)
+        hit = _ROLE_CACHE.get(key)
+        if hit and now - hit[0] < 600:
+            val = hit[1]
+        else:
+            val = None
+            try:
+                cm = await bot.get_chat_member(chat_id, u.id)
+                if cm.status == "creator":
+                    val = ("owner", getattr(cm, "custom_title", None))
+                elif cm.status == "administrator":
+                    val = ("admin", getattr(cm, "custom_title", None))
+            except Exception as e:
+                print("quote role failed:", repr(e)[:100])
+            _ROLE_CACHE[key] = (now, val)
+        if val:
+            out[u.id] = val
+    return out
+
+
 def _stack(imgs):
     crops = [i.crop(i.getbbox()) for i in imgs]
     w = max(c.width for c in crops)
@@ -60,7 +91,8 @@ async def quote_cmd(update, context):
         msgs = [rp.reply_to_message, rp]
     try:
         tm = [m for m in msgs if (m.text or m.caption)]
-        rimg = await qr.remote(context.bot.token, tm) if tm else None
+        roles = await _roles(context.bot, msg.chat_id, tm)
+        rimg = await qr.remote(context.bot.token, tm, roles) if tm else None
         imgs = [rimg] if rimg is not None else [c for c in [await _card(context.bot, m) for m in msgs] if c is not None]
         if not imgs:
             await msg.reply_text("🌸 <b>No text found</b>\n<blockquote>I can only quote text messages 🌸</blockquote>", parse_mode=H)
