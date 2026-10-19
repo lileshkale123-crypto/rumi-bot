@@ -24,11 +24,22 @@ def _msg(m):
             "entities": [e.to_dict() for e in (ents or [])]}
 
 
+def _msg_full(m, with_reply=False):
+    d = _msg(m)
+    r = m.reply_to_message
+    if with_reply and r is not None and (r.text or r.caption):
+        ru = r.from_user
+        d["replyMessage"] = {"name": (ru.full_name if ru else "Someone"),
+                             "text": (r.text or r.caption or ""),
+                             "chatId": (ru.id if ru else 0), "entities": []}
+    return d
+
+
 async def remote(token, msgs):
     try:
         payload = {"type": "quote", "format": "png", "backgroundColor": "#1b1429",
                    "width": 512, "height": 768, "scale": 2, "botToken": token,
-                   "emojiBrand": "apple", "messages": [_msg(m) for m in msgs]}
+                   "emojiBrand": "apple", "messages": [_msg_full(m, len(msgs) == 1) for m in msgs]}
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(URL + "/generate", json=payload)
         if r.status_code != 200:
