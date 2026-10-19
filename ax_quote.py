@@ -8,6 +8,7 @@ from telegram.ext import CommandHandler
 
 from quote_render import render
 import quote_remote as qr
+import quote_cache as qc
 
 H = ParseMode.HTML
 
@@ -52,6 +53,7 @@ async def quote_cmd(update, context):
     if not rp:
         await msg.reply_text("💬 <b>Reply to a message</b>\n<blockquote>Use /q on any text message, or /q r to include the message it replied to ✨</blockquote>", parse_mode=H)
         return
+    rp = qc.get(update.effective_chat.id, rp.message_id) or rp
     want_two = bool(context.args) and context.args[0].lower() == "r"
     msgs = [rp]
     if want_two and rp.reply_to_message:
@@ -74,3 +76,4 @@ async def quote_cmd(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("q", quote_cmd))
+    qc.register(app)

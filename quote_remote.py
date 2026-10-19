@@ -39,7 +39,7 @@ async def remote(token, msgs):
     try:
         payload = {"type": "quote", "format": "png", "backgroundColor": "#1b1429",
                    "width": 512, "height": 768, "scale": 2, "botToken": token,
-                   "emojiBrand": "apple", "messages": [_msg_full(m, len(msgs) == 1) for m in msgs]}
+                   "emojiBrand": "apple", "messages": [_msg_full(m, False) for m in msgs]}
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(URL + "/generate", json=payload)
         if r.status_code != 200:
