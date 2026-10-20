@@ -19,17 +19,32 @@ def dur(start):
     return " ".join(parts)
 
 
+_afk_ids = set()
+_afk_loaded = False
+
+
+async def _load_afk(pool):
+    global _afk_loaded
+    if _afk_loaded:
+        return
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT user_id FROM ax_afk")
+    _afk_ids.update(r["user_id"] for r in rows)
+    _afk_loaded = True
+
+
 async def afk_cmd(update, context):
     user, msg = update.effective_user, update.effective_message
     pool = context.bot_data["pool"]
     arg = " ".join(context.args or []).strip()
     if arg.lower() == "off":
         async with pool.acquire() as c:
-            r = await c.execute("DELETE FROM ax_afk WHERE user_id=$1", user.id)
+            _afk_ids.discard(user.id); r = await c.execute("DELETE FROM ax_afk WHERE user_id=$1", user.id)
         await msg.reply_text(
             "✅ <b>AFK removed</b>" if r.endswith("1") else "💫 <b>You're not AFK</b>", parse_mode=H)
         return
     reason = arg[:200] or None
+    _afk_ids.add(user.id)
     async with pool.acquire() as c:
         await c.execute(
             "INSERT INTO ax_afk (user_id, reason) VALUES ($1,$2) ON CONFLICT (user_id) "
@@ -46,7 +61,15 @@ async def afk_watcher(update, context):
         return
     pool = context.bot_data["pool"]
     raw = msg.text or msg.caption or ""
-    if not raw.lower().startswith("/afk"):
+    try:
+        await _load_afk(pool)
+    except Exception as e:
+        print("afk load error:", e)
+        return
+    if not _afk_ids:
+        return
+    if not raw.lower().startswith("/afk") and user.id in _afk_ids:
+        _afk_ids.discard(user.id)
         async with pool.acquire() as c:
             r = await c.fetchrow(
                 "DELETE FROM ax_afk WHERE user_id=$1 RETURNING reason, start_time, msg_count", user.id)
@@ -56,6 +79,8 @@ async def afk_watcher(update, context):
                 f"👋 <b>Welcome back, {esc(user.first_name)}!</b>\n<blockquote>"
                 f"⏳ Away for <b>{dur(r['start_time'])}</b>{extra}\n"
                 f"💌 Mentions while away: <b>{r['msg_count']}</b></blockquote>", parse_mode=H)
+    if raw.startswith("/"):
+        return
     targets = set()
     rp = msg.reply_to_message
     if rp and rp.from_user and not rp.from_user.is_bot:
@@ -72,7 +97,7 @@ async def afk_watcher(update, context):
             if row:
                 targets.add(row["id"])
     now = time.time()
-    for tid in targets - {user.id}:
+    for tid in (targets & _afk_ids) - {user.id}:
         async with pool.acquire() as c:
             r = await c.fetchrow(
                 "UPDATE ax_afk SET msg_count = msg_count + 1 WHERE user_id=$1 "

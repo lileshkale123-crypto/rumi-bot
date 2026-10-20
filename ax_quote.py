@@ -88,6 +88,9 @@ async def quote_cmd(update, context):
     if p["n"] > 1:
         if rp:
             multi = qc.span(msg.chat_id, rp.message_id, p["n"], msg.message_id)
+            if len(multi) < p["n"]:
+                first = multi[0].message_id if multi else msg.message_id
+                multi = qc.last(msg.chat_id, first, p["n"] - len(multi)) + multi
         else:
             multi = qc.last(msg.chat_id, msg.message_id, p["n"])
         if len(multi) < 2:

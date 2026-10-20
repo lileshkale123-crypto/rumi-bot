@@ -5,13 +5,51 @@ from telegram.ext import ChatMemberHandler, MessageHandler, filters
 from ax_common import track_user
 
 _seen_groups = set()
+_known = {}
+_counts = {}
+
+
+async def _track_cached(pool, user, chat):
+    if user is None or user.is_bot:
+        return
+    gid = 0
+    if chat is not None and chat.type == "private":
+        gid = 0
+    elif chat is not None:
+        gid = chat.id
+    key = (user.id, gid)
+    sig = (user.username, user.first_name)
+    if _known.get(key) == sig:
+        _counts[user.id] = _counts.get(user.id, 0) + 1
+        return
+    await track_user(pool, user, chat)
+    _known[key] = sig
+
+
+async def _flush_counts(context):
+    if not _counts:
+        return
+    items = list(_counts.items())
+    _counts.clear()
+    pool = context.bot_data["pool"]
+    try:
+        async with pool.acquire() as c:
+            await c.executemany(
+                "UPDATE ax_user_stats SET message_count = message_count + $2, "
+                "last_seen = now() WHERE user_id = $1",
+                items,
+            )
+    except Exception as e:
+        print("flush counts error:", e)
+        for uid, n in items:
+            _counts[uid] = _counts.get(uid, 0) + n
 
 
 async def tracker(update, context):
     chat, user = update.effective_chat, update.effective_user
     pool = context.bot_data["pool"]
     try:
-        await track_user(pool, user, chat)
+        await _track_cached(pool, user, chat)
         if chat and chat.type != "private" and chat.id not in _seen_groups:
             async with pool.acquire() as c:
                 await c.execute(
@@ -42,4 +80,5 @@ async def my_chat_member(update, context):
 
 def register(app):
     app.add_handler(MessageHandler(filters.ALL, tracker), group=-5)
+    app.job_queue.run_repeating(_flush_counts, interval=300, first=300)
     app.add_handler(ChatMemberHandler(my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))

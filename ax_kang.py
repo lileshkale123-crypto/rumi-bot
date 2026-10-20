@@ -67,9 +67,32 @@ def _to_png(data):
     return out.getvalue()
 
 
+async def _text_source(update, context):
+    msg = update.effective_message
+    r = msg.reply_to_message
+    if not r or not (r.text or r.caption):
+        return None
+    try:
+        import ax_quote as aq
+        import quote_remote as qr
+        tm = [r]
+        roles = await aq._roles(context.bot, msg.chat_id, tm)
+        img = await qr.remote(context.bot.token, tm, roles, color=None, reply=False)
+        if img is None:
+            img = await aq._card(context.bot, r)
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return "static", out.getvalue(), "\U0001F642", "png"
+    except Exception:
+        log.exception("kang text failed")
+        return None
+
+
 async def kang_cmd(update, context):
     msg, u = update.effective_message, update.effective_user
     src = _source(msg)
+    if not src:
+        src = await _text_source(update, context)
     if not src:
         return await msg.reply_html(HELP)
     wait = COOLDOWN - (time.monotonic() - _last.get(u.id, -1e9))
@@ -84,8 +107,11 @@ async def kang_cmd(update, context):
     name = f"k{u.id}_{kind}_by_{bot.username}"
     title = f"{u.first_name or 'My'}'s {kind} pack"[:64]
     try:
-        f = await _retry(bot.get_file, fid)
-        data = bytes(await _retry(f.download_as_bytearray))
+        if isinstance(fid, (bytes, bytearray)):
+            data = bytes(fid)
+        else:
+            f = await _retry(bot.get_file, fid)
+            data = bytes(await _retry(f.download_as_bytearray))
         if ext == "png":
             data = await asyncio.to_thread(_to_png, data)
             if data[:4] == b"RIFF":
