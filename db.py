@@ -12,6 +12,10 @@ async def init_pool() -> asyncpg.Pool:
         def get_reset_query(self):
             return ""
 
+    try:
+        print('db host:', dsn.split('@')[-1].split('/')[0])
+    except Exception:
+        pass
     _pool = await asyncpg.create_pool(
         dsn=dsn, min_size=1, max_size=10, connection_class=_NoResetConn
     )
