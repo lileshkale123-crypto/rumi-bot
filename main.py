@@ -40,7 +40,8 @@ async def post_init(application: Application) -> None:
 
 def main() -> None:
     token = os.environ["BOT_TOKEN"]
-    application = Application.builder().token(token).post_init(post_init).concurrent_updates(True).build()
+    from telegram.request import HTTPXRequest
+    application = Application.builder().token(token).request(HTTPXRequest(connection_pool_size=256, http_version="2")).post_init(post_init).concurrent_updates(True).build()
     application.add_handler(TypeHandler(Update, ignore_old_updates), group=-1)
 
     application.add_handler(CommandHandler("start", handlers.start_command))
