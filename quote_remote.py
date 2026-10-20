@@ -78,7 +78,7 @@ async def remote(token, msgs, roles=None, color=None, reply=False):
         cv.paste(im, (0, 0))
         im = cv
         s = 512 / max(im.size)
-        return im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS)
+        return im.resize((max(1, min(512, round(im.width * s))), max(1, min(512, round(im.height * s)))), Image.LANCZOS)
     except Exception as e:
         print("quote remote failed:", repr(e)[:120])
         return None

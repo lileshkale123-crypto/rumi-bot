@@ -46,6 +46,8 @@ def _source(msg):
         kind = "animated" if s.is_animated else "video" if s.is_video else "static"
         ext = {"animated": "tgs", "video": "webm", "static": "webp"}[kind]
         return kind, s.file_id, s.emoji or "🙂", ext
+    if r.animation:
+        return "video", r.animation.file_id, "\U0001F602", "gif"
     if r.photo:
         return "static", r.photo[-1].file_id, "🙂", "png"
     d = r.document
@@ -65,6 +67,37 @@ def _to_png(data):
         out = io.BytesIO()
         im.save(out, "WEBP", quality=85)
     return out.getvalue()
+
+
+def _gif_to_webm(data):
+    import os, shutil, subprocess, tempfile
+    d = tempfile.mkdtemp()
+    try:
+        src = os.path.join(d, "in.bin")
+        dst = os.path.join(d, "out.webm")
+        with open(src, "wb") as fh:
+            fh.write(data)
+        vf = "fps=30,scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=yuva420p"
+        for crf in ("38", "46", "55"):
+            cmd = ["ffmpeg", "-y", "-i", src, "-t", "3", "-an", "-vf", vf,
+                   "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", crf, dst]
+            subprocess.run(cmd, capture_output=True, timeout=90, check=True)
+            with open(dst, "rb") as fh:
+                out = fh.read()
+            if len(out) <= 256000:
+                return out
+        raise ValueError("gif too big")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _fit_static(data):
+    im = Image.open(io.BytesIO(data))
+    w, h = im.size
+    ok = im.format in ("PNG", "WEBP")
+    if ok and max(w, h) == 512 and w <= 512 and h <= 512 and len(data) <= 500000:
+        return data
+    return _to_png(data)
 
 
 async def _text_source(update, context):
@@ -112,8 +145,12 @@ async def kang_cmd(update, context):
         else:
             f = await _retry(bot.get_file, fid)
             data = bytes(await _retry(f.download_as_bytearray))
-        if ext == "png":
-            data = await asyncio.to_thread(_to_png, data)
+        if ext == "gif":
+            data = await asyncio.to_thread(_gif_to_webm, data)
+            ext = "webm"
+        if kind == "static":
+            data = await asyncio.to_thread(_fit_static, data)
+            ext = "png"
             if data[:4] == b"RIFF":
                 ext = "webp"
         st = InputSticker(InputFile(data, filename=f"s.{ext}", attach=True), [emoji], kind)

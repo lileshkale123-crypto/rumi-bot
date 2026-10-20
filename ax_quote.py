@@ -76,7 +76,7 @@ def _stack(imgs):
         canvas.paste(c, (0, y))
         y += c.height + 8
     s = 512 / max(w, h)
-    canvas = canvas.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
+    canvas = canvas.resize((max(1, min(512, round(w * s))), max(1, min(512, round(h * s)))), Image.LANCZOS)
     return canvas
 
 
