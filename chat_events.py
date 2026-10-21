@@ -374,6 +374,12 @@ async def heist_job(context):
         for row in rows:                       # first group that accepts the message wins
             chat_id = row["chat_id"]
             try:
+                _c = await context.bot.get_chat(chat_id)
+                if getattr(_c, "type", "") == "channel":
+                    continue
+            except Exception:
+                continue
+            try:
                 sent = await _bot_card(context.bot, chat_id, BANNER_HEIST, _heist_text([]), _heist_kb())
             except Exception:
                 log.info("heist: cannot post in %s, trying another group", chat_id)

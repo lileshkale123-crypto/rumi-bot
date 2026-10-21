@@ -31,11 +31,17 @@ async def promo_job(context):
             count = None
         line = f"<code>{count:,}</code> members" if count else "its members"
         name = html.escape(r["title"] or "This channel")
+        import random as _rnd
+        _hd = _rnd.choice([
+            "ᴘʀᴏᴛᴇᴄᴛᴇᴅ ʙʏ ʀᴜᴍɪ",
+            "ᴛʜɪs ᴄʜᴀɴɴᴇʟ ɪs sᴀғᴇ",
+            "ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ɪs ᴡᴀᴛᴄʜᴇᴅ",
+        ])
         text = (
-            "\U0001F6E1 <b>Protected by Rumi</b>\n"
+            f"\U0001F6E1 <b>{_hd}</b>\n"
             f"<blockquote>{name} has {line} being watched \U0001F49C\n"
-            f"Rumi is watching {_plural(total)} right now.\n"
-            "Want the same for yours? Tap below \u2728</blockquote>")
+            f"Rumi guards {_plural(total)} right now.\n"
+            "ᴡᴀɴᴛ ᴛʜᴇ sᴀᴍᴇ ғᴏʀ ʏᴏᴜʀs? ᴛᴀᴘ ʙᴇʟᴏᴡ \u2728</blockquote>")
         try:
             sent = await context.bot.send_message(
                 r["chat_id"], text, parse_mode=H,

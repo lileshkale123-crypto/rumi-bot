@@ -14,7 +14,7 @@ import config
 import services
 import ui
 
-PLACEHOLDER_PHOTO_URL = "https://raw.githubusercontent.com/lileshkale123-crypto/rumi-bot/main/assets/rumi-start-v2.png"
+PLACEHOLDER_PHOTO_URL = "AgACAgUAAxkBAAIUyGrYXCg69ko8_Zeg5tkBAs4tkxgnAAIdJGsbv2TJVipKp0YrO2yxAQADAgADeQADPQQ"
 
 COMMAND_LIST = [
     ("/wallet", "Check your Wallet"),
@@ -56,6 +56,17 @@ def _get_reply_target(update: Update):
 # ---------------------------------------------------------------------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _ch = update.effective_chat
+    if _ch is not None and _ch.type in ("group", "supergroup"):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        _fn = html.escape(update.effective_user.first_name or "friend")
+        await update.effective_message.reply_text(
+            f"<b>Hey {_fn}</b> 💜\n"
+            f"<blockquote>I'm Rumi. Tap below to start me in DM for your wallet, games and the full guide ✨</blockquote>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💜 Start Rumi in DM", url=f"https://t.me/{context.bot.username}")]]),
+        )
+        return
     user = update.effective_user
     pool = context.bot_data["pool"]
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)

@@ -45,20 +45,19 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
     level = wallet["level"] if wallet else 1
     xp = wallet["xp"] if wallet else 0
 
-    command_lines = "\n".join(f"🔷 <b>{cmd}</b> — {desc}" for cmd, desc in command_list)
-
     return (
-        f"<b>Welcome, {name}</b>\n"
+        f"<b>ᴡᴇʟᴄᴏᴍᴇ, {name}</b> 💜\n"
         f"<i>Rumi</i>\n\n"
-        f"🌙 <b>Your Snapshot</b>\n"
-        f"💰 Cash: {config.CURRENCY_SYMBOL}{format_number(cash)}\n"
-        f"💎 Gems: {gems}\n"
-        f"⭐ Level: {level}\n"
-        f"✨ XP: {xp}\n\n"
-        f"🎮 <b>Available Commands</b>\n"
-        f"{command_lines}\n\n"
-        f"<b>Tip:</b> tap a button below to get started.\n\n"
-        f"<blockquote>\U0001F6E1 <b>Own a channel?</b> Add Rumi as admin and get a short branded post every 2 days plus private alerts if your members drop. Tap Add to your channel below \u2728</blockquote>"
+        f"<blockquote>🌙 <b>ʏᴏᴜʀ sɴᴀᴘsʜᴏᴛ</b>\n"
+        f"💰 Cash: <b>{config.CURRENCY_SYMBOL}{format_number(cash)}</b>\n"
+        f"💎 Gems: <b>{gems}</b>\n"
+        f"⭐ Level: <b>{level}</b>\n"
+        f"✨ XP: <b>{xp}</b></blockquote>\n\n"
+        f"🎮 <b>ᴄᴏᴍᴍᴀɴᴅs</b>\n"
+        f"<blockquote>/wallet ✦ /claim ✦ /guard ✦ /pay ✦ /rob\n"
+        f"/help — open the full guide</blockquote>\n\n"
+        f"<blockquote>🛡 <b>Own a channel?</b>\n"
+        f"Add Rumi and protect your channel from reports ✨</blockquote>"
     )
 
 

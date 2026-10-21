@@ -102,7 +102,7 @@ async def announce(context, chat, kind, member):
             sent = await context.bot.send_photo(
                 chat.id, photo, caption=body,
                 has_spoiler=flags["mediaspoiler"], **kw)
-        elif kind == "welcome" and os.path.exists(IMG):
+        elif False and kind == "welcome" and os.path.exists(IMG):
             with open(IMG, "rb") as f:
                 sent = await context.bot.send_photo(
                     chat.id, f, caption=body,
