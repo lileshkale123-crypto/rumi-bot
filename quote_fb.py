@@ -1,5 +1,6 @@
 """/q fallback fonts: pick a font per character so stylish names show."""
 import os
+import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
 FB = [
@@ -64,6 +65,9 @@ def runs(text, f):
         out = []
         for ch in text:
             if ch in ZW:
+                continue
+            if out and unicodedata.category(ch) in ("Mn", "Mc", "Me"):
+                out[-1][0] += ch  # marks (matras, virama) stay with their letter
                 continue
             g = pick(f, ch)
             if out and out[-1][1] is g:
