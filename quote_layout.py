@@ -8,19 +8,72 @@ import quote_emoji as qe
 import quote_fb as qf
 
 TERMUX = "/data/data/com.termux/files/usr/share/fonts/TTF/"
-BOLD = ["assets/fonts/DejaVuSans-Bold.ttf", TERMUX + "DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
-REG = ["assets/fonts/DejaVuSans.ttf", TERMUX + "DejaVuSans.ttf",
-       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+SYS_DJV = "/usr/share/fonts/truetype/dejavu/"
+
+REG = [
+    "assets/fonts/DejaVuSans.ttf",
+    TERMUX + "DejaVuSans.ttf",
+    SYS_DJV + "DejaVuSans.ttf",
+]
+BOLD = [
+    "assets/fonts/DejaVuSans-Bold.ttf",
+    TERMUX + "DejaVuSans-Bold.ttf",
+    SYS_DJV + "DejaVuSans-Bold.ttf",
+]
+ITALIC = [
+    "assets/fonts/DejaVuSans-Oblique.ttf",
+    "assets/fonts/DejaVuSans-Italic.ttf",
+    TERMUX + "DejaVuSans-Oblique.ttf",
+    SYS_DJV + "DejaVuSans-Oblique.ttf",
+] + REG
+BOLD_ITALIC = [
+    "assets/fonts/DejaVuSans-BoldOblique.ttf",
+    "assets/fonts/DejaVuSans-BoldItalic.ttf",
+    TERMUX + "DejaVuSans-BoldOblique.ttf",
+    SYS_DJV + "DejaVuSans-BoldOblique.ttf",
+] + BOLD
+MONO = [
+    "assets/fonts/DejaVuSansMono.ttf",
+    TERMUX + "DejaVuSansMono.ttf",
+    SYS_DJV + "DejaVuSansMono.ttf",
+] + REG
+MONO_BOLD = [
+    "assets/fonts/DejaVuSansMono-Bold.ttf",
+    TERMUX + "DejaVuSansMono-Bold.ttf",
+    SYS_DJV + "DejaVuSansMono-Bold.ttf",
+] + MONO
+
 ES = 26  # emoji picture size
 _D = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+_FONT_CACHE = {}
 
 
 def font(paths, size):
+    size = max(1, int(round(size)))
+    key = (tuple(paths), size)
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
     for p in paths:
         if os.path.isfile(p):
-            return ImageFont.truetype(p, size)
-    return ImageFont.load_default(size)
+            f = ImageFont.truetype(p, size)
+            _FONT_CACHE[key] = f
+            return f
+    f = ImageFont.load_default(size)
+    _FONT_CACHE[key] = f
+    return f
+
+
+def style_font(size, bold=False, italic=False, mono=False):
+    """Return the matching PIL ImageFont for a combination of styles."""
+    if mono:
+        return font(MONO_BOLD if bold else MONO, size)
+    if bold and italic:
+        return font(BOLD_ITALIC, size)
+    if bold:
+        return font(BOLD, size)
+    if italic:
+        return font(ITALIC, size)
+    return font(REG, size)
 
 
 def tw(t, f):
@@ -85,3 +138,4 @@ def draw_row(img, dr, x, y, line, f, fill):
         elif kind == "w":
             qf.draw(dr, x, y, val, f, fill)
         x += w
+

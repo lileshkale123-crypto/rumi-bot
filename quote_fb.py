@@ -2,9 +2,11 @@
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-FB = ["assets/fonts/NotoSansSymbols.ttf",
-      "assets/fonts/NotoSansSymbols2.ttf",
-      "assets/fonts/NotoCJKsub.otf"]
+FB = [
+    "assets/fonts/NotoSansSymbols.ttf",
+    "assets/fonts/NotoSansSymbols2.ttf",
+    "assets/fonts/NotoCJKsub.otf",
+]
 ZW = "\u200b\u200c\u200d\ufe0e\ufe0f"
 _D = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 _REF = {}
@@ -33,7 +35,7 @@ def _has(path, ch):
 
 def pick(f, ch):
     path = getattr(f, "path", None)
-    if not isinstance(path, str) or "DejaVu" not in path:
+    if not isinstance(path, str) or ("DejaVu" not in path and "NotoSans" not in path):
         return f
     if ch.isspace() or _has(path, ch):
         return f
@@ -86,7 +88,10 @@ def draw(dr, x, y, val, f, fill):
         x += _D.textlength(s, font=g)
 
 
-if __name__ == "__main__":
-    f = ImageFont.truetype("assets/fonts/DejaVuSans.ttf", 26)
-    for t in ["Hello", "LORD \u4e48 AIZEN", "\u300eD E V I L\u300f\u30c4", "\U0001d4db\U0001d4fe \u2665 \u231b"]:
-        print([(s, os.path.basename(g.path)) for s, g in runs(t, f)])
+def draw_baseline(dr, x, baseline_y, val, f, fill):
+    """Draw text anchored at the alphabetic baseline (ls) across fallback fonts."""
+    for s, g in runs(val, f):
+        dr.text((x, baseline_y), s, font=g, fill=fill, anchor="ls")
+        x += _D.textlength(s, font=g)
+    return x
+
