@@ -1,6 +1,5 @@
-"""Remembers recent group messages so /q r can find the message that was replied to."""
+"""Remembers recent group messages so /q r and /q N can find messages."""
 from collections import OrderedDict
-
 from telegram.ext import MessageHandler, filters
 
 MAX_PER_CHAT = 300
@@ -32,7 +31,13 @@ def last(chat_id, before_id, n):
 
 async def _remember(update, context):
     m = update.effective_message
-    if m is None or not (m.text or m.caption):
+    if m is None:
+        return
+    has_content = bool(
+        m.text or m.caption or m.photo or m.sticker or m.video
+        or m.animation or m.voice or m.audio or m.document or m.video_note
+    )
+    if not has_content:
         return
     d = _cache.setdefault(m.chat_id, OrderedDict())
     d[m.message_id] = m
