@@ -3,6 +3,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 FB = [
+    "assets/fonts/NotoSansDevanagari.ttf",
     "assets/fonts/NotoSansSymbols.ttf",
     "assets/fonts/NotoSansSymbols2.ttf",
     "assets/fonts/NotoCJKsub.otf",

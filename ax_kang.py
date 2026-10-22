@@ -106,13 +106,12 @@ async def _text_source(update, context):
     if not r or not (r.text or r.caption):
         return None
     try:
+        import asyncio
         import ax_quote as aq
-        import quote_remote as qr
-        tm = [r]
-        roles = await aq._roles(context.bot, msg.chat_id, tm)
-        img = await qr.remote(context.bot.token, tm, roles, color=None, reply=False)
-        if img is None:
-            img = await aq._card(context.bot, r)
+        import quote_pil as qp
+        roles = await aq._roles(context.bot, msg.chat_id, [r])
+        dicts = await aq._build_msg_dicts(context.bot, [r], roles, include_reply=False)
+        img = await asyncio.to_thread(qp.render_messages, dicts, None)
         out = io.BytesIO()
         img.save(out, format="PNG")
         return "static", out.getvalue(), "\U0001F642", "png"

@@ -392,12 +392,12 @@ def _extract_initials(name: str) -> str:
     clean_name = qe.clean(name or "").strip()
     if not clean_name:
         return "?"
-    words = [w for w in clean_name.upper().split() if w]
+    words = [w for w in clean_name.upper().split() if any(c.isalnum() for c in w)]
     if not words:
         return "?"
-    first = next((ch for ch in words[0] if not ch.isspace()), "?")
+    first = next(ch for ch in words[0] if ch.isalnum())
     if len(words) > 1:
-        last = next((ch for ch in words[-1] if not ch.isspace()), "")
+        last = next(ch for ch in words[-1] if ch.isalnum())
         return first + last
     return first
 
@@ -427,7 +427,7 @@ def draw_avatar(avatar_bytes: bytes | None, name: str, user_id: int, size: int) 
     dr = ImageDraw.Draw(bg)
     letters = _extract_initials(name)
     f_size = int(round(size * (0.38 if len(letters) > 1 else 0.48)))
-    f = L.style_font(f_size, bold=True)
+    f = qf.pick(L.style_font(f_size, bold=True), letters[0])
     dr.text((size / 2.0, size / 2.0), letters, font=f, fill=(255, 255, 255, 255), anchor="mm")
 
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
