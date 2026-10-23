@@ -120,6 +120,8 @@ def main() -> None:
     ax_extras.register(application)
     import ax_donate
     ax_donate.register(application)
+    import ax_premium
+    ax_premium.register(application)
     import ax_givecoins
     ax_givecoins.register(application)
     import ax_backup

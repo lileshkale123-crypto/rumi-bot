@@ -53,7 +53,7 @@ async def pick(update, context):
 
 async def precheckout(update, context):
     q = update.pre_checkout_query
-    ok = q.invoice_payload.startswith("donate:")
+    ok = q.invoice_payload.startswith(("donate:", "premium:"))
     await q.answer(ok=ok, error_message=None if ok else "Unknown payment")
 
 

@@ -327,3 +327,16 @@ def xp_line(xp_info) -> str:
             bonus += f" • +{xp_info['gem_bonus']} Gem"
         text += f"\n🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})"
     return text
+
+
+def wallet_card_premium(name: str, wallet, emoji: str = "") -> str:
+    n = escape_html(name)
+    return (
+        "💎 <b>RUMI PREMIUM WALLET</b>\n\n"
+        f"{emoji}<b>{n}</b>  <code>LVL {wallet['level']}</code>\n\n"
+        "<blockquote>"
+        f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{format_number(wallet['cash'])}</code>\n\n"
+        f"💎 <b>Gems:</b> <code>{wallet['gems']}</code>\n\n"
+        f"✨ <b>XP:</b> <code>{wallet['xp']}</code>"
+        "</blockquote>"
+    )

@@ -116,6 +116,12 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _other = True
     text = ui.wallet_card(name, wallet)
     keyboard = ui.wallet_keyboard()
+    import ax_premium
+    _uid = _rt.id if _other else user.id
+    _prem = await ax_premium.get_premium(pool, _uid)
+    if _prem is not None:
+        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(_prem))
+        keyboard = None
     if _other:
         keyboard = None
 
