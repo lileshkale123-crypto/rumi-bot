@@ -1648,7 +1648,6 @@ def _paint_stripe(bar_img: Image.Image, colors: list[str], s_fn) -> Image.Image:
 
 
 def _paint_emoji_pattern(canvas: Image.Image, n: dict, emoji_img: Image.Image, accent: str, shape: Image.Image, s_fn):
-    """Exact port of paintEmojiPattern(ctx, n, emoji, accent, shape, P, s) in composer.js."""
     bw, bh = int(math.ceil(n["w"])), int(math.ceil(n["h"]))
     clip = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     acc_rgb = hex_to_rgb(accent)
@@ -1658,14 +1657,12 @@ def _paint_emoji_pattern(canvas: Image.Image, n: dict, emoji_img: Image.Image, a
         if s_fn(cell["dx"]) + size > bar_limit:
             continue
         em_scaled = emoji_img.convert("RGBA").resize((size, size), Image.LANCZOS)
-        # source-in tint with accent color
         tinted = Image.new("RGBA", (size, size), (*acc_rgb, 255))
         tinted.putalpha(em_scaled.split()[3])
         px = int(round(bw - s_fn(cell["dx"]) - size / 2.0))
         py = int(round(bh * cell["dy"] - size / 2.0))
         clip.alpha_composite(tinted, (px, py))
 
-    # destination-in clip to rounded block shape + 0.14 alpha
     clipped_alpha = ImageChops.multiply(clip.split()[3], shape.split()[3])
     clipped_alpha = clipped_alpha.point(lambda p: int(round(p * GLASS_STYLE["emoji_alpha"])))
     clip.putalpha(clipped_alpha)
@@ -1806,7 +1803,7 @@ def render_stage4(
     is_sticker = media_type in ("sticker", "video_note")
     is_round = media_type == "video_note"
 
-    # 3. Name & Header (with optional emoji_status custom emoji badge like index.js line 100)
+    # 3. Name & Header
     header_node = None
     if show_name and name and not is_sticker:
         name_size = s(P["font_name"])
@@ -1855,7 +1852,7 @@ def render_stage4(
         fwd_qc = draw_label(forward_label, s(P["font_micro"]), name_color, bold=True)
         forward_node = leaf(fwd_qc, role="text", maxW=s(P["max_header"]))
 
-    # 5. Reply Block (with striped bar + optional profile background emoji pattern)
+    # 5. Reply Block
     reply_node = None
     if isinstance(reply, dict) and reply.get("name") and (reply.get("text") or reply.get("thumb")):
         r_uid = int(reply.get("user_id") or abs(hash(reply["name"])) or 0)
@@ -2185,9 +2182,6 @@ def render_messages(messages: list[dict], bg: str | None = None) -> Image.Image:
                 combined.alpha_composite(im, (0, max(0, int(round(cy)))))
                 cy += im.height
 
-        # Quotly natural sticker scaling:
-        # Ensure narrow bubbles (like short multi-line text) are NOT blown up to 512px tall
-        # by enforcing a minimum virtual width of 380 * scale before scaling to 512px.
         w, h = combined.size
         min_virtual_w = 380 * scale
         pad_bottom = max(1, round(max(w, h) * 0.06))

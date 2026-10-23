@@ -265,7 +265,6 @@ async def _extract_media(bot, m) -> dict:
 
 
 async def _build_msg_dicts(bot, msgs: list, roles: dict, include_reply: bool = False) -> list[dict]:
-    # Collect custom emoji IDs across messages, emoji statuses, and reply background emojis
     c_ids = []
     for m in msgs:
         ents = (m.entities if m.text else m.caption_entities) or []
@@ -306,7 +305,6 @@ async def _build_msg_dicts(bot, msgs: list, roles: dict, include_reply: bool = F
         reply_dict = None
         r = getattr(m, "reply_to_message", None)
         quote_part = getattr(m, "quote", None)
-        # Show reply preview when /q r is used, or when a partial quote is highlighted, or in multi-message stacks
         if r is not None and (include_reply or quote_part is not None or len(msgs) > 1):
             r_name, r_uid, r_acc_id, _, r_bg_em = _sender_info(r)
             if quote_part and getattr(quote_part, "text", None):
