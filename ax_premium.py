@@ -132,9 +132,14 @@ async def setemoji(update, context):
     if await get_premium(pool, user.id) is None and user.id not in OWNER_IDS:
         await update.effective_message.reply_text("💎 This is a Premium feature. Try /premium")
         return
-    r = update.effective_message.reply_to_message
-    text = (r.text or r.caption or "") if r else ""
-    ents = (r.entities or r.caption_entities or []) if r else []
+    m = update.effective_message
+    r = m.reply_to_message
+    own = False
+    if r is None or not (r.text or r.caption):
+        r = m
+        own = True
+    text = r.text or r.caption or ""
+    ents = r.entities or r.caption_entities or []
     eid, ch = None, None
     for e in ents:
         if e.type == "custom_emoji":
@@ -142,8 +147,12 @@ async def setemoji(update, context):
             ch = raw[e.offset * 2:(e.offset + e.length) * 2].decode("utf-16-le")
             eid = e.custom_emoji_id
             break
-    if eid is None and text.strip() and len(text.strip()) <= 8:
-        ch = text.strip()
+    _t = text.strip()
+    if own and _t.startswith("/"):
+        _p = _t.split(None, 1)
+        _t = _p[1].strip() if len(_p) > 1 else ""
+    if eid is None and _t and len(_t) <= 8:
+        ch = _t
     if not ch:
         await update.effective_message.reply_text("Reply to a message that has only an emoji, then send /setemoji")
         return
