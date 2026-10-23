@@ -150,7 +150,8 @@ async def setemoji(update, context):
     await _grant(pool, user.id) if user.id in OWNER_IDS else None
     async with pool.acquire() as c:
         await c.execute("UPDATE ax_premium SET emoji_id=$2, emoji_char=$3 WHERE user_id=$1", user.id, eid, ch)
-    await update.effective_message.reply_text("✨ Emoji saved. Check /wallet")
+    _n = "premium emoji ID found" if eid else "normal emoji only, no premium ID"
+    await update.effective_message.reply_text("✨ Emoji saved (%s). Check /wallet" % _n)
 
 
 def register(app):
