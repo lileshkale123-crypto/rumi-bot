@@ -153,3 +153,4 @@ def register(app):
     app.add_handler(CommandHandler("raidtime", raidtime_cmd))
     app.add_handler(CommandHandler("raidactiontime", raidactiontime_cmd))
     app.add_handler(CommandHandler("autoantiraid", autoantiraid_cmd))
+

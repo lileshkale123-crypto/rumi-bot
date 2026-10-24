@@ -61,3 +61,4 @@ async def setlang_cb(update, context):
 def register(app):
     app.add_handler(CommandHandler("setlang", setlang_cmd))
     app.add_handler(CallbackQueryHandler(setlang_cb, pattern="^axlg_"))
+

@@ -49,3 +49,4 @@ async def funmode_cmd(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("funmode", funmode_cmd))
+

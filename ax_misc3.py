@@ -102,3 +102,4 @@ def register(app):
         filters.Regex(r"^/(promote|demote)") & filters.ChatType.GROUPS,
         clear_cache), group=5)
     app.job_queue.run_once(lambda ctx: load(ctx.application), 5)
+

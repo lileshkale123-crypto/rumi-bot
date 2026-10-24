@@ -94,3 +94,4 @@ async def top_clans(pool):
             "SELECT c.name, c.level, c.vault_balance, "
             "(SELECT COUNT(*) FROM clan_members m WHERE m.clan_id = c.id) AS members "
             "FROM clans c ORDER BY c.vault_balance DESC, c.id LIMIT 10")
+

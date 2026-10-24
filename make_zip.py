@@ -20,3 +20,4 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
 print("Files zipped:", count)
 print("Saved to:", out)
 print("Size KB:", os.path.getsize(out) // 1024)
+

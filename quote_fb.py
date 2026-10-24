@@ -1,17 +1,15 @@
-"""/q fallback fonts: pick a font per character so stylish names, Hindi, CJK, and ꧁꧂ wings show."""
+"""/q fallback fonts: pick a font per character so stylish names show."""
 import os
 import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
 FB = [
     "assets/fonts/NotoSansDevanagari.ttf",
-    "assets/fonts/NotoSansMath.ttf",
-    "assets/fonts/NotoSerifTibetan.ttf",
     "assets/fonts/NotoSansSymbols.ttf",
     "assets/fonts/NotoSansSymbols2.ttf",
     "assets/fonts/NotoCJKsub.otf",
 ]
-ZW = "\u200b\u200c\u200d\ufe0e\ufe0f\u2060\ufeff"
+ZW = "\u200b\u200c\u200d\ufe0e\ufe0f"
 _D = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 _REF = {}
 _COV = {}
@@ -20,10 +18,7 @@ _FBF = {}
 
 def _bits(f, ch):
     im = Image.new("L", (96, 96), 0)
-    try:
-        ImageDraw.Draw(im).text((8, 8), ch, font=f, fill=255)
-    except Exception:
-        return b""
+    ImageDraw.Draw(im).text((8, 8), ch, font=f, fill=255)
     return im.tobytes()
 
 
@@ -31,42 +26,33 @@ def _has(path, ch):
     k = (path, ch)
     r = _COV.get(k)
     if r is None:
-        if not os.path.isfile(path):
-            _COV[k] = False
-            return False
         ref = _REF.get(path)
         if ref is None:
             f = ImageFont.truetype(path, 32)
-            # Compare against both \uffff and \ufffe to catch any .notdef tofu box
-            ref = _REF[path] = (f, _bits(f, "\uffff"), _bits(f, "\ufffe"))
+            ref = _REF[path] = (f, _bits(f, "\uffff"))
         b = _bits(ref[0], ch)
-        r = _COV[k] = (b != ref[1] and b != ref[2] and any(b))
+        r = _COV[k] = (b != ref[1] and any(b))
     return r
 
 
 def pick(f, ch):
     path = getattr(f, "path", None)
-    if not isinstance(path, str):
+    if not isinstance(path, str) or ("DejaVu" not in path and "NotoSans" not in path):
         return f
     if ch.isspace() or _has(path, ch):
         return f
-    size = int(getattr(f, "size", 26))
-    for p in ["assets/fonts/DejaVuSans.ttf"] + FB:
+    for p in FB:
         if os.path.isfile(p) and _has(p, ch):
-            k = (p, size)
+            k = (p, int(getattr(f, "size", 26)))
             if k not in _FBF:
-                _FBF[k] = ImageFont.truetype(p, size)
+                _FBF[k] = ImageFont.truetype(p, k[1])
             return _FBF[k]
-    return None  # Signals character is not in any font -> normalize or skip tofu
+    return f
 
 
 def covered(ch):
     try:
-        for p in [
-            "assets/fonts/DejaVuSans.ttf",
-            "assets/fonts/DejaVuSans-Bold.ttf",
-            "assets/fonts/DejaVuSans-Oblique.ttf",
-        ] + FB:
+        for p in ["assets/fonts/DejaVuSans.ttf"] + FB:
             if os.path.isfile(p) and _has(p, ch):
                 return True
     except Exception:
@@ -80,18 +66,10 @@ def runs(text, f):
         for ch in text:
             if ch in ZW:
                 continue
-            g = pick(f, ch)
-            if g is None:
-                # Try NFKC normalization if glyph is missing in all fonts
-                norm = unicodedata.normalize("NFKC", ch)
-                if norm and norm != ch:
-                    for nch in norm:
-                        ng = pick(f, nch) or f
-                        if out and out[-1][1] is ng:
-                            out[-1][0] += nch
-                        else:
-                            out.append([nch, ng])
+            if out and unicodedata.category(ch) in ("Mn", "Mc", "Me"):
+                out[-1][0] += ch  # marks (matras, virama) stay with their letter
                 continue
+            g = pick(f, ch)
             if out and out[-1][1] is g:
                 out[-1][0] += ch
             else:
@@ -113,3 +91,13 @@ def draw(dr, x, y, val, f, fill):
             base = y + f.getmetrics()[0]
             dr.text((x, base), s, font=g, fill=fill, anchor="ls")
         x += _D.textlength(s, font=g)
+
+
+def draw_baseline(dr, x, baseline_y, val, f, fill):
+    """Draw text anchored at the alphabetic baseline (ls) across fallback fonts."""
+    for s, g in runs(val, f):
+        dr.text((x, baseline_y), s, font=g, fill=fill, anchor="ls")
+        x += _D.textlength(s, font=g)
+    return x
+
+

@@ -61,7 +61,7 @@ async def render(pool, sort, page):
     nav.append(btn(f"{page}/{pages}", "noop"))
     if page < pages:
         nav.append(btn("▶", f"axp:{sort}:{page + 1}"))
-    nav.append(btn("🕵️ Cheats", "axc:r"))
+    nav.append(btn("🕵️ Cheats", "axch:r"))
     kb = InlineKeyboardMarkup([
         [btn("💵 Richest", "axp:cash:1", style="primary" if sort not in ("members", "donors") else None),
          btn("👥 Members", "axp:members:1", style="primary" if sort == "members" else None),
@@ -101,3 +101,4 @@ async def panel_callback(update, context):
 def register(app):
     app.add_handler(CommandHandler("adminpanel", panel_cmd))
     app.add_handler(CallbackQueryHandler(panel_callback, pattern="^axp:"))
+

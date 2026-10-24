@@ -89,3 +89,4 @@ def final_card(ranking, winners, hands):
         f"<blockquote>\U0001F3C6 <b>{label}:</b> {', '.join(esc(n) for n in win_names)}\n{rank_lines}\n{win_lines}</blockquote>\n"
         f"🎴 <b>Starting hands</b>\n<blockquote>{hand_lines}</blockquote>"
     )
+

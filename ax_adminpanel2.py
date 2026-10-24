@@ -118,3 +118,4 @@ async def group_callback(update, context):
 def register(app):
     app.add_handler(CommandHandler("group", group_cmd))
     app.add_handler(CallbackQueryHandler(group_callback, pattern="^axg:"))
+

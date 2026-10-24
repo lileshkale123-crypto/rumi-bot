@@ -88,3 +88,4 @@ async def week_job(context):
 def register(app):
     app.job_queue.run_repeating(promo_job, interval=3600, first=180)
     app.job_queue.run_repeating(week_job, interval=CHECK_EVERY, first=1200)
+

@@ -72,3 +72,4 @@ def register(app):
     app.add_handler(CommandHandler("report", report_cmd))
     app.add_handler(CommandHandler("reports", reports_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.ChatType.PRIVATE, atadmin_watch), group=-1)
+

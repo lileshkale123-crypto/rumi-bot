@@ -172,7 +172,9 @@ async def _do_work(pool, uid: int) -> dict:
             last = w["last_work_at"]
             if last and (now - last).total_seconds() < config.WORK_COOLDOWN:
                 return {"status": "cooldown", "retry_at": last + timedelta(seconds=config.WORK_COOLDOWN)}
-            pay = random.randint(config.WORK_MIN, config.WORK_MAX)
+            import chat_events
+            mult = await chat_events.pact_multiplier(pool, uid)
+            pay = int(random.randint(config.WORK_MIN, config.WORK_MAX) * mult)
             new_cash = w["cash"] + pay
             await conn.execute(
                 "UPDATE wallets SET cash = $1, last_work_at = $2, updated_at = now() WHERE user_id = $3",
@@ -319,3 +321,4 @@ async def mafiatop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "🏆 <b>MAFIA: HALL OF FAME</b>\n<blockquote>"
         "<i>The most ruthless syndicates in the city.</i>\n" + "\n".join(lines) + "</blockquote>"
     )
+

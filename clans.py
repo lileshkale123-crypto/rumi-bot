@@ -111,3 +111,4 @@ async def invite_cb(update, context):
 def register(app):
     app.add_handler(CommandHandler("clan", clan_cmd))
     app.add_handler(CallbackQueryHandler(invite_cb, pattern="^clan:[yn]:"))
+

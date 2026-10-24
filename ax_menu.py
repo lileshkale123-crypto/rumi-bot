@@ -97,46 +97,6 @@ PAGES["more"] = ("\u2728", "More Commands",
     "/modhelp: full moderation guide")
 
 
-PAGES["premium"] = ("💎", "Rumi Premium",
-    "A special upgrade for your wallet and your name.\n\n"
-    "What you get:\n"
-    "A bigger, cleaner wallet card with no extra buttons, and your own emoji in front of your name.\n\n"
-    "/premium: see the offer and buy it for 35 Telegram Stars. If you already have it, it tells you.\n\n"
-    "/setemoji: choose the emoji shown before your name in /wallet. Three ways to use it:\n"
-    "1. Reply to a message that has an emoji, then send /setemoji\n"
-    "2. Send /setemoji and an emoji in the same message\n"
-    "3. Forward a message that has the emoji, then send /setemoji\n\n"
-    "Example: /setemoji 😼\n\n"
-    "Good to know: a Telegram Premium emoji only shows as animated for people who have Telegram Premium. Others see a normal emoji.\n\n"
-    "What members see: premium members get the PREMIUM WALLET card with their emoji before their name. Everyone else sees the normal wallet.\n\n"
-    "Owner only:\n"
-    "/givepremium USER_ID: give someone Premium for free\n"
-    "/removepremium USER_ID: take it away\n"
-    "You can also reply to the person instead of typing the ID.\n")
-PAGES["invite"] = ("🎁", "Invite and Rewards",
-    "Earn coins by bringing people to Rumi.\n\n"
-    "Referral:\n"
-    "/referral: see your link and how many friends you have brought.\n"
-    "Share your link. When a brand new person opens Rumi with it, you get 5,000 cash right away.\n"
-    "When that friend reaches level 3 or has been playing for 24 hours, you get 2,000 more.\n"
-    "Your friend also gets 500 cash on their first /claim.\n\n"
-    "There is no limit on how many friends you can invite. Only brand new users count, and each person can only be invited once.\n\n"
-    "Add Rumi to a group:\n"
-    "Add Rumi to a group that has 50 or more members and you get 20,000 cash.\n"
-    "This is paid once per group, so removing and re-adding Rumi does not pay again.\n\n"
-    "What members see: Rumi posts a thank you message in the group, and you get a message when a friend joins with your link.\n")
-PAGES["broadcast"] = ("📢", "Broadcast (owners)",
-    "Send one message to many chats at once. Only the bot owners can use this.\n\n"
-    "/broadcast: send to every group Rumi is in.\n"
-    "/dmbroadcast: send to every person who uses Rumi.\n\n"
-    "How to use:\n"
-    "1. Write the message you want to send (text, GIF, sticker, premium emoji, anything).\n"
-    "2. Reply to that message with /broadcast or /dmbroadcast.\n"
-    "3. Rumi shows a preview with Confirm and Cancel buttons. Nothing is sent until you press Confirm.\n"
-    "4. After sending, press Delete broadcast to remove it from every chat.\n\n"
-    "Good to know: some people never opened Rumi in DM, so a few DM sends will fail. That is normal.\n")
-
-
 def home():
     text = ("✨ <b>Rumi Group Tools</b>\n<blockquote>Pick a category to see what I can do 💫\n"
             "Economy and games are in the Chat page 🌙</blockquote>")
@@ -187,3 +147,4 @@ def register(app):
     app.add_handler(CommandHandler("features", features_cmd))
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^axh:"))
     app.add_handler(CallbackQueryHandler(start_menu_cb, pattern="^startmenu$"))
+

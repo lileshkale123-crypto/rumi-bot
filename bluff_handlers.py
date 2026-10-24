@@ -327,3 +327,4 @@ async def run_game(bot, g):
         await safe_edit(bot, g, "🃏 <b>SHADOW BLUFF</b>\n<i>The shadows collapsed. Everyone was refunded.</i>")
     finally:
         RUN.pop(g["id"], None)
+

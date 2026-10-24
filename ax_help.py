@@ -379,3 +379,4 @@ def register(app):
     app.add_handler(CallbackQueryHandler(sub_cb, pattern="^axhm:"))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("modhelp", modhelp_cmd))
+

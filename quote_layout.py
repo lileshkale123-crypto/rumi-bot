@@ -139,3 +139,4 @@ def draw_row(img, dr, x, y, line, f, fill):
             qf.draw(dr, x, y, val, f, fill)
         x += w
 
+

@@ -58,7 +58,7 @@ async def build(pool):
             + sec("💰 Top earners", t1) + "\n" + sec("💸 Repeated /pay between same two", t2) + "\n"
             + sec("🦹 Repeated robbing of same victim", t3) + "\n" + sec("🚀 Biggest single gains", t4))
     kb = InlineKeyboardMarkup([
-        [btn("🔄 Refresh", "axc:r")],
+        [btn("🔄 Refresh", "axch:r")],
         [btn("⬅ Back to panel", "axp:cash:1")],
     ])
     return text, kb
@@ -87,4 +87,5 @@ async def cheats_callback(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("cheats", cheats_cmd))
-    app.add_handler(CallbackQueryHandler(cheats_callback, pattern="^axc:"))
+    app.add_handler(CallbackQueryHandler(cheats_callback, pattern="^axch:"))
+

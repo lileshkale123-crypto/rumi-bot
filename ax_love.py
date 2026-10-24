@@ -144,20 +144,20 @@ async def couple_cmd(update, context):
         return
     pool, chat_id = context.bot_data["pool"], update.effective_chat.id
     day = datetime.now(IST).date()
+    rows = await members(pool, chat_id, context.bot.id)
+    if len(rows) < 2:
+        await update.effective_message.reply_text(
+            "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>", parse_mode=H)
+        return
+    a, b = random.sample(rows, 2)
+    for r in (a, b):
+        await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"])
     async with pool.acquire() as c:
         async with c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock($1)", chat_id)
             row = await c.fetchrow("SELECT day, user_a, user_b, compatibility FROM ax_couple_of_day WHERE chat_id=$1", chat_id)
             fresh = not row or row["day"] != day
             if fresh:
-                rows = await members(pool, chat_id, context.bot.id)
-                if len(rows) < 2:
-                    await update.effective_message.reply_text(
-                        "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>", parse_mode=H)
-                    return
-                a, b = random.sample(rows, 2)
-                for r in (a, b):
-                    await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"])
                 pct = score(a["id"], b["id"], day.isoformat())
                 for r in sorted((a, b), key=lambda r: r["id"]):
                     w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", r["id"])
@@ -182,3 +182,4 @@ def register(app):
     app.add_handler(CommandHandler("ship", ship_cmd))
     app.add_handler(CommandHandler("match", match_cmd))
     app.add_handler(CommandHandler("couple", couple_cmd))
+

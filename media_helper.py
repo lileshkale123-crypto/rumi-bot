@@ -1,11 +1,16 @@
-# Temporary helper: send Rumi a photo/GIF in DM, it replies with the file_id.
+# Owner-only helper: send Rumi a photo/GIF in DM, it replies with the file_id.
 from telegram import Update
 from telegram.ext import ContextTypes
+
+from ax_adminpanel import OWNER_IDS
 
 
 async def file_id_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
-    if msg is None or update.effective_chat.type != "private":
+    user = update.effective_user
+    if msg is None or user is None or update.effective_chat.type != "private":
+        return
+    if user.id not in OWNER_IDS:
         return
 
     if msg.photo:

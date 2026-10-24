@@ -70,3 +70,4 @@ def register(app):
         app.add_handler(CommandHandler("d" + kind, make_variant(kind, "d")))
         app.add_handler(CommandHandler("s" + kind, make_variant(kind, "s")))
     app.add_handler(CommandHandler("kickme", kickme_cmd))
+

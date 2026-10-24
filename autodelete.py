@@ -60,3 +60,4 @@ def install(application):
                 h.callback = _wrap(h.callback, jq)
                 count += 1
     print(f"Auto-delete active on {count} commands")
+

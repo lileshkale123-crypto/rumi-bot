@@ -108,3 +108,4 @@ def top(rows):
             f"      <code>{S}{n(r['vault_balance'])}</code>"
         )
     return "🏴 <b>TOP CLANS</b>\n<i>Ranked by vault</i>\n\n<blockquote>" + "\n".join(lines) + "</blockquote>"
+

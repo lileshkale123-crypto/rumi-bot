@@ -102,3 +102,4 @@ def register(app):
     app.add_handler(ChatMemberHandler(on_my_member, ChatMemberHandler.MY_CHAT_MEMBER), group=-4)
     app.job_queue.run_repeating(cleanup_job, interval=CLEAN_EVERY, first=60)
     app.job_queue.run_repeating(count_job, interval=CHECK_EVERY, first=CHECK_EVERY)
+

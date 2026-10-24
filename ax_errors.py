@@ -49,3 +49,4 @@ async def on_error(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register(application: Application) -> None:
     application.add_error_handler(on_error)
+

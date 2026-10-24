@@ -472,3 +472,4 @@ CREATE TABLE IF NOT EXISTS bounties (
     target_id BIGINT PRIMARY KEY,
     bounty_amount BIGINT NOT NULL CHECK (bounty_amount > 0)
 );
+

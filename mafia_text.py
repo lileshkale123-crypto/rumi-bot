@@ -40,3 +40,4 @@ def role_card(role: str, group: str = "") -> str:
         f"<blockquote>{info}</blockquote>\n"
         f"🎯 <i>Goal: {goal}</i>"
     )
+

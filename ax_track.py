@@ -82,3 +82,4 @@ def register(app):
     app.add_handler(MessageHandler(filters.ALL, tracker), group=-5)
     app.job_queue.run_repeating(_flush_counts, interval=300, first=300)
     app.add_handler(ChatMemberHandler(my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+

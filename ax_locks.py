@@ -174,3 +174,4 @@ def register(app):
     app.add_handler(CommandHandler("allowlist", allowlist_cmd))
     app.add_handler(CommandHandler("rmallowlist", rmallowlist_cmd))
     app.add_handler(CommandHandler("rmallowlistall", rmallowlistall_cmd))
+

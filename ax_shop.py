@@ -153,3 +153,4 @@ def register(app):
     app.add_handler(CommandHandler("shop", shop_cmd))
     app.add_handler(CommandHandler("titles", titles_cmd))
     app.add_handler(CallbackQueryHandler(shop_cb, pattern=r"^axshop:"))
+

@@ -60,3 +60,4 @@ async def post_weekly(context):
 
 def register(app):
     app.job_queue.run_repeating(post_weekly, interval=WEEK_SECONDS, first=WEEK_SECONDS)
+

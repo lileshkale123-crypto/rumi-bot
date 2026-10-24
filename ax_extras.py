@@ -78,3 +78,4 @@ def register(app):
     app.add_handler(CommandHandler("limits", limits_cmd))
     app.add_handler(CommandHandler("privacy", privacy_cmd))
     app.add_handler(CommandHandler("markdownhelp", markdownhelp_cmd))
+

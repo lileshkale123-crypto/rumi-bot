@@ -1,11 +1,13 @@
 """Welcome and goodbye messages."""
 import os
 
+from telegram import LinkPreviewOptions
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import CommandHandler, MessageHandler, filters
 
-from telegram import LinkPreviewOptions
 import ax_fill
+import ax_rules
 from ax_common import esc, is_admin
 
 IMG = "assets/rumi-start-v2.png"
@@ -37,26 +39,34 @@ def make_set(kind):
             await html("🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>")
             return
         pool = context.bot_data["pool"]
-        parts = (msg.text or msg.caption or "").split(maxsplit=1)
+        raw_msg = msg.text or msg.caption or ""
+        parts = raw_msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) > 1 else ""
         rp = msg.reply_to_message
         photo = msg.photo[-1] if msg.photo else (rp.photo[-1] if rp and rp.photo else None)
+        if not arg and rp:
+            arg = (rp.text or rp.caption or "").strip()
         low = arg.lower()
-        if low in ("on", "off"):
+        if low in ("on", "off") and not msg.photo and not (rp and rp.photo):
             await put(pool, chat.id, kind, "enabled", low == "on")
             await html(f"{'✅' if low == 'on' else '🚫'} <b>{kind.title()} {low}</b>")
-        elif low == "reset":
+        elif low == "reset" and not msg.photo and not (rp and rp.photo):
             await put(pool, chat.id, kind, "text", None)
             await put(pool, chat.id, kind, "photo", None)
             await html(f"🔄 <b>{kind.title()} reset</b>\n<blockquote>Back to the default ✨</blockquote>")
+        elif low in ("clearphoto", "nophoto", "rmphoto"):
+            await put(pool, chat.id, kind, "photo", None)
+            await html(f"🖼️ <b>{kind.title()} photo removed</b>\n<blockquote>Now using text only ✨</blockquote>")
         elif not arg and not photo:
             t, e, p = await get(pool, chat.id, kind)
             await html(
                 f"📖 <b>{kind.title()} settings</b>\n<blockquote>Status: <b>{'on' if e else 'off'}</b>\n"
                 f"Text: <b>{'custom' if t else 'default'}</b>\nPhoto: <b>{'custom' if p else 'default'}</b></blockquote>\n"
-                f"<b>Usage</b>\n<blockquote>/set{kind} your text\nSend a photo with that caption\n"
-                f"Reply to a photo with /set{kind}\n/set{kind} on | off | reset\n"
-                f"Tags: {{first_name}} {{chat_name}}</blockquote>")
+                f"<b>Usage</b>\n<blockquote>• /set{kind} your text + buttons\n"
+                f"• Send a photo with /set{kind} caption\n"
+                f"• Reply to a long text or photo with /set{kind}\n"
+                f"• /set{kind} clearphoto | on | off | reset\n"
+                f"• Tags: {{first}} {{mention}} {{chatname}} {{rules}}</blockquote>")
         else:
             done = []
             if arg:
@@ -66,7 +76,10 @@ def make_set(kind):
                 await put(pool, chat.id, kind, "photo", photo.file_id)
                 done.append("photo")
             await put(pool, chat.id, kind, "enabled", True)
-            await html(f"✅ <b>{kind.title()} updated</b>\n<blockquote>{' + '.join(done)} saved 💫</blockquote>")
+            _, rows, _ = ax_fill.parse(arg) if arg else ("", [], {})
+            btn_count = sum(len(r) for r in rows)
+            btn_info = f" ({btn_count} button{'s' if btn_count != 1 else ''})" if btn_count else ""
+            await html(f"✅ <b>{kind.title()} updated</b>\n<blockquote>{' + '.join(done)}{btn_info} saved 💫</blockquote>")
     return cmd
 
 
@@ -78,12 +91,28 @@ async def announce(context, chat, kind, member):
     if not enabled:
         return
     raw = ax_fill.pick(text or DEFAULTS[kind])
+    want_rules = ax_fill.has_rules(raw)
+    rules_same = "{rules:same}" in raw
     body, rows, flags = ax_fill.parse(raw)
-    body = ax_fill.fill(body, member, chat)
-    kb = ax_fill.keyboard(rows)
-    kw = {"parse_mode": ParseMode.HTML,
-          "disable_notification": flags["nonotif"],
-          "protect_content": flags["protect"]}
+    rules_url = None
+    rules_label = None
+    un = context.bot.username
+    if want_rules and un:
+        r_cfg = await ax_rules.get(pool, chat.id)
+        rules_url = f"https://t.me/{un}?start=rules_{chat.id}"
+        rules_label = r_cfg.get("button_text") or "📜 Rules"
+    body = ax_fill.fill(body, member, chat, rules_link=rules_url)
+    kb = ax_fill.keyboard(
+        rows,
+        rules_url=rules_url,
+        rules_same=rules_same,
+        note_url=(lambda n: f"https://t.me/{un}?start=note_{chat.id}_{n.lower()}") if un else None,
+        rules_label=rules_label,
+    )
+    kw = {
+        "disable_notification": flags["nonotif"],
+        "protect_content": flags["protect"],
+    }
     if kb:
         kw["reply_markup"] = kb
     if kind == "welcome":
@@ -96,27 +125,39 @@ async def announce(context, chat, kind, member):
                 await context.bot.delete_message(chat.id, r["lw"])
         except Exception:
             pass
+
+    async def _send(pm):
+        # Telegram caps photo captions at 1024 chars. If longer, send photo then full text+buttons, or if within 1024 send as single photo!
+        if photo and len(body) <= 1024:
+            return await context.bot.send_photo(
+                chat.id, photo, caption=body or None, parse_mode=pm,
+                has_spoiler=flags["mediaspoiler"], **kw)
+        elif photo and len(body) > 1024:
+            try:
+                await context.bot.send_photo(
+                    chat.id, photo, has_spoiler=flags["mediaspoiler"],
+                    disable_notification=flags["nonotif"], protect_content=flags["protect"])
+            except Exception:
+                pass
+            return await context.bot.send_message(
+                chat.id, body[:4096], parse_mode=pm,
+                link_preview_options=LinkPreviewOptions(is_disabled=not flags["preview"]), **kw)
+        else:
+            return await context.bot.send_message(
+                chat.id, (body or "✨")[:4096], parse_mode=pm,
+                link_preview_options=LinkPreviewOptions(is_disabled=not flags["preview"]), **kw)
+
     sent = None
     try:
-        if photo:
-            sent = await context.bot.send_photo(
-                chat.id, photo, caption=body,
-                has_spoiler=flags["mediaspoiler"], **kw)
-        elif False and kind == "welcome" and os.path.exists(IMG):
-            with open(IMG, "rb") as f:
-                sent = await context.bot.send_photo(
-                    chat.id, f, caption=body,
-                    has_spoiler=flags["mediaspoiler"], **kw)
-        else:
-            sent = await context.bot.send_message(
-                chat.id, body,
-                link_preview_options=LinkPreviewOptions(
-                    is_disabled=not flags["preview"]), **kw)
-    except Exception:
+        sent = await _send(ParseMode.HTML)
+    except BadRequest:
         try:
-            sent = await context.bot.send_message(chat.id, body)
+            sent = await _send(None)
         except Exception:
             sent = None
+    except Exception:
+        sent = None
+
     if kind == "welcome" and sent:
         try:
             async with pool.acquire() as c:

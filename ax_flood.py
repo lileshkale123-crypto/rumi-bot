@@ -120,6 +120,7 @@ async def floodmode_cmd(update, context):
     async with pool.acquire() as c:
         await c.execute("INSERT INTO ax_settings (chat_id, flood_mode, flood_mode_secs) VALUES ($1,$2,$3) "
                         "ON CONFLICT (chat_id) DO UPDATE SET flood_mode=$2, flood_mode_secs=$3", chat_id, args[0], secs)
+    ax_settings._cache.pop(chat_id, None)
     await ax_mod.say(update, f"✅ <b>Flood action set</b>\n<blockquote>Flooders get <b>{args[0]}</b></blockquote>")
 
 
@@ -136,6 +137,7 @@ async def clearflood_cmd(update, context):
     async with pool.acquire() as c:
         await c.execute("INSERT INTO ax_settings (chat_id, flood_clear) VALUES ($1,$2) "
                         "ON CONFLICT (chat_id) DO UPDATE SET flood_clear=$2", chat_id, val)
+    ax_settings._cache.pop(chat_id, None)
     await ax_mod.say(update, f"✅ <b>Delete flood {'on' if val else 'off'}</b>\n<blockquote>Flood messages are {'deleted' if val else 'kept'}</blockquote>")
 
 
@@ -145,3 +147,4 @@ def register(app):
     app.add_handler(CommandHandler("setfloodtimer", setfloodtimer_cmd))
     app.add_handler(CommandHandler("floodmode", floodmode_cmd))
     app.add_handler(CommandHandler("clearflood", clearflood_cmd))
+

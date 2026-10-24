@@ -45,3 +45,4 @@ async def save_turn(pool, chat_id: int, user_text: str, reply: str) -> None:
                 "(SELECT id FROM ai_memory WHERE chat_id = $1 ORDER BY id DESC LIMIT 40)",
                 chat_id,
             )
+

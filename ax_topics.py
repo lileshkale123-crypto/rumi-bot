@@ -103,3 +103,4 @@ def register(app):
     app.add_handler(CommandHandler("closetopic", closetopic_cmd))
     app.add_handler(CommandHandler("reopentopic", reopentopic_cmd))
     app.add_handler(CommandHandler("deletetopic", deletetopic_cmd))
+

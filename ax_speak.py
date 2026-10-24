@@ -65,3 +65,4 @@ async def speak_cmd(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("speak", speak_cmd))
+

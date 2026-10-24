@@ -1,5 +1,7 @@
 """Rules: /rules /setrules /privaterules /resetrules /setrulesbutton /resetrulesbutton"""
-from telegram.ext import CommandHandler
+import re
+from telegram.constants import ParseMode
+from telegram.ext import ApplicationHandlerStop, CommandHandler, MessageHandler, filters
 
 import ax_mod
 from ax_common import esc, is_admin
@@ -58,12 +60,33 @@ async def rules_cmd(update, context):
     await ax_mod.say(update, card)
 
 
+async def dm_rules(update, context):
+    msg, user = update.effective_message, update.effective_user
+    m = re.match(r"^/start(?:@\w+)?\s+rules_(-?\d+)$", msg.text or "")
+    if not m or user is None:
+        return
+    cid = int(m.group(1))
+    pool = context.bot_data["pool"]
+    r = await get(pool, cid)
+    title = "this group"
+    try:
+        title = (await context.bot.get_chat(cid)).title or title
+    except Exception:
+        pass
+    text = r["rules_text"] or DEFAULT
+    await msg.reply_text(
+        f"📜 <b>Rules of {esc(title)}</b>\n<blockquote>{esc(text)}</blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+    raise ApplicationHandlerStop
+
+
 async def setrules_cmd(update, context):
     if not await _gate(update, context):
         return
     body = _body(update)
     if not body and update.effective_message.reply_to_message:
-        body = update.effective_message.reply_to_message.text or ""
+        body = update.effective_message.reply_to_message.text or update.effective_message.reply_to_message.caption or ""
     if not body:
         await ax_mod.say(update, "💫 <b>Rules?</b>\n<blockquote>Example: /setrules 1. Be kind\n2. No spam</blockquote>")
         return
@@ -111,6 +134,9 @@ async def resetbutton_cmd(update, context):
 
 
 def register(app):
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.Regex(r"^/start(?:@\w+)?\s+rules_"),
+        dm_rules), group=-10)
     app.add_handler(CommandHandler("rules", rules_cmd))
     app.add_handler(CommandHandler("setrules", setrules_cmd))
     app.add_handler(CommandHandler("resetrules", resetrules_cmd))

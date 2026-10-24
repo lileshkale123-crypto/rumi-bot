@@ -177,3 +177,4 @@ def register(app):
     app.add_handler(CommandHandler("afk", afk_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(MessageHandler(filters.ALL & ~filters.ChatType.PRIVATE, afk_watcher), group=-2)
+

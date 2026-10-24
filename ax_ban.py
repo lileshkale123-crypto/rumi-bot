@@ -67,3 +67,4 @@ def register(app):
     app.add_handler(CommandHandler("banuser", banuser_cmd))
     app.add_handler(CommandHandler("unbanuser", unbanuser_cmd))
     app.add_handler(MessageHandler(filters.COMMAND, _gate), group=-6)
+

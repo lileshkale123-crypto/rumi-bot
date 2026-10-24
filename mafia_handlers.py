@@ -465,7 +465,7 @@ async def tribunal_timer(context, g) -> None:
     await context.bot.send_message(g.chat_id, text, parse_mode=ParseMode.HTML)
 
     if res["suicide_win"]:
-        await end_placeholder(context, g, "Suicide")
+        await end_placeholder(context, g, "suicide")
         return
     if res["kamikaze"]:
         await kamikaze_pick(context, g, lynched)
@@ -600,3 +600,4 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if task is not None:
         task.cancel()
     await update.message.reply_html("🛑 <b>The game was stopped.</b>\n<i>Start a new one with /mafia.</i>")
+

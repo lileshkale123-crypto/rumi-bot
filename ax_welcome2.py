@@ -143,3 +143,4 @@ def register(app):
         app.add_handler(CommandHandler(f"reset{kind}", make_reset(kind)))
     app.add_handler(CommandHandler("cleanwelcome", cleanwelcome))
     app.add_handler(CommandHandler("welcomehelp", welcomehelp))
+

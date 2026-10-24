@@ -130,3 +130,4 @@ def register(app):
     app.add_handler(CommandHandler("cleancommand", cleancommand))
     app.add_handler(CommandHandler("keepcommand", keepcommand))
     app.add_handler(CommandHandler("cleancommandtypes", types))
+

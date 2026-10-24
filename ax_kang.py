@@ -171,7 +171,6 @@ async def kang_cmd(update, context):
         if "peer_id" in t or "user_id" in t or "user not found" in t:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Start Rumi", url=f"https://t.me/{bot.username}?start=kang")]])
             return await msg.reply_html("🧷 <b>One-time setup</b>\n<blockquote>Tap the button, press Start, then send /kang again.</blockquote>", reply_markup=kb)
-            return await msg.reply_html("⚠️ Start me in private chat first, then try again.")
         if "too much" in t or "too many" in t or "too_much" in t:
             return await msg.reply_html("⚠️ That pack is full. Telegram allows no more stickers in it.")
         return await msg.reply_html("😿 <b>Couldn't add it.</b> Telegram refused this sticker.")
@@ -201,3 +200,4 @@ async def kang_cmd(update, context):
 
 def register(app):
     app.add_handler(CommandHandler("kang", kang_cmd))
+

@@ -80,3 +80,4 @@ def register(app):
     app.add_handler(CommandHandler("adminlist", adminlist_cmd))
     app.add_handler(CommandHandler("admincache", admincache_cmd))
     app.add_handler(CommandHandler("id", id_cmd))
+

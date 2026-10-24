@@ -50,3 +50,4 @@ def register(app):
         MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, _remember),
         group=-30,
     )
+

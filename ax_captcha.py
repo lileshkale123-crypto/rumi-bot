@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 from telegram import ChatPermissions, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import (CallbackQueryHandler, MessageHandler, filters)
+from telegram.ext import CallbackQueryHandler, MessageHandler, filters
 
-from ax_common import btn, esc, is_admin
+from ax_common import btn, esc
 import ax_approve
-import ax_mod
+import ax_rules
 
 SOLVED = ChatPermissions(
     can_send_messages=True, can_send_polls=True,
@@ -48,25 +48,29 @@ async def join(update, context):
         if m.is_bot or m.id == context.bot.id:
             continue
         if await ax_approve.is_approved(pool, chat.id, m.id):
-            __import__('logging').warning('CAPTCHA skip: approved %s', m.id)
             continue
         try:
             await context.bot.restrict_chat_member(chat.id, m.id, MUTED)
         except Exception as e:
-            __import__('logging').warning('CAPTCHA mute failed: %r', e)
+            __import__("logging").warning("CAPTCHA mute failed: %r", e)
             return
         try:
             q, ans = challenge(s["mode"])
             name = esc(m.first_name or "friend")
+            rows = []
             if q:
                 body = (f"🔐 <b>Verify, {name}</b>\n<blockquote>{q}\n"
                         f"Send the answer here ✨</blockquote>")
-                kb = None
             else:
                 body = (f"🔐 <b>Welcome, {name}</b>\n<blockquote>Tap the "
                         f"button to prove you are human ✨</blockquote>")
                 label = s["btn_text"] or "✅ I am human"
-                kb = InlineKeyboardMarkup([[btn(label, f"axc:{m.id}")]])
+                rows.append([btn(label, f"axc:{m.id}")])
+            if s.get("rules") and context.bot.username:
+                r_cfg = await ax_rules.get(pool, chat.id)
+                r_label = r_cfg.get("button_text") or "📜 Rules"
+                rows.append([btn(r_label, url=f"https://t.me/{context.bot.username}?start=rules_{chat.id}")])
+            kb = InlineKeyboardMarkup(rows) if rows else None
             sent = await context.bot.send_message(
                 chat.id, body, parse_mode=ParseMode.HTML, reply_markup=kb)
             exp = datetime.now(timezone.utc) + timedelta(seconds=s["kick_secs"])
@@ -78,7 +82,7 @@ async def join(update, context):
                     sent.message_id, exp)
             NEED[0] = True
         except Exception:
-            __import__('logging').exception('CAPTCHA send failed')
+            __import__("logging").exception("CAPTCHA send failed")
 
 
 async def finish(context, chat_id, user_id, s):
@@ -162,7 +166,7 @@ async def expire_job(context):
 def register(app):
     app.add_handler(MessageHandler(
         filters.StatusUpdate.NEW_CHAT_MEMBERS, join), group=-2)
-    app.add_handler(CallbackQueryHandler(press, pattern=r"^axc:"))
+    app.add_handler(CallbackQueryHandler(press, pattern=r"^axc:\d+$"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, answer),
         group=-1)

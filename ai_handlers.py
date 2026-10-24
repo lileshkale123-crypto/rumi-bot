@@ -42,12 +42,12 @@ async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     now = time.monotonic()
     if now - _last_reply.get(chat.id, 0) < config.AI_FLOOD_SECONDS:
         return
-    _last_reply[chat.id] = now
 
     pool = context.bot_data["pool"]
     if not await ai_store.use_quota(pool, user.id):
         await msg.reply_text(f"we've chatted {config.AI_DAILY_LIMIT} times today 🌙 come back after midnight (IST)!")
         return
+    _last_reply[chat.id] = now
 
     await context.bot.send_chat_action(chat.id, ChatAction.TYPING)
     prompt = text if private else f"{user.first_name or 'Someone'}: {text}"
@@ -62,3 +62,4 @@ async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     await ai_store.save_turn(pool, chat.id, prompt, reply)
     await msg.reply_text(reply[:4000], do_quote=True)
+

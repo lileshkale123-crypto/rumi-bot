@@ -161,3 +161,4 @@ def register(app):
     app.add_handler(CommandHandler("setflood", setflood_cmd))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^axs:"))
     app.add_handler(MessageHandler(filters.ALL & ~filters.ChatType.PRIVATE, flood_watcher), group=-4)
+

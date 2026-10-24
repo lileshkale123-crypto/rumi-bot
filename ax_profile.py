@@ -141,3 +141,4 @@ async def close_cb(update, context):
 def register(application):
     application.add_handler(CommandHandler("profile", profile_cmd))
     application.add_handler(CallbackQueryHandler(close_cb, pattern=r"^prof_close:\d+$"), group=11)
+

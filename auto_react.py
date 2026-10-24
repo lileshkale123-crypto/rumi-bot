@@ -53,3 +53,4 @@ async def react(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register(application) -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, react), group=9)
+

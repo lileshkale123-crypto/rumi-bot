@@ -258,3 +258,4 @@ class Game:
 
     def final_roster(self) -> list[tuple[str, str]]:
         return [(p.name, p.label) for p in self.players.values()]
+

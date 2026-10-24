@@ -104,3 +104,4 @@ async def get_info(pool, uid):
         leader = await conn.fetchval(
             "SELECT COALESCE(first_name, username, 'Leader') FROM users WHERE id=$1", c["leader_id"])
         return {"clan": c, "members": n, "leader": leader}
+

@@ -147,3 +147,4 @@ def register(app):
                  ("nolog", _toggle(False)),
                  ("logcategories", logcategories)):
         app.add_handler(CommandHandler(n, f))
+

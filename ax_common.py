@@ -100,3 +100,4 @@ async def track_user(pool, user, chat):
                 "ON CONFLICT DO NOTHING",
                 chat.id, user.id,
             )
+

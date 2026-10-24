@@ -8,7 +8,11 @@ from ax_common import btn, esc, is_admin
 H = ParseMode.HTML
 CMDS = {"save", "get", "notes", "clear", "clearallnotes",
         "filter", "filters", "stop", "clearfilters",
-        "locks", "rules", "setrules", "warnings", "settings"}
+        "lock", "unlock", "locks", "rules", "setrules", "resetrules",
+        "warnings", "warnlimit", "warnmode", "warntime",
+        "welcome", "setwelcome", "resetwelcome",
+        "goodbye", "setgoodbye", "resetgoodbye",
+        "setflood", "flood", "settings"}
 
 
 class _Proxy:
@@ -120,3 +124,4 @@ def register(app):
             h.callback = _wrap_cb(h.callback)
             n += 1
     print("dm proxy wrapped:", n)
+

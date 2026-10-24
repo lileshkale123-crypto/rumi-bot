@@ -100,3 +100,4 @@ async def run(context, chat_id, user, action, reason=None):
         await bot.send_message(chat_id, ax_mod.card(icon, title, user.first_name, extra), parse_mode=ParseMode.HTML)
     except Exception as e:
         log.warning("action notice failed: %s", e)
+

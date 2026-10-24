@@ -144,3 +144,4 @@ def register(app):
     app.add_handler(CommandHandler("antichannelpin", antichannelpin_cmd))
     app.add_handler(CommandHandler("cleanlinked", cleanlinked_cmd))
     app.add_handler(MessageHandler(filters.IS_AUTOMATIC_FORWARD, linked_watch), group=-3)
+

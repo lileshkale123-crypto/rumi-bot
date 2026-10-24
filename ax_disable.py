@@ -151,3 +151,4 @@ def register(app):
                  ("disabledel", _flag("del_msg", "disabledel")),
                  ("disableadmin", _flag("admin_too", "disableadmin"))):
         app.add_handler(CommandHandler(n, f))
+

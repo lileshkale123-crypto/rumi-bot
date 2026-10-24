@@ -202,3 +202,4 @@ async def refund_unfinished(pool):
 async def mark_active(pool, game_id):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE bluff_games SET status = 'active' WHERE id = $1 AND status = 'lobby'", game_id)
+

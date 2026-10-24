@@ -147,3 +147,4 @@ def register(app):
                  ("nocleanservice", keepservice),
                  ("cleanservicetypes", types)):
         app.add_handler(CommandHandler(n, f))
+

@@ -7,7 +7,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from ax_common import esc
 
 BTN = re.compile(
-    r"\[([^\]]+)\]\(buttonurl://([^)\s]+?)((?::(?:same|blue|green|red))*)\)")
+    r"\[([^\]]+)\]\((?:buttonurl://)?((?:https?://|t\.me/|tg://|#)[^)\s:]+)((?::(?:same|blue|green|red))*)\)"
+)
 STYLES = {"blue": "primary", "green": "success", "red": "danger"}
 FLAGS = ("{preview}", "{nonotif}", "{protect}", "{mediaspoiler}")
 
@@ -21,19 +22,21 @@ def pick(text):
 def parse(text):
     """Split raw text into (body, rows, flags). Buttons marked :same share a row."""
     rows = []
-    for m in BTN.finditer(text):
-        label, url, opts = m.group(1), m.group(2), m.group(3) or ''
-        words = [w for w in opts.split(':') if w]
+    for m in BTN.finditer(text or ""):
+        label, url, opts = m.group(1), m.group(2), m.group(3) or ""
+        if url.startswith("t.me/"):
+            url = "https://" + url
+        words = [w for w in opts.split(":") if w]
         style = None
         for w in words:
             if w in STYLES:
                 style = STYLES[w]
         item = (label, url, style)
-        if 'same' in words and rows:
+        if "same" in words and rows:
             rows[-1].append(item)
         else:
             rows.append([item])
-    body = BTN.sub("", text)
+    body = BTN.sub("", text or "")
     flags = {f.strip("{}"): (f in body) for f in FLAGS}
     for f in FLAGS:
         body = body.replace(f, "")
@@ -56,16 +59,16 @@ def fill(body, user, chat, rules_link=None):
     }
     for k, v in table.items():
         body = body.replace(k, v)
-    if rules_link:
-        body = body.replace("{rules}", "").replace("{rules:same}", "")
+    if rules_link or has_rules(body):
+        body = body.replace("{rules}", "").replace("{rules:same}", "").strip()
     return body
 
 
 def has_rules(text):
-    return "{rules}" in text or "{rules:same}" in text
+    return "{rules}" in (text or "") or "{rules:same}" in (text or "")
 
 
-def keyboard(rows, rules_url=None, rules_same=False, note_url=None):
+def keyboard(rows, rules_url=None, rules_same=False, note_url=None, rules_label=None):
     """Build an InlineKeyboardMarkup from parsed rows."""
     out = []
     for r in rows:
@@ -77,7 +80,7 @@ def keyboard(rows, rules_url=None, rules_same=False, note_url=None):
             line.append(InlineKeyboardButton(label, url=url, **kw))
         out.append(line)
     if rules_url:
-        b = InlineKeyboardButton("📜 Rules", url=rules_url)
+        b = InlineKeyboardButton(rules_label or "📜 Rules", url=rules_url)
         if rules_same and out:
             out[-1].append(b)
         else:

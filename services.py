@@ -539,3 +539,4 @@ async def award_rob_xp(conn, user_id: int, amount: int) -> dict:
         return {"xp_gained": 0, "leveled_up": False}
     await conn.execute("INSERT INTO rob_xp_log (user_id, created_at) VALUES ($1, now())", user_id)
     return await award_xp(conn, user_id, amount)
+

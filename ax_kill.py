@@ -6,6 +6,7 @@ from telegram.constants import ParseMode
 from telegram.ext import CommandHandler
 
 import services
+from ax_common import esc
 
 H = ParseMode.HTML
 MIN_KILL = 161
@@ -59,21 +60,22 @@ async def kill_cmd(update, context):
 
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
     async with pool.acquire() as c:
-        w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1", user.id)
-        new_cash = w["cash"] + amount
-        await c.execute("UPDATE wallets SET cash=$1 WHERE user_id=$2", new_cash, user.id)
-        await c.execute(
-            "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-            "balance_after, related_user_id, source) VALUES ($1,'credit','cash',$2,$3,$4,$5,$6)",
-            user.id, amount, w["cash"], new_cash, target.id, "kill_command")
-        await c.execute(
-            "INSERT INTO ax_kill_status (user_id, dead_until) VALUES ($1,$2) "
-            "ON CONFLICT (user_id) DO UPDATE SET dead_until=$2", target.id, dead_until)
+        async with c.transaction():
+            w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", user.id)
+            new_cash = w["cash"] + amount
+            await c.execute("UPDATE wallets SET cash=$1, updated_at=now() WHERE user_id=$2", new_cash, user.id)
+            await c.execute(
+                "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
+                "balance_after, related_user_id, source) VALUES ($1,'credit','cash',$2,$3,$4,$5,$6)",
+                user.id, amount, w["cash"], new_cash, target.id, "kill_command")
+            await c.execute(
+                "INSERT INTO ax_kill_status (user_id, dead_until) VALUES ($1,$2) "
+                "ON CONFLICT (user_id) DO UPDATE SET dead_until=$2", target.id, dead_until)
 
-    name = user.first_name or "Someone"
-    victim = target.first_name or "them"
-    line1 = chr(0x1F464) + " <b>" + name + "</b> killed <b>" + victim + "</b>!"
-    line2 = chr(0x1F4B0) + " Earned: <code>" + str(amount) + "</code> cash"
+    name = esc(user.first_name or "Someone")
+    victim = esc(target.first_name or "them")
+    line1 = f"👤 <b>{name}</b> killed <b>{victim}</b>!"
+    line2 = f"💰 Earned: <code>{amount}</code> cash"
     await msg.reply_text(line1 + "\n" + line2, parse_mode=H)
 
 
@@ -90,19 +92,20 @@ async def revive_cmd(update, context):
     cost = random.randint(REVIVE_MIN, REVIVE_MAX)
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
     async with pool.acquire() as c:
-        w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1", user.id)
-        if w["cash"] < cost:
-            await msg.reply_text(
-                f"\U0001f480 Reviving costs <code>{cost}</code> cash. "
-                f"You have <code>{w['cash']}</code>.", parse_mode=H)
-            return
-        new_cash = w["cash"] - cost
-        await c.execute("UPDATE wallets SET cash=$1 WHERE user_id=$2", new_cash, user.id)
-        await c.execute(
-            "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-            "balance_after, source) VALUES ($1,'debit','cash',$2,$3,$4,$5)",
-            user.id, cost, w["cash"], new_cash, "revive_command")
-        await c.execute("DELETE FROM ax_kill_status WHERE user_id=$1", user.id)
+        async with c.transaction():
+            w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", user.id)
+            if w["cash"] < cost:
+                await msg.reply_text(
+                    f"\U0001f480 Reviving costs <code>{cost}</code> cash. "
+                    f"You have <code>{w['cash']}</code>.", parse_mode=H)
+                return
+            new_cash = w["cash"] - cost
+            await c.execute("UPDATE wallets SET cash=$1, updated_at=now() WHERE user_id=$2", new_cash, user.id)
+            await c.execute(
+                "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
+                "balance_after, source) VALUES ($1,'debit','cash',$2,$3,$4,$5)",
+                user.id, cost, w["cash"], new_cash, "revive_command")
+            await c.execute("DELETE FROM ax_kill_status WHERE user_id=$1", user.id)
     await msg.reply_text(
         f"\u2728 You're back! Paid <code>{cost}</code> cash to revive.", parse_mode=H)
 

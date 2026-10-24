@@ -269,3 +269,4 @@ def register(app):
     app.add_handler(CommandHandler("blocklistdelete", delete_cmd))
     app.add_handler(CommandHandler("setblocklistreason", setreason_cmd))
     app.add_handler(CommandHandler("resetblocklistreason", resetreason_cmd))
+

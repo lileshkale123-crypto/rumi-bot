@@ -27,7 +27,10 @@ async def gemini_chat(history: list[tuple[str, str]], text: str, model: str | No
         "contents": contents,
         "generationConfig": gen,
     }
-    headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise GeminiError(401, "GEMINI_API_KEY not set")
+    headers = {"x-goog-api-key": api_key}
     async with httpx.AsyncClient(timeout=12) as client:
         r = await client.post(URL.format(model=model or config.AI_MODEL), json=body, headers=headers)
     if r.status_code != 200:
@@ -122,3 +125,4 @@ async def chat(history, text):
             last = ex
             log.warning("groq model %s failed: %s", model, getattr(ex, "status", ex))
     raise last
+

@@ -23,3 +23,4 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def register(application: Application) -> None:
     application.add_handler(CommandHandler("ping", ping_command))
+

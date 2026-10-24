@@ -635,3 +635,4 @@ def register(application):
     application.add_handler(CommandHandler("dare", dare_cmd))
     application.add_handler(CallbackQueryHandler(td_callback, pattern=r"^td:"))
 
+

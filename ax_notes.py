@@ -309,3 +309,4 @@ def register(app):
     app.add_handler(CommandHandler("clearfilters", make_clear("ax_filters", "filter")))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.ChatType.PRIVATE, filter_watcher), group=-3)
+

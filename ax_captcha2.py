@@ -53,14 +53,6 @@ async def captcha(update, context):
             f"solving: <b>{fmt_time(s['mute_secs']) if s['mute_secs'] else 'no'}"
             f"</b>\nUse /captcha on or off</blockquote>", parse_mode=H)
         return
-    if v:
-        _, e, _ = await get_welcome(context.bot_data["pool"], chat.id,
-                                    "welcome")
-        if not e:
-            await msg.reply_text(
-                "⚠️ <b>Welcome is off</b>\n<blockquote>Turn it on first "
-                "with /welcome on ✨</blockquote>", parse_mode=H)
-            return
     await _set(context, chat.id, "enabled", v)
     await msg.reply_text(
         f"{'✅' if v else '🚫'} <b>Captcha {'on' if v else 'off'}</b>",
@@ -149,3 +141,4 @@ def register(app):
                  ("setcaptchatext", setcaptchatext),
                  ("resetcaptchatext", resetcaptchatext)):
         app.add_handler(CommandHandler(n, f))
+
