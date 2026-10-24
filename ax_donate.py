@@ -53,7 +53,7 @@ async def pick(update, context):
 
 async def precheckout(update, context):
     q = update.pre_checkout_query
-    ok = q.invoice_payload.startswith("donate:")
+    ok = q.invoice_payload.startswith(("donate:", "premium:"))
     await q.answer(ok=ok, error_message=None if ok else "Unknown payment")
 
 
@@ -116,4 +116,3 @@ def register(app):
     app.add_handler(CallbackQueryHandler(pick, pattern=r"^axd:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, paid), group=5)
-

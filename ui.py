@@ -82,7 +82,7 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
 # /wallet (balance)
 # ---------------------------------------------------------------------------
 
-def wallet_card(name: str, wallet) -> str:
+def wallet_card(name: str, wallet, full: bool = False) -> str:
     n = escape_html(name)
     shield_line = ""
     if False:  # shield status is hidden from the wallet card
@@ -92,7 +92,7 @@ def wallet_card(name: str, wallet) -> str:
         f"💳 <b>RUMI WALLET</b>\n"
         f"👤 <b>{n}</b> <code>LVL {wallet['level']}</code>\n\n"
         f"<blockquote>"
-        f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{format_number(wallet['cash'])}</code>\n"
+        f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{(wallet['cash'] if full else format_number(wallet['cash']))}</code>\n"
         f"💎 <b>Gems:</b> <code>{wallet['gems']}</code>\n"
         f"✨ <b>XP:</b> <code>{wallet['xp']}</code>"
         f"</blockquote>"
@@ -327,3 +327,16 @@ def xp_line(xp_info) -> str:
             bonus += f" • +{xp_info['gem_bonus']} Gem"
         text += f"\n🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})"
     return text
+
+
+def wallet_card_premium(name: str, wallet, emoji: str = "", full: bool = False) -> str:
+    n = escape_html(name)
+    return (
+        "💎 <b>RUMI PREMIUM WALLET</b>\n\n"
+        f"{emoji}<b>{n}</b>  <code>LVL {wallet['level']}</code>\n\n"
+        "<blockquote>"
+        f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{(wallet['cash'] if full else format_number(wallet['cash']))}</code>\n\n"
+        f"💎 <b>Gems:</b> <code>{wallet['gems']}</code>\n\n"
+        f"✨ <b>XP:</b> <code>{wallet['xp']}</code>"
+        "</blockquote>"
+    )

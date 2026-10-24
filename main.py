@@ -42,7 +42,7 @@ def main() -> None:
     token = os.environ["BOT_TOKEN"]
     from telegram.request import HTTPXRequest
     application = Application.builder().token(token).request(HTTPXRequest(connection_pool_size=256, http_version="2")).post_init(post_init).concurrent_updates(True).build()
-    application.add_handler(TypeHandler(Update, ignore_old_updates), group=-100)
+    application.add_handler(TypeHandler(Update, ignore_old_updates), group=-1)
 
     application.add_handler(CommandHandler("start", handlers.start_command))
     application.add_handler(CommandHandler("wallet", handlers.wallet_command))
@@ -120,6 +120,8 @@ def main() -> None:
     ax_extras.register(application)
     import ax_donate
     ax_donate.register(application)
+    import ax_premium
+    ax_premium.register(application)
     import ax_givecoins
     ax_givecoins.register(application)
     import ax_backup
@@ -142,6 +144,8 @@ def main() -> None:
     ax_love.register(application)
     import ax_quote
     ax_quote.register(application)
+    import ax_menu
+    ax_menu.register(application)
     import ax_menu
     ax_menu.register(application)
     import ax_mod
@@ -192,6 +196,8 @@ def main() -> None:
     ax_leaderboard.register(application)
     import ax_referral
     ax_referral.register(application)
+    import ax_grouprew
+    ax_grouprew.register(application)
     import ax_shop
     ax_shop.register(application)
     import ax_channel
@@ -251,4 +257,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

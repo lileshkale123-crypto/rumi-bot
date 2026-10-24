@@ -34,6 +34,9 @@ COMMAND_LIST = [
     ("/td", "Play Truth or Dare"),
     ("/truth", "Get a truth question"),
     ("/dare", "Get a dare"),
+    ("/premium", "Get Rumi Premium"),
+    ("/setemoji", "Pick your name emoji"),
+    ("/referral", "Invite friends, earn coins"),
     ("/help", "Open the full guide"),
 ]
 
@@ -114,8 +117,14 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             wallet = await services.get_wallet(pool, _rt.id)
             name = _rt.first_name or _rt.username or "Traveler"
             _other = True
-    text = ui.wallet_card(name, wallet)
+    text = ui.wallet_card(name, wallet, full=_other)
     keyboard = ui.wallet_keyboard()
+    import ax_premium
+    _uid = _rt.id if _other else user.id
+    _prem = await ax_premium.get_premium(pool, _uid)
+    if _prem is not None:
+        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(_prem), full=_other)
+        keyboard = None
     if _other:
         keyboard = None
 
@@ -141,9 +150,8 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
 
     result = await services.claim_daily(pool, user.id)
-    if result["status"] == "claimed":
-        import ax_referral
-        await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
+    import ax_referral
+    await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -265,9 +273,28 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_html(ui.error_card("Reply to their message with: /rob amount"))
         return
 
-    victim_id = reply_user.id
-    victim_name = reply_user.first_name or reply_user.username or "them"
-    await services.ensure_user_and_wallet(pool, victim_id, reply_user.username, reply_user.first_name)
+    if reply_user:
+        victim_id = reply_user.id
+        victim_name = reply_user.first_name or reply_user.username or "them"
+        await services.ensure_user_and_wallet(pool, victim_id, reply_user.username, reply_user.first_name)
+    elif args:
+        raw_target = args[0].lstrip("@")
+        if raw_target.isdigit():
+            victim_id = int(raw_target)
+            wallet = await services.get_wallet(pool, victim_id)
+            if wallet is None:
+                await update.message.reply_html(ui.error_card("That user hasn't used Rumi yet."))
+                return
+        else:
+            wallet = await services.get_wallet_by_username(pool, raw_target)
+            if wallet is None:
+                await update.message.reply_html(ui.error_card("That user hasn't used Rumi yet."))
+                return
+            victim_id = wallet["id"]
+        victim_name = await services.get_display_name(pool, victim_id)
+    else:
+        await update.message.reply_html(ui.error_card("Usage: /rob @username, /rob user_id, or reply to a message with /rob"))
+        return
 
     result = await services.rob(pool, user.id, victim_id, amount,
                                 chat_id=update.effective_chat.id,
@@ -366,4 +393,3 @@ async def features_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.callback_query.answer()
     text, kb = ax_menu.home()
     await update.effective_message.reply_html(text, reply_markup=kb)
-
