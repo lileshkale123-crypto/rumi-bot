@@ -60,8 +60,8 @@ async def kill_cmd(update, context):
         import ui
         await msg.reply_text(
             "\U0001f6e1 <b>%s is protected</b>\n<blockquote>Their Guard is active, "
-            "so nobody can kill them. Time left: <code>%s</code></blockquote>"
-            % (esc(target.first_name or "They"), ui._time_remaining(_sh)),
+            "so nobody can kill them.</blockquote>"
+            % (esc(target.first_name or "They"),),
             parse_mode=H)
         return
 
