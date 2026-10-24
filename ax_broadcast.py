@@ -80,6 +80,10 @@ async def _ok(update, context):
     sent, failed, saved = 0, 0, []
     for r in rows:
         try:
+            if kind == "g":
+                _ch = await context.bot.get_chat(r["chat_id"])
+                if _ch.type == "channel":
+                    continue
             msg = await context.bot.copy_message(
                 chat_id=r["chat_id"], from_chat_id=src_chat, message_id=src_msg)
             saved.append((bid, r["chat_id"], msg.message_id))
