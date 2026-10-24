@@ -150,8 +150,9 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
 
     result = await services.claim_daily(pool, user.id)
-    import ax_referral
-    await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
+    if result["status"] == "claimed":
+        import ax_referral
+        await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
 
     if update.callback_query:
         await update.callback_query.answer()
