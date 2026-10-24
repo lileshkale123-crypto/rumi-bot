@@ -274,28 +274,12 @@ async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_html(ui.error_card("Reply to their message with: /rob amount"))
         return
 
-    if reply_user:
-        victim_id = reply_user.id
-        victim_name = reply_user.first_name or reply_user.username or "them"
-        await services.ensure_user_and_wallet(pool, victim_id, reply_user.username, reply_user.first_name)
-    elif args:
-        raw_target = args[0].lstrip("@")
-        if raw_target.isdigit():
-            victim_id = int(raw_target)
-            wallet = await services.get_wallet(pool, victim_id)
-            if wallet is None:
-                await update.message.reply_html(ui.error_card("That user hasn't used Rumi yet."))
-                return
-        else:
-            wallet = await services.get_wallet_by_username(pool, raw_target)
-            if wallet is None:
-                await update.message.reply_html(ui.error_card("That user hasn't used Rumi yet."))
-                return
-            victim_id = wallet["id"]
-        victim_name = await services.get_display_name(pool, victim_id)
-    else:
-        await update.message.reply_html(ui.error_card("Usage: /rob @username, /rob user_id, or reply to a message with /rob"))
+    if not reply_user:
+        await update.message.reply_html(ui.error_card("Reply to their message with: /rob amount"))
         return
+    victim_id = reply_user.id
+    victim_name = reply_user.first_name or reply_user.username or "them"
+    await services.ensure_user_and_wallet(pool, victim_id, reply_user.username, reply_user.first_name)
 
     result = await services.rob(pool, user.id, victim_id, amount,
                                 chat_id=update.effective_chat.id,
