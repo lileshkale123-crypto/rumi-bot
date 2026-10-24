@@ -196,6 +196,8 @@ def main() -> None:
     ax_leaderboard.register(application)
     import ax_referral
     ax_referral.register(application)
+    import ax_grouprew
+    ax_grouprew.register(application)
     import ax_shop
     ax_shop.register(application)
     import ax_channel
