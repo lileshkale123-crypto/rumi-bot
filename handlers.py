@@ -34,6 +34,9 @@ COMMAND_LIST = [
     ("/td", "Play Truth or Dare"),
     ("/truth", "Get a truth question"),
     ("/dare", "Get a dare"),
+    ("/premium", "Get Rumi Premium"),
+    ("/setemoji", "Pick your name emoji"),
+    ("/referral", "Invite friends, earn coins"),
     ("/help", "Open the full guide"),
 ]
 
