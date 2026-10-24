@@ -114,13 +114,13 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             wallet = await services.get_wallet(pool, _rt.id)
             name = _rt.first_name or _rt.username or "Traveler"
             _other = True
-    text = ui.wallet_card(name, wallet)
+    text = ui.wallet_card(name, wallet, full=_other)
     keyboard = ui.wallet_keyboard()
     import ax_premium
     _uid = _rt.id if _other else user.id
     _prem = await ax_premium.get_premium(pool, _uid)
     if _prem is not None:
-        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(_prem))
+        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(_prem), full=_other)
         keyboard = None
     if _other:
         keyboard = None
