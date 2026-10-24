@@ -54,6 +54,17 @@ async def kill_cmd(update, context):
         await msg.reply_text(f"\U0001f480 {name} is already dead.")
         return
 
+    _tw = await services.get_wallet(pool, target.id)
+    _sh = _tw["shield_until"] if _tw else None
+    if _sh and _sh > datetime.now(timezone.utc):
+        import ui
+        await msg.reply_text(
+            "\U0001f6e1 <b>%s is protected</b>\n<blockquote>Their Guard is active, "
+            "so nobody can kill them. Time left: <code>%s</code></blockquote>"
+            % (esc(target.first_name or "They"), ui._time_remaining(_sh)),
+            parse_mode=H)
+        return
+
     hours = random.uniform(DEAD_HOURS_MIN, DEAD_HOURS_MAX)
     dead_until = datetime.now(timezone.utc) + timedelta(hours=hours)
     amount = random.randint(MIN_KILL, MAX_KILL)
