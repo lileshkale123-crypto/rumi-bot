@@ -142,6 +142,10 @@ def main() -> None:
     ax_afk.register(application)
     import ax_love
     ax_love.register(application)
+    import ax_social
+    ax_social.register(application)
+    import ax_meter
+    ax_meter.register(application)
     import ax_quote
     ax_quote.register(application)
     import ax_menu

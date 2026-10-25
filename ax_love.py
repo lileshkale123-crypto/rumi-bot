@@ -36,7 +36,7 @@ TXT = {
          "See you tomorrow for a new couple.", "The crown belongs to you today."],
         ["🥉 Rising Pair", "🥈 Star Couple", "🥇 Legendary Couple", "💍 Eternal Partners", "👑 Couple of Destiny", "🌌 Cosmic Soulmates"]),
 }
-IMG = {"ship": "couple_images/3.jpg", "match": "couple_images/2.jpg", "couple": "couple_images/1.jpg"}
+IMG = {"ship": "AgACAgUAAxkBAAIfs2rdxhiGFSb4OjQxVIGgo4XaLyJaAAJcGGsbk7zoVlsoLTzEqcUGAQADAgADeQADPQQ", "match": "couple_images/2.jpg", "couple": "couple_images/1.jpg", "crush": "AgACAgUAAxkBAAIftWrdxhxze0wav2Fd6HFa1oLCTmeWAAJdGGsbk7zoVpYixOnzgpPcAQADAgADeQADPQQ"}
 BAR = {"ship": ("💗", "█", "░"), "match": ("💙", "▰", "▱"), "couple": ("💜", "◆", "◇")}
 
 
@@ -62,6 +62,12 @@ def card(kind, n1, n2, pct, extra=""):
 
 async def send(update, kind, text):
     msg = update.effective_message
+    if IMG[kind].startswith("AgAC"):
+        try:
+            await msg.reply_photo(IMG[kind], caption=text, parse_mode=H)
+            return
+        except Exception:
+            pass
     if os.path.exists(IMG[kind]):
         try:
             with open(IMG[kind], "rb") as f:

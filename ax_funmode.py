@@ -5,7 +5,10 @@ from telegram.ext import CommandHandler
 from ax_common import is_admin
 
 FUN_CMDS = ["work", "spin", "rob", "pay", "guard", "bluff",
-            "mafia", "stopmafia", "ship", "match", "couple", "kill"]
+            "mafia", "stopmafia", "ship", "match", "couple", "kill",
+            "hug", "kiss", "pat", "slap", "punch", "bite",
+            "poke", "wink", "cuddle", "bonk", "murder",
+            "love", "crush", "couples", "look", "brain", "stupid_meter"]
 H = ParseMode.HTML
 
 
