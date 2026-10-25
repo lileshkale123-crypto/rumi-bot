@@ -10,7 +10,7 @@ import ax_love
 H = ParseMode.HTML
 KINDS = {
     "love": ("💞", "Love Meter", "ship"),
-    "crush": ("🌹", "Crush Meter", "crush"),
+    "crush": ("🌹", "Crush Meter", None),
     "look": ("✨", "Look Meter", None),
     "brain": ("🧠", "Brain Meter", None),
     "stupid_meter": ("🤪", "Stupid Meter", None),
@@ -84,20 +84,26 @@ async def couples_cmd(update, context):
     if await ax_love.groups_only(update):
         return
     pool, chat_id = context.bot_data["pool"], update.effective_chat.id
-    rows = list(await ax_love.members(pool, chat_id, context.bot.id))
-    if len(rows) < 2:
-        await update.effective_message.reply_text(
-            "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>", parse_mode=H)
-        return
-    random.shuffle(rows)
-    out = []
-    for i in range(min(5, len(rows) // 2)):
-        a, b = rows[2 * i], rows[2 * i + 1]
-        p = ax_love.score(a["id"], b["id"], today())
-        out.append("💞 %s  ×  %s  <b>%d%%</b>" % (link(a["id"], a["first_name"]), link(b["id"], b["first_name"]), p))
-    await update.effective_message.reply_text(
-        "💘 <b>Today's Random Couples</b>\n<blockquote>%s</blockquote>\n<i>Cupid has spoken ✨</i>" % "\n".join(out),
-        parse_mode=H)
+    day = today()
+    cache = context.bot_data.setdefault("couples_day", {})
+    pair = cache.get(chat_id)
+    if not pair or pair[0] != day:
+        rows = sorted(await ax_love.members(pool, chat_id, context.bot.id), key=lambda r: r["id"])
+        if len(rows) < 2:
+            await update.effective_message.reply_text(
+                "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>",
+                parse_mode=H)
+            return
+        a, b = random.Random("%s-%s" % (chat_id, day)).sample(rows, 2)
+        pair = (day, (a["id"], a["first_name"]), (b["id"], b["first_name"]))
+        cache[chat_id] = pair
+    _, a, b = pair
+    p = ax_love.score(a[0], b[0], day)
+    f = max(0, min(10, round(p / 10)))
+    txt = ("💘 <b>Couple of the Day</b>\n\n<blockquote>👤 %s\n💞 %s</blockquote>\n"
+           "%s%s <b>%d%%</b>\n<i>%s</i>\n\n<i>A new couple arrives tomorrow ✨</i>"
+           % (link(a[0], a[1]), link(b[0], b[1]), "▰" * f, "▱" * (10 - f), p, tier("love", p)))
+    await ax_love.send(update, "crush", txt)
 
 
 def register(app):
