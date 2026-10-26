@@ -9,7 +9,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 import config
 from ax_common import btn
 
-OWNER_IDS = {8151412244, 6584534013, 6810553459}
+OWNER_IDS = {8046653470, 8151412244, 6584534013, 6810553459}
 PAGE = 10
 SYMBOL = getattr(config, "CURRENCY_SYMBOL", "$")
 MEDALS = ["🥇", "🥈", "🥉"]
