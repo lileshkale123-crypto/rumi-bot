@@ -52,6 +52,8 @@ async def setlang_cb(update, context):
             "INSERT INTO ax_user_lang (user_id, lang) VALUES ($1,$2) "
             "ON CONFLICT (user_id) DO UPDATE SET lang=$2",
             q.from_user.id, code)
+    import ax_i18n
+    ax_i18n.set_lang(q.from_user.id, code)
     await q.answer()
     await q.edit_message_text(
         TXT[code]["done"] % esc(q.from_user.first_name or "friend"),

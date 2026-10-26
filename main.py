@@ -33,6 +33,8 @@ async def post_init(application: Application) -> None:
     application.bot_data["pool"] = pool
     import ax_ban
     await ax_ban._load(pool)
+    import ax_i18n
+    await ax_i18n.load(pool)
     refunded = await games.refund_unfinished(pool)
     if refunded:
         print(f"Refunded {refunded} unfinished Shadow Bluff game(s).")
@@ -136,6 +138,8 @@ def main() -> None:
     ax_actiontopic.register(application)
     import ax_lang
     ax_lang.register(application)
+    import ax_i18n
+    ax_i18n.register(application)
     import ax_settings
     ax_settings.register(application)
     import ax_afk
