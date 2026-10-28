@@ -35,29 +35,33 @@ async def _capture_start(update, context):
 
 
 async def _pay_on_first_claim(pool, bot, user_id):
+    referrer_id = None
     async with pool.acquire() as c:
-        row = await c.fetchrow(
-            "SELECT referrer_id FROM ax_referrals WHERE new_user_id=$1 AND rewarded=FALSE",
-            user_id)
-        if row is None:
-            return
-        referrer_id = row["referrer_id"]
-        for uid in (user_id,):
-            w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1", uid)
-            if w is None:
-                continue
-            new_cash = w["cash"] + REWARD
-            await c.execute("UPDATE wallets SET cash=$1 WHERE user_id=$2", new_cash, uid)
-            await c.execute(
-                "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-                "balance_after, source) VALUES ($1,'credit','cash',$2,$3,$4,$5)",
-                uid, REWARD, w["cash"], new_cash, "referral_bonus")
-        await c.execute(
-            "UPDATE ax_referrals SET rewarded=TRUE WHERE new_user_id=$1", user_id)
+        async with c.transaction():
+            row = await c.fetchrow(
+                "UPDATE ax_referrals SET rewarded=TRUE "
+                "WHERE new_user_id=$1 AND rewarded=FALSE "
+                "RETURNING referrer_id", user_id)
+            if row is None:
+                return
+            referrer_id = row["referrer_id"]
+            w = await c.fetchrow(
+                "SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE",
+                user_id)
+            if w is not None:
+                new_cash = w["cash"] + REWARD
+                await c.execute(
+                    "UPDATE wallets SET cash=$1 WHERE user_id=$2",
+                    new_cash, user_id)
+                await c.execute(
+                    "INSERT INTO transactions (user_id, type, currency, "
+                    "amount, balance_before, balance_after, source) "
+                    "VALUES ($1,'credit','cash',$2,$3,$4,$5)",
+                    user_id, REWARD, w["cash"], new_cash, "referral_bonus")
     try:
         await bot.send_message(
             referrer_id,
-            f"\U0001f389 Your referral played Rumi! They earned <code>{REWARD}</code> cash for playing 🎉",
+            "\U0001f389 Your referral just played Rumi!",
             parse_mode=H)
     except Exception:
         pass
