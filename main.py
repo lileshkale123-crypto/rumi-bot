@@ -200,6 +200,8 @@ def main() -> None:
     ax_ban.register(application)
     import ax_leaderboard
     ax_leaderboard.register(application)
+    import ax_toprich
+    ax_toprich.register(application)
     import ax_referral
     ax_referral.register(application)
     import ax_grouprew
