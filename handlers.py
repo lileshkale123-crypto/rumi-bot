@@ -145,9 +145,6 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ---------------------------------------------------------------------------
 
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    import ax_claimcheck
-    if await ax_claimcheck.gate(update, context):
-        return
     user = update.effective_user
     pool = context.bot_data["pool"]
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
