@@ -12,6 +12,7 @@ import config
 
 log = logging.getLogger(__name__)
 _last_reply = {}
+_ai_msgs = set()  # (chat_id, message_id) of her own chat replies
 _trigger = re.compile(r"\b(" + "|".join(map(re.escape, config.AI_TRIGGER_WORDS)) + r")\b", re.I)
 _greet = re.compile(r"^\s*(" + "|".join(config.AI_GREETINGS) + r")\b", re.I)
 
@@ -30,9 +31,9 @@ async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not direct:
         rt = msg.reply_to_message
         uname = (context.bot.username or "").lower()
-        if rt and rt.from_user and rt.from_user.id == context.bot.id:
+        if rt and rt.from_user and rt.from_user.id == context.bot.id and (chat.id, rt.message_id) in _ai_msgs:
             direct = True
-        elif _trigger.search(text) or _greet.search(text):
+        elif _trigger.search(text):
             direct = True
         elif uname and f"@{uname}" in text.lower():
             direct = True
@@ -61,5 +62,8 @@ async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await msg.reply_text("my brain is a little busy rn 🌸 try again in a moment", do_quote=True)
         return
     await ai_store.save_turn(pool, chat.id, prompt, reply)
-    await msg.reply_text(reply[:4000], do_quote=True)
+    sent = await msg.reply_text(reply[:4000], do_quote=True)
+    if len(_ai_msgs) > 2000:
+        _ai_msgs.clear()
+    _ai_msgs.add((chat.id, sent.message_id))
 
