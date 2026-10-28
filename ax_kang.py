@@ -6,7 +6,7 @@ import time
 
 from PIL import Image
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputSticker
-from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CommandHandler
 
 import html
@@ -203,14 +203,21 @@ async def _run(msg, u, bot, kind, fid, emoji, ext, status):
                 ext = "webp" if data[:4] == b"RIFF" else "png"
             st = InputSticker(InputFile(data, filename=f"s.{ext}", attach=True), [emoji], kind)
             count = await _push(bot, u.id, name, title, st)
-    except BadRequest as e:
-        log.warning("kang failed: %s", e)
+    except TelegramError as e:
+        log.warning("kang failed: %s: %s", type(e).__name__, e)
         t = str(e).lower()
-        if "peer_id" in t or "user_id" in t or "user not found" in t:
+        if (isinstance(e, Forbidden) or "peer_id" in t or "user_id" in t or "user not found" in t
+                or "not started" in t or "blocked" in t or "chat not found" in t):
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Start Rumi", url=f"https://t.me/{bot.username}?start=kang")]])
             return await _say(reply, status, "🧷 <b>One-time setup</b>\n<blockquote>Tap the button, press Start, then send /kang again.</blockquote>", kb)
+        if isinstance(e, RetryAfter):
+            ra = e.retry_after
+            ra = int(ra.total_seconds() if hasattr(ra, "total_seconds") else ra)
+            return await _say(reply, status, f"⏳ Telegram says wait <b>{ra}s</b> before adding more stickers.")
         if "too much" in t or "too many" in t or "too_much" in t:
             return await _say(reply, status, "⚠️ That pack is full. Telegram allows no more stickers in it.")
+        if isinstance(e, (TimedOut, NetworkError)):
+            return await _say(reply, status, "😿 <b>Telegram was slow.</b> Please try again.")
         return await _say(reply, status, "😿 <b>Couldn't add it.</b> Telegram refused this sticker.")
     except Exception:
         log.exception("kang crashed")
