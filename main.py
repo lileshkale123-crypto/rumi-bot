@@ -206,6 +206,8 @@ def main() -> None:
     ax_referral.register(application)
     import ax_claimcheck
     ax_claimcheck.register(application)
+    import ax_claimcheck
+    ax_claimcheck.register(application)
     import ax_grouprew
     ax_grouprew.register(application)
     import ax_shop
