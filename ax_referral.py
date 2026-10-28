@@ -79,8 +79,9 @@ async def referral_cmd(update, context):
     link = f"https://t.me/{context.bot.username}?start=ref_{user.id}"
     await msg.reply_text(
         f"\U0001f91d <b>Invite friends, earn cash</b>\n\n"
-        f"Share your link \u2014 when a friend joins and plays, you both get "
-        f"<code>{REWARD}</code> cash.\n\n"
+        f"Share your link. You get <code>5,000</code> cash when a friend joins, "
+        f"and <code>2,000</code> more once they reach level 3 or play for 24 hours. "
+        f"Your friend gets <code>{REWARD}</code> extra cash on their first /claim.\n\n"
         f"<code>{link}</code>\n\n"
         f"Successful invites: <b>{count}</b>",
         parse_mode=H)

@@ -145,14 +145,21 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ---------------------------------------------------------------------------
 
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import ax_claimcheck
+    if await ax_claimcheck.gate(update, context):
+        return
     user = update.effective_user
     pool = context.bot_data["pool"]
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
 
     result = await services.claim_daily(pool, user.id)
     if result["status"] == "claimed":
-        import ax_referral
-        await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
+        try:
+            import ax_referral
+            await ax_referral._pay_on_first_claim(pool, context.bot, user.id)
+        except Exception:
+            import logging
+            logging.exception("referral first-claim payout failed")
 
     if update.callback_query:
         await update.callback_query.answer()
