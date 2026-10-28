@@ -473,3 +473,17 @@ CREATE TABLE IF NOT EXISTS bounties (
     bounty_amount BIGINT NOT NULL CHECK (bounty_amount > 0)
 );
 
+
+
+CREATE TABLE IF NOT EXISTS ax_gift_inv (
+    user_id BIGINT NOT NULL,
+    item_id TEXT NOT NULL,
+    qty INT NOT NULL DEFAULT 0 CHECK (qty >= 0),
+    PRIMARY KEY (user_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS ax_gift_recv (
+    user_id BIGINT NOT NULL,
+    item_id TEXT NOT NULL,
+    qty INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, item_id)
+);

@@ -254,6 +254,8 @@ def main() -> None:
     ax_dmproxy.register(application)
     import ax_truthdare
     ax_truthdare.register(application)
+    import ax_gift
+    ax_gift.register(application)
     import chat_events
     chat_events.register(application)
 
