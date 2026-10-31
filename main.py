@@ -266,6 +266,8 @@ def main() -> None:
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
     autodelete.install(application)
+    import keepalive
+    keepalive.start()
     application.run_polling()
 
 
