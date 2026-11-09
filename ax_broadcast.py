@@ -27,6 +27,25 @@ async def ensure(pool):
     _READY[0] = True
 
 
+def _parse_buttons(m):
+    text = m.text or m.caption or ""
+    rows = []
+    for line in text.split("\n")[1:]:
+        row = []
+        for part in line.split(" | "):
+            if " - " not in part:
+                continue
+            label, url = part.rsplit(" - ", 1)
+            label, url = label.strip(), url.strip()
+            if url.startswith("t.me/"):
+                url = "https://" + url
+            if label and url.startswith(("http://", "https://", "tg://")):
+                row.append(InlineKeyboardButton(label, url=url))
+        if row:
+            rows.append(row)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 def _kb(*pairs):
     return InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=d) for t, d in pairs]])
 
@@ -40,15 +59,17 @@ async def _start(update, context, kind):
     if src is None:
         await m.reply_text("Reply to the message you want to broadcast, then send the command.")
         return
+    markup = _parse_buttons(m)
+    nbtn = sum(len(r) for r in markup.inline_keyboard) if markup else 0
     pool = context.bot_data["pool"]
     sql = "SELECT count(*) FROM ax_groups" if kind == "g" else "SELECT count(*) FROM users"
     async with pool.acquire() as c:
         n = await c.fetchval(sql)
     where = "groups" if kind == "g" else "DM users"
     p = await src.reply_text(
-        "📢 <b>Broadcast preview</b>\n<blockquote>Send this message to %d %s?</blockquote>" % (n, where),
+        "📢 <b>Broadcast preview</b>\n<blockquote>Send this message to %d %s?\nButtons: %d</blockquote>" % (n, where, nbtn),
         parse_mode=H, reply_markup=_kb(("✅ Confirm", "axb:ok"), ("❌ Cancel", "axb:no")))
-    context.bot_data.setdefault("axb_pending", {})[p.message_id] = (src.chat_id, src.message_id, kind)
+    context.bot_data.setdefault("axb_pending", {})[p.message_id] = (src.chat_id, src.message_id, kind, markup)
 
 
 async def broadcast_cmd(update, context):
@@ -69,7 +90,7 @@ async def _ok(update, context):
         await q.answer("Expired. Send the command again.", show_alert=True)
         return
     await q.answer("Sending...")
-    src_chat, src_msg, kind = pend
+    src_chat, src_msg, kind, markup = pend
     pool = context.bot_data["pool"]
     await ensure(pool)
     sql = "SELECT chat_id FROM ax_groups" if kind == "g" else "SELECT id AS chat_id FROM users"
@@ -85,7 +106,8 @@ async def _ok(update, context):
                 if _ch.type == "channel":
                     continue
             msg = await context.bot.copy_message(
-                chat_id=r["chat_id"], from_chat_id=src_chat, message_id=src_msg)
+                chat_id=r["chat_id"], from_chat_id=src_chat, message_id=src_msg,
+                reply_markup=markup)
             saved.append((bid, r["chat_id"], msg.message_id))
             sent += 1
         except Exception:
