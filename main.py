@@ -260,6 +260,8 @@ def main() -> None:
     ax_truthdare.register(application)
     import ax_gift
     ax_gift.register(application)
+    import ax_post
+    ax_post.register(application)
     import chat_events
     chat_events.register(application)
 
