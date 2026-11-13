@@ -45,6 +45,8 @@ async def report_cmd(update, context):
 
 
 async def atadmin_watch(update, context):
+    if update.edited_message:
+        return  # no double replies on edits
     msg = update.effective_message
     if msg and msg.reply_to_message and msg.text and _AT_ADMIN.match(msg.text):
         await _do_report(update, context)

@@ -50,6 +50,8 @@ def _download(url, folder):
 
 
 async def watcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.edited_message:
+        return  # no double replies on edits
     msg = update.effective_message
     user = update.effective_user
     if not msg or not msg.text or not user or user.is_bot:

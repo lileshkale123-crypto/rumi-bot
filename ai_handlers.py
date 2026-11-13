@@ -12,12 +12,15 @@ import config
 
 log = logging.getLogger(__name__)
 _last_reply = {}
+_seen_msgs = set()
 _ai_msgs = set()  # (chat_id, message_id) of her own chat replies
 _trigger = re.compile(r"\b(" + "|".join(map(re.escape, config.AI_TRIGGER_WORDS)) + r")\b", re.I)
 _greet = re.compile(r"^\s*(" + "|".join(config.AI_GREETINGS) + r")\b", re.I)
 
 
 async def ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.edited_message:
+        return  # no double replies on edits
     context.application.create_task(_ai_chat_inner(update, context), update=update)
 
 
@@ -39,11 +42,18 @@ async def _ai_chat_inner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             direct = True
     if not direct:
         return
+    _k = (chat.id, msg.message_id)
+    if _k in _seen_msgs:
+        return
+    _seen_msgs.add(_k)
+    if len(_seen_msgs) > 5000:
+        _seen_msgs.clear()
 
     now = time.monotonic()
     if now - _last_reply.get(chat.id, 0) < config.AI_FLOOD_SECONDS:
         return
 
+    _last_reply[chat.id] = now
     pool = context.bot_data["pool"]
     if not await ai_store.use_quota(pool, user.id):
         await msg.reply_text(f"we've chatted {config.AI_DAILY_LIMIT} times today 🌙 come back after midnight (IST)!")

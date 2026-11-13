@@ -250,6 +250,8 @@ async def dm_note(update, context):
 
 
 async def hash_watcher(update, context):
+    if update.edited_message:
+        return  # no double replies on edits
     msg, user = update.effective_message, update.effective_user
     if not msg or not msg.text or user is None or user.is_bot:
         return
@@ -271,6 +273,8 @@ async def hash_watcher(update, context):
 
 
 async def filter_watcher(update, context):
+    if update.edited_message:
+        return  # no double replies on edits
     msg, user, chat = update.effective_message, update.effective_user, update.effective_chat
     if not msg or not msg.text or user is None or user.is_bot:
         return

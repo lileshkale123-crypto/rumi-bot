@@ -56,6 +56,8 @@ async def afk_cmd(update, context):
 
 
 async def afk_watcher(update, context):
+    if update.edited_message:
+        return  # no double replies on edits
     msg, user = update.effective_message, update.effective_user
     if not msg or not user or user.is_bot:
         return
