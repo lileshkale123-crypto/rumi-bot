@@ -169,7 +169,14 @@ async def announce(context, chat, kind, member):
 
 
 async def on_join(update, context):
-    for m in update.effective_message.new_chat_members or []:
+    msg = update.effective_message
+    try:
+        print("WELCOME_DEBUG", msg.message_id, "from=", getattr(msg.from_user, "id", None),
+              "new=", [u.id for u in (msg.new_chat_members or [])],
+              "keys=", sorted(msg.to_dict().keys()), flush=True)
+    except Exception as e:
+        print("WELCOME_DEBUG error", repr(e), flush=True)
+    for m in msg.new_chat_members or []:
         await announce(context, update.effective_chat, "welcome", m)
 
 
