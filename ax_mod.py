@@ -48,8 +48,36 @@ async def say(update, text, kb=None):
                 reply_markup=kb, message_thread_id=tid)
         except Exception:
             pass
-    await update.effective_message.reply_text(
+    return await update.effective_message.reply_text(
         text, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+
+async def act_and_reply(update, action, text, kb=None, fail_title="Couldn't do that", note=""):
+    """Run the Telegram action and send the confirmation AT THE SAME TIME, so the group
+    sees the reply as early as possible. If the action fails, the reply is edited into the error."""
+    reply = asyncio.ensure_future(say(update, text, kb))
+    try:
+        await action
+    except Exception as e:
+        err = f"⚠️ <b>{fail_title}</b>\n<blockquote>{esc(e)}</blockquote>{note}"
+        sent = None
+        try:
+            sent = await reply
+        except Exception:
+            pass
+        if sent is not None and hasattr(sent, "edit_text"):
+            try:
+                await sent.edit_text(err, parse_mode=ParseMode.HTML)
+                return False
+            except Exception:
+                pass
+        await say(update, err)
+        return False
+    try:
+        await reply
+    except Exception:
+        pass
+    return True
 
 
 async def gate(update, context, protect=True, right="can_restrict_members"):
@@ -131,19 +159,17 @@ def make_cmd(kind):
         target = await gate(update, context, kind in ("mute", "ban", "kick"))
         if target is None:
             return
-        try:
-            await perform(kind, context.bot, context.bot_data["pool"],
-                          update.effective_chat.id, target.id)
-        except Exception as e:
-            await say(update, f"⚠️ <b>Couldn't do that</b>\n<blockquote>{esc(e)}</blockquote>")
-            return
         icon, title = META[kind]
         kb = None
         if kind in UNDO:
             k, label = UNDO[kind]
             kb = InlineKeyboardMarkup([[btn(label, f"axm:{k}:{target.id}", style="success")]])
-        await say(update, card(icon, title, target.first_name), kb)
-        fire(_log_action(context, update, kind, target))
+        ok = await act_and_reply(
+            update, perform(kind, context.bot, context.bot_data["pool"],
+                            update.effective_chat.id, target.id),
+            card(icon, title, target.first_name), kb)
+        if ok:
+            fire(_log_action(context, update, kind, target))
     return cmd
 
 
@@ -240,24 +266,18 @@ async def promote_cmd(update, context):
     if await is_admin(bot, chat_id, target.id):
         await say(update, "🛡️ <b>Already an admin</b>\n<blockquote>Their rights stay as they are ✨</blockquote>")
         return
-    try:
-        await bot.promote_chat_member(chat_id, target.id, **grant)
-    except Exception as e:
-        await say(update, f"⚠️ <b>Couldn't promote</b>\n<blockquote>{esc(e)}</blockquote>")
+    ok = await act_and_reply(
+        update, bot.promote_chat_member(chat_id, target.id, **grant),
+        card("⬆️", "Promoted", target.first_name, f"\n🏷️ {esc(title)}" if title else ""),
+        None, "Couldn't promote")
+    if not ok:
         return
     invalidate(chat_id, target.id)
-
-    async def _title():
-        if title:
-            try:
-                await bot.set_chat_administrator_custom_title(chat_id, target.id, title)
-            except Exception:
-                pass
-    # title call and confirmation message go out together
-    await asyncio.gather(
-        _title(),
-        say(update, card("⬆️", "Promoted", target.first_name, f"\n🏷️ {esc(title)}" if title else "")),
-        return_exceptions=True)
+    if title:
+        try:
+            await bot.set_chat_administrator_custom_title(chat_id, target.id, title)
+        except Exception:
+            pass
 
 
 async def demote_cmd(update, context):
@@ -272,16 +292,15 @@ async def demote_cmd(update, context):
     if m is None or m.status != "administrator":
         await say(update, "💫 <b>Not an admin</b>\n<blockquote>That user isn't an admin ✨</blockquote>")
         return
-    try:
-        await context.bot.promote_chat_member(
+    ok = await act_and_reply(
+        update, context.bot.promote_chat_member(
             chat_id, target.id, can_restrict_members=False, can_delete_messages=False,
             can_invite_users=False, can_pin_messages=False, can_change_info=False,
-            can_manage_video_chats=False, can_promote_members=False)
-    except Exception as e:
-        await say(update, f"⚠️ <b>Couldn't demote</b>\n<blockquote>{esc(e)}</blockquote>\n<i>I can only demote admins that I promoted.</i>")
-        return
-    invalidate(chat_id, target.id)
-    await say(update, card("⬇️", "Demoted", target.first_name))
+            can_manage_video_chats=False, can_promote_members=False),
+        card("⬇️", "Demoted", target.first_name), None, "Couldn't demote",
+        "\n<i>I can only demote admins that I promoted.</i>")
+    if ok:
+        invalidate(chat_id, target.id)
 
 
 def make_temp(kind):
@@ -298,13 +317,17 @@ def make_temp(kind):
         reason = " ".join(d[1:]) or None
         until = datetime.now(timezone.utc) + timedelta(seconds=secs)
         chat_id = update.effective_chat.id
-        try:
-            if kind == "mute":
-                await context.bot.restrict_chat_member(chat_id, target.id, permissions=MUTED, until_date=until)
-            else:
-                await context.bot.ban_chat_member(chat_id, target.id, until_date=until)
-        except Exception as e:
-            await say(update, f"⚠️ <b>Couldn't do that</b>\n<blockquote>{esc(e)}</blockquote>")
+        if kind == "mute":
+            action = context.bot.restrict_chat_member(chat_id, target.id, permissions=MUTED, until_date=until)
+        else:
+            action = context.bot.ban_chat_member(chat_id, target.id, until_date=until)
+        icon, title = META[kind]
+        extra = f"\n⏳ For <b>{esc(d[0])}</b>" + (f"\n📝 {esc(reason)}" if reason else "")
+        undo, label = UNDO[kind]
+        ok = await act_and_reply(
+            update, action, card(icon, title, target.first_name, extra),
+            InlineKeyboardMarkup([[btn(label, f"axm:{undo}:{target.id}", style="success")]]))
+        if not ok:
             return
         pool = context.bot_data["pool"]
 
@@ -317,11 +340,6 @@ def make_temp(kind):
             NEED[0] = True
         NEED[0] = True
         fire(_save())
-        icon, title = META[kind]
-        extra = f"\n⏳ For <b>{esc(d[0])}</b>" + (f"\n📝 {esc(reason)}" if reason else "")
-        undo, label = UNDO[kind]
-        await say(update, card(icon, title, target.first_name, extra),
-                  InlineKeyboardMarkup([[btn(label, f"axm:{undo}:{target.id}", style="success")]]))
     return cmd
 
 
