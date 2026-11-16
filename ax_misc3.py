@@ -28,7 +28,7 @@ async def load(app):
 async def _gate(update, context):
     chat, user = update.effective_chat, update.effective_user
     if chat.type == "private" or not await is_admin(
-            context.bot, chat.id, user.id):
+            context.bot, chat.id, user.id, "can_change_info"):
         await update.effective_message.reply_text(
             "🛡 <b>Admins only</b>\n<blockquote>Use this in your group "
             "as an admin ✨</blockquote>", parse_mode=H)
@@ -98,8 +98,5 @@ def register(app):
         "adminerror", make("admin_error", "adminerror", QUIET, True)))
     app.add_handler(CommandHandler(
         "silentactions", make("silent_actions", "silentactions", SILENT)))
-    app.add_handler(MessageHandler(
-        filters.Regex(r"^/(promote|demote)") & filters.ChatType.GROUPS,
-        clear_cache), group=5)
     app.job_queue.run_once(lambda ctx: load(ctx.application), 5)
 

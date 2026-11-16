@@ -94,7 +94,7 @@ async def msg_view(pool, chat_id, kind):
 
 async def settings_cmd(update, context):
     chat = update.effective_chat
-    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id):
+    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id, "can_change_info"):
         await update.effective_message.reply_text(
             "🛡️ <b>Admins only</b>\n<blockquote>Open this in your group as an admin ✨</blockquote>", parse_mode=H)
         return
@@ -104,7 +104,7 @@ async def settings_cmd(update, context):
 
 async def setflood_cmd(update, context):
     chat, msg = update.effective_chat, update.effective_message
-    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id):
+    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id, "can_change_info"):
         await msg.reply_text("🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>", parse_mode=H)
         return
     pool = context.bot_data["pool"]
@@ -124,7 +124,7 @@ async def setflood_cmd(update, context):
 async def settings_callback(update, context):
     q = update.callback_query
     chat = q.message.chat
-    if not await is_admin(context.bot, chat.id, q.from_user.id):
+    if not await is_admin(context.bot, chat.id, q.from_user.id, "can_change_info"):
         await q.answer("Admins only 🛡️", show_alert=True)
         return
     pool = context.bot_data["pool"]

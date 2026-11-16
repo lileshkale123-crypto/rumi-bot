@@ -39,7 +39,7 @@ async def export_cmd(update, context):
     if chat.type not in ("group", "supergroup"):
         await _say(update, "<b>Groups only</b>\n<blockquote>Use this inside a group ✨</blockquote>")
         return
-    if not await is_admin(context.bot, chat.id, user.id):
+    if not await is_admin(context.bot, chat.id, user.id, "can_change_info"):
         await _say(update, "🔒 <b>Admins only</b>\n<blockquote>Only admins can export ✨</blockquote>")
         return
     out = {}

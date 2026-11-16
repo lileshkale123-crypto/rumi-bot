@@ -35,7 +35,7 @@ def make_set(kind):
     async def cmd(update, context):
         msg, chat = update.effective_message, update.effective_chat
         html = lambda t: msg.reply_text(t, parse_mode=ParseMode.HTML)
-        if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id):
+        if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id, "can_change_info"):
             await html("🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>")
             return
         pool = context.bot_data["pool"]

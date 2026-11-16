@@ -33,7 +33,7 @@ async def admin_only(update, context):
     if chat.type == "private":
         await ax_mod.say(update, "⚠️ <b>Groups only</b>\n<blockquote>Use this inside your group 💫</blockquote>")
         return False
-    if not await is_admin(context.bot, chat.id, user.id):
+    if not await is_admin(context.bot, chat.id, user.id, "can_change_info"):
         await ax_mod.say(update, "🛡️ <b>Admins only</b>\n<blockquote>You need admin rights for this ✨</blockquote>")
         return False
     return True
@@ -46,6 +46,7 @@ async def save(pool, chat_id, col, value):
         await c.execute(
             f"INSERT INTO ax_warn_settings (chat_id, {col}) VALUES ($1,$2) "
             f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2", chat_id, value)
+    ax_warn._SCACHE.pop(chat_id, None)
 
 
 async def warnlimit_cmd(update, context):

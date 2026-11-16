@@ -54,7 +54,7 @@ async def atadmin_watch(update, context):
 
 async def reports_cmd(update, context):
     chat, user = update.effective_chat, update.effective_user
-    if chat.type == "private" or not await is_admin(context.bot, chat.id, user.id):
+    if chat.type == "private" or not await is_admin(context.bot, chat.id, user.id, "can_change_info"):
         await ax_mod.say(update, "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>")
         return
     pool = context.bot_data["pool"]

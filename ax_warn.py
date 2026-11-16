@@ -13,11 +13,30 @@ log = logging.getLogger(__name__)
 ICONS = {"ban": "🔨", "mute": "🔇", "kick": "👢", "tban": "🔨", "tmute": "🔇"}
 
 
+import time as _time
+_SCACHE = {}
+
+
 async def get_settings(c, chat_id):
+    hit = _SCACHE.get(chat_id)
+    if hit and _time.time() - hit[0] < 60:
+        return dict(hit[1])
     row = await c.fetchrow("SELECT * FROM ax_warn_settings WHERE chat_id=$1", chat_id)
-    if row:
-        return dict(row)
-    return {"warn_limit": 3, "warn_mode": "mute", "warn_mode_secs": 86400, "warn_expire_secs": 0}
+    s = dict(row) if row else {"warn_limit": 3, "warn_mode": "mute", "warn_mode_secs": 86400, "warn_expire_secs": 0}
+    _SCACHE[chat_id] = (_time.time(), s)
+    return dict(s)
+
+
+async def add_warn(pool, chat_id, uid, reason):
+    """Save a warning and count the active ones in a single database round trip."""
+    async with pool.acquire() as c:
+        s = await get_settings(c, chat_id)
+        n = await c.fetchval(
+            "WITH ins AS (INSERT INTO ax_warn_log (chat_id, user_id, reason) VALUES ($1,$2,$3) RETURNING 1) "
+            "SELECT 1 + (SELECT COUNT(*) FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2 "
+            "AND ($4::float8 <= 0 OR created_at > now() - make_interval(secs => $4::float8)))",
+            chat_id, uid, reason, float(s["warn_expire_secs"]))
+    return s, int(n)
 
 
 async def count_active(c, chat_id, uid, expire_secs):
@@ -66,11 +85,7 @@ def make_warn(mode):
         d = args if msg.reply_to_message else args[1:]
         reason = " ".join(d) or None
         pool, chat_id = context.bot_data["pool"], update.effective_chat.id
-        async with pool.acquire() as c:
-            s = await get_settings(c, chat_id)
-            await c.execute("INSERT INTO ax_warn_log (chat_id, user_id, reason) VALUES ($1,$2,$3)",
-                            chat_id, target.id, reason)
-            n = await count_active(c, chat_id, target.id, s["warn_expire_secs"])
+        s, n = await add_warn(pool, chat_id, target.id, reason)
         limit = s["warn_limit"]
         note = f"\n📝 {esc(reason)}" if reason else ""
         if n >= limit:
@@ -140,7 +155,7 @@ async def rmwarn_cmd(update, context):
 async def warn_callback(update, context):
     q = update.callback_query
     chat = update.effective_chat
-    if not await is_admin(context.bot, chat.id, q.from_user.id):
+    if not await is_admin(context.bot, chat.id, q.from_user.id, "can_restrict_members"):
         await q.answer("Admins only ✨", show_alert=True)
         return
     uid = int(q.data.split(":")[2])

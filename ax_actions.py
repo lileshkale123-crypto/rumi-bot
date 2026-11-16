@@ -47,11 +47,7 @@ async def run(context, chat_id, user, action, reason=None):
     bot = context.bot
     icon, title = "⚠️", "Warned"
     if name == "warn":
-        async with pool.acquire() as c:
-            s = await ax_warn.get_settings(c, chat_id)
-            await c.execute("INSERT INTO ax_warn_log (chat_id, user_id, reason) VALUES ($1,$2,$3)",
-                            chat_id, user.id, reason)
-            n = await ax_warn.count_active(c, chat_id, user.id, s["warn_expire_secs"])
+        s, n = await ax_warn.add_warn(pool, chat_id, user.id, reason)
         if n >= s["warn_limit"]:
             await ax_warn.punish(context, pool, chat_id, user.id, s["warn_mode"], s["warn_mode_secs"])
             async with pool.acquire() as c:

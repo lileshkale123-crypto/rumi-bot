@@ -125,7 +125,7 @@ _admin_cache = {}
 async def _is_admin_cached(bot, chat_id, uid):
     k = (chat_id, uid)
     hit = _admin_cache.get(k)
-    if hit and time.time() - hit[0] < 60:
+    if hit and time.time() - hit[0] < 10:
         return hit[1]
     ok = await is_admin(bot, chat_id, uid)
     _admin_cache[k] = (time.time(), ok)

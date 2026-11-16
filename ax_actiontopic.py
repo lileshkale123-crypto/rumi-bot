@@ -31,7 +31,7 @@ async def _check(update, context):
     if chat.type != "supergroup" or not getattr(chat, "is_forum", False):
         await _say(update, "<b>Topics only</b>\n<blockquote>This works in groups that have Topics turned on \u2728</blockquote>")
         return False
-    if not await is_admin(context.bot, chat.id, user.id):
+    if not await is_admin(context.bot, chat.id, user.id, "can_change_info"):
         await _say(update, "\U0001F512 <b>Admins only</b>\n<blockquote>Only admins can choose the action topic \u2728</blockquote>")
         return False
     return True

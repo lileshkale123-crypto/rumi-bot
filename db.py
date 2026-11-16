@@ -13,7 +13,7 @@ async def init_pool() -> asyncpg.Pool:
             return ""
 
     _pool = await asyncpg.create_pool(
-        dsn=dsn, min_size=1, max_size=10, connection_class=_NoResetConn
+        dsn=dsn, min_size=4, max_size=10, connection_class=_NoResetConn
     )
 
     schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")

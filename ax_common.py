@@ -1,9 +1,13 @@
 """Shared helpers for the Astraea-style features in Rumi."""
+import asyncio
 import html
+import logging
 from types import SimpleNamespace
 
 from telegram import InlineKeyboardButton
 from telegram.constants import ChatMemberStatus
+
+log = logging.getLogger(__name__)
 
 ADMIN_STATES = (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
 
@@ -21,28 +25,89 @@ def btn(text, data=None, url=None, style=None):
 
 
 import time as _time
+
 ANON_ON = set()
-_ADMIN_CACHE = {}
+ANON_ID = 1087968824  # GroupAnonymousBot
+_ADMIN_CACHE = {}     # (chat_id, user_id) -> (ChatMember, timestamp)
+ADMIN_TTL = 120       # safe: chat_member updates invalidate instantly (see ax_addprompt)
+
+RIGHT_NAMES = {
+    "can_restrict_members": "Ban users",
+    "can_delete_messages": "Delete messages",
+    "can_pin_messages": "Pin messages",
+    "can_change_info": "Change group info",
+    "can_promote_members": "Add new admins",
+    "can_invite_users": "Invite users",
+}
 
 
-async def is_admin(bot, chat_id, user_id) -> bool:
-    if user_id == 1087968824:
-        return chat_id in ANON_ON
+def fire(coro):
+    """Run a slow side job (log, DB write) in the background so the reply is not delayed."""
+    async def _run():
+        try:
+            await coro
+        except Exception:
+            log.exception("background job failed")
+    try:
+        return asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        coro.close()
+
+
+def invalidate(chat_id, user_id=None):
+    if user_id is None:
+        for k in [k for k in _ADMIN_CACHE if k[0] == chat_id]:
+            _ADMIN_CACHE.pop(k, None)
+    else:
+        _ADMIN_CACHE.pop((chat_id, user_id), None)
+    try:
+        import ax_lockcore
+        ax_lockcore._admin_cache.clear()
+    except Exception:
+        pass
+
+
+def remember(chat_id, member):
+    _ADMIN_CACHE[(chat_id, member.user.id)] = (member, _time.time())
+
+
+async def get_member(bot, chat_id, user_id):
+    """ChatMember (cached). None when Telegram can't tell us."""
     now = _time.time()
     hit = _ADMIN_CACHE.get((chat_id, user_id))
-    if hit and now - hit[1] < 15:
+    if hit and now - hit[1] < ADMIN_TTL:
         return hit[0]
     try:
         m = await bot.get_chat_member(chat_id, user_id)
-        ok = m.status in ADMIN_STATES
     except Exception:
+        return None
+    _ADMIN_CACHE[(chat_id, user_id)] = (m, now)
+    return m
+
+
+async def is_admin(bot, chat_id, user_id, right=None) -> bool:
+    """True if the user is an admin. If `right` is given (e.g. "can_restrict_members")
+    the admin must also hold that permission. The owner holds every permission."""
+    if user_id == ANON_ID:
+        return chat_id in ANON_ON  # anonymous admins can't be checked per right
+    m = await get_member(bot, chat_id, user_id)
+    if m is None or m.status not in ADMIN_STATES:
         return False
-    _ADMIN_CACHE[(chat_id, user_id)] = (ok, now)
-    return ok
+    if right is None or m.status == ChatMemberStatus.OWNER:
+        return True
+    return bool(getattr(m, right, False))
 
 
-async def bot_is_admin(bot, chat_id) -> bool:
-    return await is_admin(bot, chat_id, bot.id)
+async def has_right(bot, chat_id, user_id, right) -> bool:
+    return await is_admin(bot, chat_id, user_id, right)
+
+
+async def bot_is_admin(bot, chat_id, right=None) -> bool:
+    return await is_admin(bot, chat_id, bot.id, right)
+
+
+def right_label(right):
+    return RIGHT_NAMES.get(right, "the needed permission")
 
 
 async def find_user_by_username(pool, username):
@@ -67,8 +132,8 @@ async def resolve_target(update, context, pool):
     ident = args[0]
     if ident.lstrip("-").isdigit():
         try:
-            m = await context.bot.get_chat_member(update.effective_chat.id, int(ident))
-            return m.user
+            m = await get_member(context.bot, update.effective_chat.id, int(ident))
+            return m.user if m else None
         except Exception:
             return None
     row = await find_user_by_username(pool, ident.lstrip("@"))
@@ -100,4 +165,3 @@ async def track_user(pool, user, chat):
                 "ON CONFLICT DO NOTHING",
                 chat.id, user.id,
             )
-

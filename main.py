@@ -265,12 +265,15 @@ def main() -> None:
     import chat_events
     chat_events.register(application)
 
+    import ax_addprompt
+    ax_addprompt.register(application)
+
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
     autodelete.install(application)
     import keepalive
     keepalive.start()
-    application.run_polling()
+    application.run_polling(allowed_updates=[t for t in Update.ALL_TYPES if t not in ("message_reaction", "message_reaction_count")])
 
 
 if __name__ == "__main__":

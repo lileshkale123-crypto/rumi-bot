@@ -35,7 +35,7 @@ async def _admin_gate(update, context):
 
 
 async def approve_cmd(update, context):
-    target = await ax_mod.gate(update, context)
+    target = await ax_mod.gate(update, context, True, None)
     if target is None:
         return
     chat_id = update.effective_chat.id
@@ -49,7 +49,7 @@ async def approve_cmd(update, context):
 
 
 async def unapprove_cmd(update, context):
-    target = await ax_mod.gate(update, context, False)
+    target = await ax_mod.gate(update, context, False, None)
     if target is None:
         return
     chat_id = update.effective_chat.id
@@ -92,7 +92,7 @@ async def approval_cmd(update, context):
     if chat.type == "private":
         await ax_mod.say(update, "⚠️ <b>Groups only</b>\n<blockquote>Use this inside a group 💫</blockquote>")
         return
-    target = await ax_mod.gate(update, context, False)
+    target = await ax_mod.gate(update, context, False, None)
     if target is None:
         return
     ok = await is_approved(context.bot_data["pool"], chat.id, target.id)

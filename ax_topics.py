@@ -17,7 +17,7 @@ async def _guard(update, context, need_topic):
     if chat.type != "supergroup" or not getattr(chat, "is_forum", False):
         await _say(update, "<b>Topics only</b>\n<blockquote>This works in groups that have Topics turned on ✨</blockquote>")
         return False, None
-    if not await is_admin(context.bot, chat.id, user.id):
+    if not await is_admin(context.bot, chat.id, user.id, "can_change_info"):
         await _say(update, "🔒 <b>Admins only</b>\n<blockquote>Only admins can manage topics ✨</blockquote>")
         return False, None
     tid = msg.message_thread_id if msg.is_topic_message else None

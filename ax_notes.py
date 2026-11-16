@@ -19,7 +19,7 @@ async def say(update, text):
 
 async def admin_only(update, context):
     chat = update.effective_chat
-    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id):
+    if chat.type == "private" or not await is_admin(context.bot, chat.id, update.effective_user.id, "can_change_info"):
         await say(update, "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>")
         return False
     return True

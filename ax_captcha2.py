@@ -13,7 +13,7 @@ H = ParseMode.HTML
 async def _ok(update, context):
     chat, user = update.effective_chat, update.effective_user
     if chat.type == "private" or not await is_admin(
-            context.bot, chat.id, user.id):
+            context.bot, chat.id, user.id, "can_change_info"):
         await update.effective_message.reply_text(
             "🛡 <b>Admins only</b>\n<blockquote>Use this in your group "
             "as an admin ✨</blockquote>", parse_mode=H)

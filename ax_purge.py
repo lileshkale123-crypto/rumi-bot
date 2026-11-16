@@ -18,7 +18,7 @@ async def _check(update, context):
     if chat.type == "private":
         await ax_mod.say(update, "⚠️ <b>Groups only</b>\n<blockquote>Use this inside your group 💫</blockquote>")
         return False
-    if not await is_admin(context.bot, chat.id, user.id):
+    if not await is_admin(context.bot, chat.id, user.id, "can_delete_messages"):
         await ax_mod.say(update, "🛡️ <b>Admins only</b>\n<blockquote>You need admin rights for this ✨</blockquote>")
         return False
     if not await bot_is_admin(context.bot, chat.id):
