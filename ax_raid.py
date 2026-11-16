@@ -6,23 +6,37 @@ from datetime import datetime, timedelta, timezone
 from telegram.ext import ApplicationHandlerStop, CommandHandler, MessageHandler, filters
 
 import ax_mod
-from ax_common import is_admin
+from ax_common import fire, is_admin
 from ax_warn2 import fmt_time, parse_time
 
 log = logging.getLogger(__name__)
 _joins = {}  # chat_id -> list of join timestamps
 
 
-async def get(pool, chat_id):
+_SC = {}
+
+
+async def _reload(pool, chat_id):
     async with pool.acquire() as c:
         r = await c.fetchrow("SELECT * FROM ax_raid_settings WHERE chat_id=$1", chat_id)
-    if r:
-        return dict(r)
-    return {"raid_until": None, "raid_secs": 21600, "action_secs": 3600, "auto_limit": 0}
+    v = dict(r) if r else {"raid_until": None, "raid_secs": 21600, "action_secs": 3600, "auto_limit": 0}
+    _SC[chat_id] = (time.time(), v)
+    return dict(v)
+
+
+async def get(pool, chat_id):
+    hit = _SC.get(chat_id)
+    if hit:
+        if time.time() - hit[0] >= 20:
+            _SC[chat_id] = (time.time(), hit[1])  # one refresh at a time
+            fire(_reload(pool, chat_id))
+        return dict(hit[1])
+    return await _reload(pool, chat_id)
 
 
 async def save(pool, chat_id, col, val):
     assert col in ("raid_until", "raid_secs", "action_secs", "auto_limit")
+    _SC.pop(chat_id, None)
     async with pool.acquire() as c:
         await c.execute(
             f"INSERT INTO ax_raid_settings (chat_id, {col}) VALUES ($1,$2) "

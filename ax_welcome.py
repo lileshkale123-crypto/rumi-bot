@@ -8,7 +8,7 @@ from telegram.ext import CommandHandler, MessageHandler, filters
 
 import ax_fill
 import ax_rules
-from ax_common import esc, is_admin
+from ax_common import esc, fire, is_admin
 
 IMG = "assets/rumi-start-v2.png"
 DEFAULTS = {
@@ -22,6 +22,24 @@ async def get(pool, chat_id, kind):
         r = await c.fetchrow(
             f"SELECT {kind}_text t, {kind}_enabled e, {kind}_photo p FROM ax_settings WHERE chat_id=$1", chat_id)
     return (r["t"], r["e"], r["p"]) if r else (None, True, None)
+
+
+async def get_full(pool, chat_id, kind):
+    """Everything the welcome needs in a single query."""
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            f"SELECT {kind}_text t, {kind}_enabled e, {kind}_photo p, "
+            f"clean_welcome cw, last_welcome_id lw FROM ax_settings WHERE chat_id=$1", chat_id)
+    if r:
+        return r["t"], r["e"], r["p"], r["cw"], r["lw"]
+    return None, True, None, None, None
+
+
+async def _quiet_delete(bot, chat_id, msg_id):
+    try:
+        await bot.delete_message(chat_id, msg_id)
+    except Exception:
+        pass
 
 
 async def put(pool, chat_id, kind, col, value):
@@ -87,7 +105,7 @@ async def announce(context, chat, kind, member):
     if member.id == context.bot.id:
         return
     pool = context.bot_data["pool"]
-    text, enabled, photo = await get(pool, chat.id, kind)
+    text, enabled, photo, cw, lw = await get_full(pool, chat.id, kind)
     if not enabled:
         return
     raw = ax_fill.pick(text or DEFAULTS[kind])
@@ -115,16 +133,8 @@ async def announce(context, chat, kind, member):
     }
     if kb:
         kw["reply_markup"] = kb
-    if kind == "welcome":
-        try:
-            async with pool.acquire() as c:
-                r = await c.fetchrow(
-                    "SELECT clean_welcome cw, last_welcome_id lw "
-                    "FROM ax_settings WHERE chat_id=$1", chat.id)
-            if r and r["cw"] and r["lw"]:
-                await context.bot.delete_message(chat.id, r["lw"])
-        except Exception:
-            pass
+    if kind == "welcome" and cw and lw:
+        fire(_quiet_delete(context.bot, chat.id, lw))  # deleted while the new welcome is being sent
 
     async def _send(pm):
         # Telegram caps photo captions at 1024 chars. If longer, send photo then full text+buttons, or if within 1024 send as single photo!

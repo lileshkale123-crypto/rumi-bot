@@ -6,7 +6,8 @@ from telegram import ChatPermissions, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import CallbackQueryHandler, MessageHandler, filters
 
-from ax_common import btn, esc
+import time
+from ax_common import btn, esc, fire
 import ax_approve
 import ax_rules
 
@@ -17,13 +18,28 @@ SOLVED = ChatPermissions(
 MUTED = ChatPermissions(can_send_messages=False)
 
 
-async def settings(pool, chat_id):
+_SC = {}
+
+
+async def _reload(pool, chat_id):
     async with pool.acquire() as c:
         r = await c.fetchrow(
             "SELECT * FROM ax_captcha_settings WHERE chat_id=$1", chat_id)
-    return dict(r) if r else {
+    v = dict(r) if r else {
         "enabled": False, "mode": "button", "mute_secs": 0,
         "kick": True, "kick_secs": 300, "rules": False, "btn_text": None}
+    _SC[chat_id] = (time.time(), v)
+    return dict(v)
+
+
+async def settings(pool, chat_id):
+    hit = _SC.get(chat_id)
+    if hit:
+        if time.time() - hit[0] >= 20:
+            _SC[chat_id] = (time.time(), hit[1])  # one refresh at a time
+            fire(_reload(pool, chat_id))
+        return dict(hit[1])
+    return await _reload(pool, chat_id)
 
 
 def challenge(mode):

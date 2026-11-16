@@ -22,6 +22,8 @@ async def _ok(update, context):
 
 
 async def _set(context, chat_id, col, val):
+    import ax_captcha
+    ax_captcha._SC.pop(chat_id, None)
     async with context.bot_data["pool"].acquire() as c:
         await c.execute(
             f"INSERT INTO ax_captcha_settings (chat_id, {col}) VALUES "
