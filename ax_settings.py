@@ -12,16 +12,24 @@ H = ParseMode.HTML
 _cache, _hits = {}, {}
 
 
-async def cfg(pool, chat_id):
-    c = _cache.get(chat_id)
-    if c and time.time() - c[0] < 30:
-        return c[1]
+async def _cfg_load(pool, chat_id):
     async with pool.acquire() as conn:
         r = await conn.fetchrow(
             "SELECT flood_limit, flood_window, flood_mute FROM ax_settings WHERE chat_id=$1", chat_id)
     v = tuple(r) if r else (0, 5, 300)
     _cache[chat_id] = (time.time(), v)
     return v
+
+
+async def cfg(pool, chat_id):
+    c = _cache.get(chat_id)
+    if c:
+        if time.time() - c[0] >= 30:
+            _cache[chat_id] = (time.time(), c[1])  # only one refresh at a time
+            from ax_common import fire
+            fire(_cfg_load(pool, chat_id))
+        return c[1]
+    return await _cfg_load(pool, chat_id)
 
 
 async def set_limit(pool, chat_id, n):

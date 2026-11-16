@@ -2,7 +2,7 @@
 from telegram.constants import ChatMemberStatus
 from telegram.ext import ChatMemberHandler, MessageHandler, filters
 
-from ax_common import track_user
+from ax_common import fire, track_user
 
 _seen_groups = set()
 _known = {}
@@ -46,6 +46,10 @@ async def _flush_counts(context):
 
 
 async def tracker(update, context):
+    fire(_tracker_work(update, context))
+
+
+async def _tracker_work(update, context):
     chat, user = update.effective_chat, update.effective_user
     pool = context.bot_data["pool"]
     try:

@@ -43,7 +43,8 @@ async def post_init(application: Application) -> None:
 def main() -> None:
     token = os.environ["BOT_TOKEN"]
     from telegram.request import HTTPXRequest
-    application = Application.builder().token(token).request(HTTPXRequest(connection_pool_size=256, http_version="2")).post_init(post_init).concurrent_updates(True).build()
+    import httpx
+    application = Application.builder().token(token).request(HTTPXRequest(connection_pool_size=256, http_version="2", httpx_kwargs={"limits": httpx.Limits(max_connections=256, max_keepalive_connections=256, keepalive_expiry=300.0)})).post_init(post_init).concurrent_updates(True).build()
     application.add_handler(TypeHandler(Update, ignore_old_updates), group=-100)
 
     application.add_handler(CommandHandler("start", handlers.start_command))
@@ -267,6 +268,8 @@ def main() -> None:
 
     import ax_addprompt
     ax_addprompt.register(application)
+    import ax_perf
+    ax_perf.register(application)
 
     print("Rumi is running (long polling). Press Ctrl+C to stop.")
     import autodelete
