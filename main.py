@@ -19,8 +19,10 @@ from aiogram.types import TelegramObject, Update
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
+import bot_context
 import db
 import keepalive
+import migrate_step1
 
 load_dotenv()
 
@@ -261,15 +263,23 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     dispatcher["bot_username"] = me.username or ""
     dispatcher["bot_id"] = me.id
 
+    main_ctx = bot_context.BotContext(
+        bot_id=me.id,
+        username=me.username or "",
+        display_name="Rumi",
+        bot_type="rumi",
+        settings={},
+    )
+    bot_context.set_main_context(main_ctx)
+    dispatcher["bot_ctx"] = main_ctx
+
+    # Safe idempotent Step 1 migration (never crashes startup on error)
+    await migrate_step1.run_step1_migration(pool, me.id)
+
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     if not scheduler.running:
         scheduler.start()
 
-    # Run the original post_init hooks matching each function's real (pool) signature:
-    # - ax_ban._load(pool)
-    # - ax_i18n.load(pool)
-    # - games.refund_unfinished(pool)
-    # (ax_actiontopic and ax_misc3 load via their own scheduler / on_startup hooks.)
     for mod_name, fn_name in (
         ("ax_ban", "_load"),
         ("ax_i18n", "load"),
@@ -285,7 +295,6 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
         except Exception:
             log.exception("Startup hook %s.%s failed", mod_name, fn_name)
 
-    # Run optional module-level on_startup hooks (verified by signature)
     for mod in dispatcher.get("_loaded_modules", []):
         hook = getattr(mod, "on_startup", None)
         if callable(hook):
@@ -336,10 +345,19 @@ async def on_shutdown(bot: Bot, dispatcher: Dispatcher) -> None:
 
 async def run_bot() -> None:
     token = os.environ["BOT_TOKEN"]
+    main_bot_id = bot_context.parse_bot_id_from_token(token)
+    init_ctx = bot_context.BotContext(
+        bot_id=main_bot_id,
+        username="",
+        display_name="Rumi",
+        bot_type="rumi",
+        settings={},
+    )
+    bot_context.set_main_context(init_ctx)
+
     session = AiohttpSession(limit=256)
     session.middleware(RetryAfterRequestMiddleware())
 
-    # No default parse_mode on Bot — keep parse_mode explicit where the original code set it.
     bot = Bot(token=token, session=session)
 
     scheduler = AsyncIOScheduler(timezone=timezone.utc)
@@ -349,9 +367,11 @@ async def run_bot() -> None:
     dp["bot_data"] = {}
     dp["background_tasks"] = set()
     dp["bot_username"] = ""
-    dp["bot_id"] = 0
+    dp["bot_id"] = main_bot_id
+    dp["bot_ctx"] = init_ctx
 
     dp.update.outer_middleware(IgnoreOldUpdatesMiddleware())
+    dp.update.outer_middleware(bot_context.BotContextMiddleware())
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 

@@ -1,5 +1,5 @@
 """
-Message templates and inline keyboards for Rumi (aiogram 3.x).
+Message templates and inline keyboards (aiogram 3.x, dynamic branding via get_brand).
 
 Style: bold + blockquote HTML, cute-premium tone. All dynamic text (names)
 must go through escape_html() before being embedded in a template.
@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+import bot_context
 import config
 from ax_common import btn
 
@@ -41,7 +42,14 @@ def _time_remaining(target: datetime) -> str:
 # /start
 # ---------------------------------------------------------------------------
 
-def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> str:
+def start_card(
+    first_name: str,
+    wallet,
+    command_list: list[tuple[str, str]],
+    bot_id: int | None = None,
+) -> str:
+    brand = bot_context.get_brand(bot_id)
+    bname = escape_html(brand.name)
     name = escape_html(first_name)
     cash = wallet["cash"] if wallet else 0
     gems = wallet["gems"] if wallet else 0
@@ -49,8 +57,8 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
     xp = wallet["xp"] if wallet else 0
 
     return (
-        f"<b>ᴡᴇʟᴄᴏᴍᴇ, {name}</b> 💜\n"
-        f"<i>Rumi</i>\n\n"
+        f"<b>ᴡᴇʟᴄᴏᴍᴇ, {name}</b> {brand.emoji}\n"
+        f"<i>{bname}</i>\n\n"
         f"<blockquote>🌙 <b>ʏᴏᴜʀ sɴᴀᴘsʜᴏᴛ</b>\n"
         f"💰 Cash: <b>{config.CURRENCY_SYMBOL}{format_number(cash)}</b>\n"
         f"💎 Gems: <b>{gems}</b>\n"
@@ -60,14 +68,15 @@ def start_card(first_name: str, wallet, command_list: list[tuple[str, str]]) -> 
         f"<blockquote>/wallet ✦ /claim ✦ /guard ✦ /pay ✦ /rob\n"
         f"/help — open the full guide</blockquote>\n\n"
         f"<blockquote>🛡 <b>Own a channel?</b>\n"
-        f"Add Rumi and protect your channel from reports ✨</blockquote>"
+        f"Add {bname} and protect your channel from reports ✨</blockquote>"
     )
 
 
-def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+def start_keyboard(bot_username: str, bot_id: int | None = None) -> InlineKeyboardMarkup:
+    brand = bot_context.get_brand(bot_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [btn("\u2795 Add Rumi to your group", url=f"https://t.me/{bot_username}?startgroup=true", style="success")],
+            [btn(f"\u2795 Add {brand.name} to your group", url=f"https://t.me/{bot_username}?startgroup=true", style="success")],
             [
                 btn("\U0001F4D6 Features", data="startmenu", style="primary"),
                 btn("\U0001F3AE Games", data="games", style="success"),
@@ -92,14 +101,15 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
 # /wallet (balance)
 # ---------------------------------------------------------------------------
 
-def wallet_card(name: str, wallet, full: bool = False) -> str:
+def wallet_card(name: str, wallet, full: bool = False, bot_id: int | None = None) -> str:
+    brand = bot_context.get_brand(bot_id)
     n = escape_html(name)
     shield_line = ""
     if False:  # shield status is hidden from the wallet card
         shield_line = f"\n🛡️ <i>Shield active — {_time_remaining(wallet['shield_until'])} remaining</i>"
 
     return (
-        f"💳 <b>RUMI WALLET</b>\n"
+        f"💳 <b>{escape_html(brand.upper_name)} WALLET</b>\n"
         f"👤 <b>{n}</b> <code>LVL {wallet['level']}</code>\n\n"
         f"<blockquote>"
         f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{(wallet['cash'] if full else format_number(wallet['cash']))}</code>\n"
@@ -375,10 +385,17 @@ def xp_line(xp_info) -> str:
     return text
 
 
-def wallet_card_premium(name: str, wallet, emoji: str = "", full: bool = False) -> str:
+def wallet_card_premium(
+    name: str,
+    wallet,
+    emoji: str = "",
+    full: bool = False,
+    bot_id: int | None = None,
+) -> str:
+    brand = bot_context.get_brand(bot_id)
     n = escape_html(name)
     return (
-        "💎 <b>RUMI PREMIUM WALLET</b>\n\n"
+        f"💎 <b>{escape_html(brand.upper_name)} PREMIUM WALLET</b>\n\n"
         f"{emoji}<b>{n}</b>  <code>LVL {wallet['level']}</code>\n\n"
         "<blockquote>"
         f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{(wallet['cash'] if full else format_number(wallet['cash']))}</code>\n\n"

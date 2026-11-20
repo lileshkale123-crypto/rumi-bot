@@ -1,9 +1,4 @@
-"""Emoji check before the daily /claim pays (aiogram 3.x). No web page, no domain, no setup.
-
-Non-premium users get a small "tap the <emoji name>" check. Only the person who
-asked can answer, each check works once, and answering instantly (under a
-second) or wrongly too many times is refused. Premium users skip the check.
-"""
+"""Emoji check before the daily /claim pays (aiogram 3.x, bot_id aware)."""
 import logging
 import random
 import secrets
@@ -15,8 +10,10 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+import bot_context
 import services
 import ui
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_claimcheck")
@@ -35,9 +32,9 @@ EMOJI = {
     "\U0001f431": "cat", "\U0001f3b5": "music note", "\U0001f308": "rainbow",
 }
 
-_pending: dict[str, tuple[int, str, float, list[str]]] = {}  # token -> (user_id, correct_emoji, created, shown)
-_passed: dict[int, float] = {}                                # user_id -> monotonic time of success
-_fails: dict[int, list] = {}                                  # user_id -> [count, first_monotonic]
+_pending: dict[str, tuple[int, str, float, list[str]]] = {}
+_passed: dict[tuple[int, int], float] = {}
+_fails: dict[tuple[int, int], list] = {}
 
 
 def _purge(now: float) -> None:
@@ -52,12 +49,12 @@ def _purge(now: float) -> None:
             _fails.pop(k, None)
 
 
-def _locked_for(uid: int, now: float) -> int:
-    f = _fails.get(uid)
+def _locked_for(key: tuple[int, int], now: float) -> int:
+    f = _fails.get(key)
     if not f:
         return 0
     if now - f[1] > FAIL_WINDOW:
-        _fails.pop(uid, None)
+        _fails.pop(key, None)
         return 0
     if f[0] >= MAX_FAILS:
         return int(FAIL_WINDOW - (now - f[1]))
@@ -83,16 +80,23 @@ def _build(uid: int, now: float) -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def gate(user, msg: Message | None, pool: asyncpg.Pool, query: CallbackQuery | None = None) -> bool:
+async def gate(
+    user,
+    msg: Message | None,
+    pool: asyncpg.Pool,
+    query: CallbackQuery | None = None,
+    bot_id: int | None = None,
+) -> bool:
     """True if we showed a check (caller stops). False = go ahead and pay."""
     try:
         if user is None or msg is None:
             return False
+        bid = bot_context.resolve_bot_id(bot_id)
+        key = (bid, user.id)
         now = time.monotonic()
         _purge(now)
 
-        # a fresh successful check lets exactly one claim through
-        ts = _passed.pop(user.id, None)
+        ts = _passed.pop(key, None)
         if ts is not None and now - ts < PASS_TTL:
             return False
 
@@ -107,7 +111,7 @@ async def gate(user, msg: Message | None, pool: asyncpg.Pool, query: CallbackQue
             except Exception:
                 pass
 
-        wait = _locked_for(user.id, now)
+        wait = _locked_for(key, now)
         if wait:
             await msg.reply(
                 f"\u23f3 <b>Too many wrong taps</b>\nTry /claim again in {wait // 60 + 1} min.",
@@ -116,7 +120,11 @@ async def gate(user, msg: Message | None, pool: asyncpg.Pool, query: CallbackQue
             return True
 
         today = datetime.now(services.IST).date()
-        last = await pool.fetchval("SELECT last_claim_date FROM streaks WHERE user_id=$1", user.id)
+        last = await pool.fetchval(
+            "SELECT last_claim_date FROM streaks WHERE bot_id=$1 AND user_id=$2",
+            bid,
+            user.id,
+        )
         if last == today:
             nxt = datetime.combine(
                 today + timedelta(days=1),
@@ -135,7 +143,12 @@ async def gate(user, msg: Message | None, pool: asyncpg.Pool, query: CallbackQue
 
 
 @router.callback_query(F.data.startswith("ccv:"))
-async def answer_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+async def answer_cb(
+    query: CallbackQuery,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit():
         await query.answer()
@@ -153,14 +166,16 @@ async def answer_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
     if query.from_user.id != uid:
         await query.answer("This check is for someone else.", show_alert=True)
         return
-    _pending.pop(token, None)  # single use
+    _pending.pop(token, None)
 
     if now - created < MIN_THINK:
         await query.answer("Too fast. Send /claim and try again.", show_alert=True)
         return
 
+    bid = bot_ctx.bot_id
+    key = (bid, uid)
     if idx >= len(shown) or shown[idx] != correct:
-        f = _fails.setdefault(uid, [0, now])
+        f = _fails.setdefault(key, [0, now])
         if now - f[1] > FAIL_WINDOW:
             f[0], f[1] = 0, now
         f[0] += 1
@@ -174,8 +189,8 @@ async def answer_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
                 pass
         return
 
-    _fails.pop(uid, None)
-    _passed[uid] = now
+    _fails.pop(key, None)
+    _passed[key] = now
     await query.answer()
     if query.message:
         try:
@@ -184,7 +199,7 @@ async def answer_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
             pass
     import handlers
 
-    await handlers._execute_claim(query.from_user, query.message, bot, pool)
+    await handlers._execute_claim(query.from_user, query.message, bot, pool, bot_id=bid)
 
 
 def register(dp) -> None:

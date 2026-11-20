@@ -1,4 +1,4 @@
-"""Vault, /work, /spin and /mafiatop for Rumi (aiogram 3.x)."""
+"""Vault, /work, /spin and /mafiatop (aiogram 3.x, bot_id aware)."""
 
 import asyncio
 import random
@@ -11,9 +11,11 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 import ax_common
+import bot_context
 import config
 import services
 import ui
+from bot_context import BotContext
 
 router = Router(name="economy_features")
 CUR = config.CURRENCY_SYMBOL
@@ -51,18 +53,19 @@ def vault_cap(level: int) -> int:
     return config.VAULT_BASE_CAPACITY + level * config.VAULT_CAPACITY_PER_LEVEL
 
 
-async def _prep(message: Message, pool: asyncpg.Pool):
+async def _prep(message: Message, pool: asyncpg.Pool, bot_id: int | None = None):
     user = message.from_user
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bot_id)
     return user
 
 
 @router.message(Command("vault"))
-async def vault_command(message: Message, pool: asyncpg.Pool) -> None:
+async def vault_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None:
         return
-    u = await _prep(message, pool)
-    w = await services.get_wallet(pool, u.id)
+    bid = bot_ctx.bot_id
+    u = await _prep(message, pool, bot_id=bid)
+    w = await services.get_wallet(pool, u.id, bot_id=bid)
     cap = vault_cap(w["level"])
     text = (
         "🏦 <b>THE UNDERWORLD VAULT</b>\n"
@@ -89,10 +92,15 @@ def _parse_amount(args: list[str]):
     return False, 0
 
 
-async def _move(pool: asyncpg.Pool, uid: int, amount, deposit: bool) -> dict:
+async def _move(pool: asyncpg.Pool, uid: int, amount, deposit: bool, bot_id: int | None = None) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            w = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", uid)
+            w = await conn.fetchrow(
+                "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+                bid,
+                uid,
+            )
             if w is None:
                 return {"status": "error"}
             cap = vault_cap(w["level"])
@@ -117,9 +125,11 @@ async def _move(pool: asyncpg.Pool, uid: int, amount, deposit: bool) -> dict:
                 new_cash, new_vault = cash + amount, vault - amount
                 t, src, delta = "VAULT_WITHDRAW", "withdraw_command", amount
             await conn.execute(
-                "UPDATE wallets SET cash = $1, vault = $2, updated_at = now() WHERE user_id = $3",
+                "UPDATE wallets SET cash = $1, vault = $2, updated_at = now() "
+                "WHERE bot_id = $3 AND user_id = $4",
                 new_cash,
                 new_vault,
+                bid,
                 uid,
             )
             await services.insert_transaction(
@@ -132,6 +142,7 @@ async def _move(pool: asyncpg.Pool, uid: int, amount, deposit: bool) -> dict:
                 balance_after=new_cash,
                 source=src,
                 metadata={"vault_after": new_vault},
+                bot_id=bid,
             )
             return {
                 "status": "ok",
@@ -142,16 +153,16 @@ async def _move(pool: asyncpg.Pool, uid: int, amount, deposit: bool) -> dict:
             }
 
 
-async def _vault_move(message: Message, pool: asyncpg.Pool, deposit: bool) -> None:
+async def _vault_move(message: Message, pool: asyncpg.Pool, deposit: bool, bot_id: int) -> None:
     if message.from_user is None:
         return
-    u = await _prep(message, pool)
+    u = await _prep(message, pool, bot_id=bot_id)
     cmd = "deposit" if deposit else "withdraw"
     ok, amount = _parse_amount(ax_common.cmd_args(message))
     if not ok:
         await message.reply(ui.error_card(f"Use /{cmd} [amount] or /{cmd} all"), parse_mode=ParseMode.HTML)
         return
-    r = await _move(pool, u.id, amount, deposit)
+    r = await _move(pool, u.id, amount, deposit, bot_id=bot_id)
     s = r["status"]
     if s == "ok":
         title = "DEPOSIT SECURED" if deposit else "WITHDRAWAL COMPLETE"
@@ -177,24 +188,28 @@ async def _vault_move(message: Message, pool: asyncpg.Pool, deposit: bool) -> No
 
 
 @router.message(Command("deposit"))
-async def deposit_command(message: Message, pool: asyncpg.Pool) -> None:
-    await _vault_move(message, pool, True)
+async def deposit_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _vault_move(message, pool, True, bot_ctx.bot_id)
 
 
 @router.message(Command("withdraw"))
-async def withdraw_command(message: Message, pool: asyncpg.Pool) -> None:
-    await _vault_move(message, pool, False)
+async def withdraw_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _vault_move(message, pool, False, bot_ctx.bot_id)
 
 
-async def _do_work(pool: asyncpg.Pool, uid: int) -> dict:
-    # Fetch pact multiplier BEFORE acquiring a transaction connection to avoid pool deadlocks.
+async def _do_work(pool: asyncpg.Pool, uid: int, bot_id: int | None = None) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     import chat_events
 
     mult = await chat_events.pact_multiplier(pool, uid)
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            w = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", uid)
+            w = await conn.fetchrow(
+                "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+                bid,
+                uid,
+            )
             if w is None:
                 return {"status": "error"}
             last = w["last_work_at"]
@@ -203,9 +218,11 @@ async def _do_work(pool: asyncpg.Pool, uid: int) -> dict:
             pay = int(random.randint(config.WORK_MIN, config.WORK_MAX) * mult)
             new_cash = w["cash"] + pay
             await conn.execute(
-                "UPDATE wallets SET cash = $1, last_work_at = $2, updated_at = now() WHERE user_id = $3",
+                "UPDATE wallets SET cash = $1, last_work_at = $2, updated_at = now() "
+                "WHERE bot_id = $3 AND user_id = $4",
                 new_cash,
                 now,
+                bid,
                 uid,
             )
             await services.insert_transaction(
@@ -217,6 +234,7 @@ async def _do_work(pool: asyncpg.Pool, uid: int) -> dict:
                 balance_before=w["cash"],
                 balance_after=new_cash,
                 source="work_command",
+                bot_id=bid,
             )
             return {
                 "status": "ok",
@@ -227,11 +245,12 @@ async def _do_work(pool: asyncpg.Pool, uid: int) -> dict:
 
 
 @router.message(Command("work"))
-async def work_command(message: Message, pool: asyncpg.Pool) -> None:
+async def work_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None:
         return
-    u = await _prep(message, pool)
-    r = await _do_work(pool, u.id)
+    bid = bot_ctx.bot_id
+    u = await _prep(message, pool, bot_id=bid)
+    r = await _do_work(pool, u.id, bot_id=bid)
     if r["status"] == "cooldown":
         await message.reply(
             f"⏳ <b>No contracts yet</b>\nNext one in {_left(r['retry_at'])}.",
@@ -261,11 +280,16 @@ def _roll():
     return "JACKPOT: Crown Vault", 5000, 10
 
 
-async def _do_spin(pool: asyncpg.Pool, uid: int) -> dict:
+async def _do_spin(pool: asyncpg.Pool, uid: int, bot_id: int | None = None) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            w = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", uid)
+            w = await conn.fetchrow(
+                "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+                bid,
+                uid,
+            )
             if w is None:
                 return {"status": "error"}
             last = w["last_spin_at"]
@@ -274,10 +298,12 @@ async def _do_spin(pool: asyncpg.Pool, uid: int) -> dict:
             name, cash_p, gem_p = _roll()
             nc, ng = w["cash"] + cash_p, w["gems"] + gem_p
             await conn.execute(
-                "UPDATE wallets SET cash = $1, gems = $2, last_spin_at = $3, updated_at = now() WHERE user_id = $4",
+                "UPDATE wallets SET cash = $1, gems = $2, last_spin_at = $3, updated_at = now() "
+                "WHERE bot_id = $4 AND user_id = $5",
                 nc,
                 ng,
                 now,
+                bid,
                 uid,
             )
             if cash_p:
@@ -291,6 +317,7 @@ async def _do_spin(pool: asyncpg.Pool, uid: int) -> dict:
                     balance_after=nc,
                     source="spin_command",
                     metadata={"prize": name},
+                    bot_id=bid,
                 )
             if gem_p:
                 await services.insert_transaction(
@@ -303,6 +330,7 @@ async def _do_spin(pool: asyncpg.Pool, uid: int) -> dict:
                     balance_after=ng,
                     source="spin_command",
                     metadata={"prize": name},
+                    bot_id=bid,
                 )
             return {
                 "status": "ok",
@@ -315,11 +343,12 @@ async def _do_spin(pool: asyncpg.Pool, uid: int) -> dict:
 
 
 @router.message(Command("spin"))
-async def spin_command(message: Message, pool: asyncpg.Pool) -> None:
+async def spin_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None:
         return
-    u = await _prep(message, pool)
-    r = await _do_spin(pool, u.id)
+    bid = bot_ctx.bot_id
+    u = await _prep(message, pool, bot_id=bid)
+    r = await _do_spin(pool, u.id, bot_id=bid)
     if r["status"] == "cooldown":
         await message.reply(
             f"🎰 <b>The wheel is resting</b>\nSpin again in {_left(r['retry_at'])}.",
@@ -353,15 +382,17 @@ async def spin_command(message: Message, pool: asyncpg.Pool) -> None:
         pass
 
 
-async def record_mafia_result(pool: asyncpg.Pool, players, winners) -> None:
+async def record_mafia_result(pool: asyncpg.Pool, players, winners, bot_id: int | None = None) -> None:
     """players/winners: lists of objects with .user_id and .name"""
+    bid = bot_context.resolve_bot_id(bot_id)
     win_ids = {p.user_id for p in winners}
     async with pool.acquire() as conn:
         async with conn.transaction():
             for p in sorted(players, key=lambda x: x.user_id):
                 await conn.execute(
-                    "INSERT INTO users (id, first_name, created_at, updated_at) "
-                    "VALUES ($1, $2, now(), now()) ON CONFLICT (id) DO NOTHING",
+                    "INSERT INTO users (bot_id, id, first_name, created_at, updated_at) "
+                    "VALUES ($1, $2, $3, now(), now()) ON CONFLICT (id) DO NOTHING",
+                    bid,
                     p.user_id,
                     p.name,
                 )
@@ -378,12 +409,14 @@ async def record_mafia_result(pool: asyncpg.Pool, players, winners) -> None:
 
 
 @router.message(Command("mafiatop"))
-async def mafiatop_command(message: Message, pool: asyncpg.Pool) -> None:
+async def mafiatop_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    bid = bot_ctx.bot_id
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT COALESCE(u.first_name, u.username, 'Player') AS name, s.wins "
-            "FROM mafia_stats s JOIN users u ON u.id = s.user_id "
-            "WHERE s.wins > 0 ORDER BY s.wins DESC, s.games ASC LIMIT 10"
+            "FROM mafia_stats s JOIN users u ON u.id = s.user_id AND u.bot_id = $1 "
+            "WHERE s.wins > 0 ORDER BY s.wins DESC, s.games ASC LIMIT 10",
+            bid,
         )
     if not rows:
         await message.reply(

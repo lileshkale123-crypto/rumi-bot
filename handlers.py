@@ -1,8 +1,5 @@
 """
-Telegram command and callback handlers for Rumi (aiogram 3.x).
-
-Every handler follows the same shape: ensure the caller has a wallet,
-call the relevant service function, render the result with ui.py.
+Telegram command and callback handlers (aiogram 3.x, bot_id & brand aware).
 """
 
 import html
@@ -16,9 +13,11 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import ax_common
+import bot_context
 import config
 import services
 import ui
+from bot_context import BotContext, get_brand
 
 log = logging.getLogger(__name__)
 router = Router(name="core_handlers")
@@ -43,7 +42,7 @@ COMMAND_LIST = [
     ("/td", "Play Truth or Dare"),
     ("/truth", "Get a truth question"),
     ("/dare", "Get a dare"),
-    ("/premium", "Get Rumi Premium"),
+    ("/premium", "Get Premium"),
     ("/setemoji", "Pick your name emoji"),
     ("/referral", "Invite friends, earn coins"),
     ("/help", "Open the full guide"),
@@ -72,34 +71,42 @@ def _get_reply_target(message: Message | None):
 # ---------------------------------------------------------------------------
 
 @router.message(CommandStart())
-async def start_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def start_command(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     user = message.from_user
     if user is None:
         return
 
-    bot_username = await ax_common.get_bot_username(bot)
+    bid = bot_ctx.bot_id
+    brand = get_brand(bid)
+    bot_username = bot_ctx.username or await ax_common.get_bot_username(bot)
 
     if message.chat.type in ("group", "supergroup"):
         fn = html.escape(user.first_name or "friend")
+        bname = html.escape(brand.name)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="💜 Start Rumi in DM", url=f"https://t.me/{bot_username}")]
+                [InlineKeyboardButton(text=f"{brand.emoji} Start {brand.name} in DM", url=f"https://t.me/{bot_username}")]
             ]
         )
         await message.reply(
-            f"<b>Hey {fn}</b> 💜\n"
-            f"<blockquote>I'm Rumi. Tap below to start me in DM for your wallet, games and the full guide ✨</blockquote>",
+            f"<b>Hey {fn}</b> {brand.emoji}\n"
+            f"<blockquote>I'm {bname}. Tap below to start me in DM for your wallet, games and the full guide ✨</blockquote>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb,
         )
         return
 
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
-    wallet = await services.get_wallet(pool, user.id)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
+    wallet = await services.get_wallet(pool, user.id, bot_id=bid)
     name = user.first_name or user.username or "Traveler"
 
-    text = ui.start_card(name, wallet, COMMAND_LIST)
-    keyboard = ui.start_keyboard(bot_username)
+    text = ui.start_card(name, wallet, COMMAND_LIST, bot_id=bid)
+    keyboard = ui.start_keyboard(bot_username, bot_id=bid)
 
     try:
         await message.reply_photo(
@@ -138,14 +145,15 @@ async def features_callback(query: CallbackQuery) -> None:
 # /wallet (balance)
 # ---------------------------------------------------------------------------
 
-async def _build_wallet_view(pool: asyncpg.Pool, user, reply_target=None):
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+async def _build_wallet_view(pool: asyncpg.Pool, user, reply_target=None, bot_id: int | None = None):
+    bid = bot_context.resolve_bot_id(bot_id)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
     other = False
     target_uid = user.id
     if reply_target and reply_target.id != user.id:
         await services.ensure_user_and_wallet(
-            pool, reply_target.id, reply_target.username, reply_target.first_name
+            pool, reply_target.id, reply_target.username, reply_target.first_name, bot_id=bid
         )
         target_uid = reply_target.id
         name = reply_target.first_name or reply_target.username or "Traveler"
@@ -153,37 +161,39 @@ async def _build_wallet_view(pool: asyncpg.Pool, user, reply_target=None):
     else:
         name = user.first_name or user.username or "Traveler"
 
-    wallet = await services.get_wallet(pool, target_uid)
-    text = ui.wallet_card(name, wallet, full=other)
+    wallet = await services.get_wallet(pool, target_uid, bot_id=bid)
+    text = ui.wallet_card(name, wallet, full=other, bot_id=bid)
     keyboard = None if other else ui.wallet_keyboard()
 
     import ax_premium
 
     prem = await ax_premium.get_premium(pool, target_uid)
     if prem is not None:
-        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(prem), full=other)
+        text = ui.wallet_card_premium(name, wallet, ax_premium.emoji_html(prem), full=other, bot_id=bid)
         keyboard = None
 
     return text, keyboard
 
 
 @router.message(Command("wallet"))
-async def wallet_command(message: Message, pool: asyncpg.Pool) -> None:
+async def wallet_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
-    text, keyboard = await _build_wallet_view(pool, user, _get_reply_target(message))
+    text, keyboard = await _build_wallet_view(
+        pool, user, _get_reply_target(message), bot_id=bot_ctx.bot_id
+    )
     await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "wallet:refresh")
-async def wallet_refresh_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None:
-    text, keyboard = await _build_wallet_view(pool, query.from_user, None)
+async def wallet_refresh_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    text, keyboard = await _build_wallet_view(pool, query.from_user, None, bot_id=bot_ctx.bot_id)
     if query.message:
         try:
             await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception:
-            pass  # identical content or message too old to edit — ignore
+            pass
     await query.answer()
 
 
@@ -191,10 +201,17 @@ async def wallet_refresh_callback(query: CallbackQuery, pool: asyncpg.Pool) -> N
 # /claim (daily reward)
 # ---------------------------------------------------------------------------
 
-async def _execute_claim(user, target_message: Message | None, bot: Bot, pool: asyncpg.Pool) -> None:
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+async def _execute_claim(
+    user,
+    target_message: Message | None,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_id: int | None = None,
+) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
-    result = await services.claim_daily(pool, user.id)
+    result = await services.claim_daily(pool, user.id, bot_id=bid)
     if result["status"] == "claimed":
         try:
             import ax_referral
@@ -234,24 +251,41 @@ async def _execute_claim(user, target_message: Message | None, bot: Bot, pool: a
 
 
 @router.message(Command("claim"))
-async def claim_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def claim_command(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     user = message.from_user
     if user is None:
         return
-    await _execute_claim(user, message, bot, pool)
+    await _execute_claim(user, message, bot, pool, bot_id=bot_ctx.bot_id)
 
 
 @router.callback_query(F.data == "claim")
-async def claim_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+async def claim_callback(
+    query: CallbackQuery,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     await query.answer()
-    await _execute_claim(query.from_user, query.message, bot, pool)
+    await _execute_claim(query.from_user, query.message, bot, pool, bot_id=bot_ctx.bot_id)
 
 
 # ---------------------------------------------------------------------------
 # /pay
 # ---------------------------------------------------------------------------
 
-async def _respond_to_pay_result(message: Message, result: dict, amount: int, target_label: str) -> None:
+async def _respond_to_pay_result(
+    message: Message,
+    result: dict,
+    amount: int,
+    target_label: str,
+    bot_id: int | None = None,
+) -> None:
+    brand = get_brand(bot_id)
     status = result["status"]
     if status == "ok":
         text = ui.payment_success_card(
@@ -274,23 +308,23 @@ async def _respond_to_pay_result(message: Message, result: dict, amount: int, ta
     elif status == "daily_limit_exceeded":
         text = ui.error_card("You've hit your daily transfer limit.")
     elif status == "receiver_not_found":
-        text = ui.error_card("That user hasn't used Rumi yet.")
+        text = ui.error_card(f"That user hasn't used {brand.name} yet.")
     else:
         text = ui.error_card("Something went wrong. Please try again.")
     await message.reply(text, parse_mode=ParseMode.HTML)
 
 
 @router.message(Command("pay"))
-async def pay_command(message: Message, pool: asyncpg.Pool) -> None:
+async def pay_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    bid = bot_ctx.bot_id
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
     args = ax_common.cmd_args(message)
     reply_user = _get_reply_target(message)
 
-    # Reply mode: user replies to someone's message with "/pay 100"
     if reply_user:
         if len(args) < 1:
             await message.reply(
@@ -304,14 +338,13 @@ async def pay_command(message: Message, pool: asyncpg.Pool) -> None:
             await message.reply(ui.error_card("Enter a valid amount."), parse_mode=ParseMode.HTML)
             return
         await services.ensure_user_and_wallet(
-            pool, reply_user.id, reply_user.username, reply_user.first_name
+            pool, reply_user.id, reply_user.username, reply_user.first_name, bot_id=bid
         )
         target_label = reply_user.first_name or reply_user.username or "them"
-        result = await services.pay_to_id(pool, user.id, reply_user.id, amount)
-        await _respond_to_pay_result(message, result, amount, target_label)
+        result = await services.pay_to_id(pool, user.id, reply_user.id, amount, bot_id=bid)
+        await _respond_to_pay_result(message, result, amount, target_label, bot_id=bid)
         return
 
-    # Reply-only: paying by @username or user id is not allowed
     await message.reply(
         ui.error_card("Reply to their message with: /pay amount"),
         parse_mode=ParseMode.HTML,
@@ -323,13 +356,14 @@ async def pay_command(message: Message, pool: asyncpg.Pool) -> None:
 # ---------------------------------------------------------------------------
 
 @router.message(Command("guard"))
-async def guard_command(message: Message, pool: asyncpg.Pool) -> None:
+async def guard_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    bid = bot_ctx.bot_id
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
-    result = await services.apply_ward(pool, user.id)
+    result = await services.apply_ward(pool, user.id, bot_id=bid)
     if result["status"] == "ok":
         text = ui.guard_success_card(result["shield_until"])
     elif result["status"] == "insufficient_funds":
@@ -346,11 +380,18 @@ async def guard_command(message: Message, pool: asyncpg.Pool) -> None:
 # ---------------------------------------------------------------------------
 
 @router.message(Command("rob"))
-async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def rob_command(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     user = message.from_user
     if user is None:
         return
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    bid = bot_ctx.bot_id
+    brand = get_brand(bid)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
     reply_user = _get_reply_target(message)
     args = ax_common.cmd_args(message)
@@ -375,7 +416,7 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     victim_id = reply_user.id
     victim_name = reply_user.first_name or reply_user.username or "them"
     await services.ensure_user_and_wallet(
-        pool, victim_id, reply_user.username, reply_user.first_name
+        pool, victim_id, reply_user.username, reply_user.first_name, bot_id=bid
     )
 
     result = await services.rob(
@@ -385,6 +426,7 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         amount,
         chat_id=message.chat.id,
         message_id=message.reply_to_message.message_id,
+        bot_id=bid,
     )
     status = result["status"]
 
@@ -423,7 +465,7 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     elif status == "cooldown":
         await message.reply(ui.rob_cooldown_card(result["retry_at"]), parse_mode=ParseMode.HTML)
     elif status == "victim_not_found":
-        await message.reply(ui.error_card("That user hasn't used Rumi yet."), parse_mode=ParseMode.HTML)
+        await message.reply(ui.error_card(f"That user hasn't used {brand.name} yet."), parse_mode=ParseMode.HTML)
     elif status == "victim_shielded":
         await message.reply(ui.rob_victim_shielded_card(), parse_mode=ParseMode.HTML)
     elif status == "message_already_robbed":
@@ -453,14 +495,21 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 # /rankings (leaderboard)
 # ---------------------------------------------------------------------------
 
-async def _render_leaderboard(pool: asyncpg.Pool, category: str, page: int):
-    rows, total = await services.get_leaderboard(pool, category, page, config.LEADERBOARD_PAGE_SIZE)
-    total_pages = max(1, -(-total // config.LEADERBOARD_PAGE_SIZE))  # ceiling division
+async def _render_leaderboard(
+    pool: asyncpg.Pool,
+    category: str,
+    page: int,
+    bot_id: int | None = None,
+):
+    bid = bot_context.resolve_bot_id(bot_id)
+    rows, total = await services.get_leaderboard(
+        pool, category, page, config.LEADERBOARD_PAGE_SIZE, bot_id=bid
+    )
+    total_pages = max(1, -(-total // config.LEADERBOARD_PAGE_SIZE))
     page = min(max(1, page), total_pages)
     meta = CATEGORY_META[category]
     entries = [{"name": r["name"], "value": r["value"], "uid": r["uid"]} for r in rows]
 
-    # Single batched title query instead of N+1 sequential queries
     if entries:
         try:
             import ax_shop
@@ -486,13 +535,13 @@ async def _render_leaderboard(pool: asyncpg.Pool, category: str, page: int):
 
 
 @router.message(Command("rankings"))
-async def rankings_command(message: Message, pool: asyncpg.Pool) -> None:
-    text, keyboard = await _render_leaderboard(pool, "cash", 1)
+async def rankings_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    text, keyboard = await _render_leaderboard(pool, "cash", 1, bot_id=bot_ctx.bot_id)
     await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("rankings:"))
-async def rankings_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None:
+async def rankings_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3 or parts[1] not in ("cash", "xp", "gems") or not parts[2].isdigit():
         await query.answer()
@@ -500,12 +549,12 @@ async def rankings_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None:
 
     category = parts[1]
     page = max(1, int(parts[2]))
-    text, keyboard = await _render_leaderboard(pool, category, page)
+    text, keyboard = await _render_leaderboard(pool, category, page, bot_id=bot_ctx.bot_id)
     if query.message:
         try:
             await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception:
-            pass  # identical content or message too old to edit — ignore
+            pass
     await query.answer()
 
 
