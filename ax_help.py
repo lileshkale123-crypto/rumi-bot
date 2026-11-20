@@ -1,0 +1,389 @@
+"""Moderation help: /help, /modhelp, and the Moderation sub-menu in /features (aiogram 3.x)."""
+from aiogram import F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+import ax_menu
+from ax_common import btn
+
+router = Router(name="ax_help")
+H = ParseMode.HTML
+PAGES = {
+    "bans": ("🔨", "Bans, Mutes, Kicks",
+             "Admins only. Reply to someone, or use @username / user ID.\n\n"
+             "/ban /unban\n/mute /unmute\n/kick\n"
+             "/tban 2h and /tmute 30m: timed (s, m, h, d, w)\n"
+             "/dban /dmute /dkick: also deletes their message\n"
+             "/sban /smute /skick: silent, your command disappears\n"
+             "/kickme: leave the group yourself\n\n"
+             "Example: /tmute @user 2h spamming\n"
+             "Most actions come with an undo button."),
+    "warns": ("⚠️", "Warnings",
+              "/warn reason: add a warning\n"
+              "/dwarn: warn and delete their message\n"
+              "/swarn: silent warn\n"
+              "/warns: see someone's warnings\n"
+              "/rmwarn: remove the latest one\n"
+              "/resetwarn: clear one person\n/resetallwarns: clear everyone\n\n"
+              "Settings (per group):\n"
+              "/warnlimit 5\n"
+              "/warnmode ban, mute, kick, tban or tmute (example: /warnmode tmute 6h)\n"
+              "/warntime 4w (or off): warnings expire\n"
+              "/warnings: see your settings"),
+    "purge": ("🧹", "Purges",
+              "/purge: reply to the first message, I delete everything down to now\n"
+              "/purge 20: reply to a message, I delete 20 from there\n"
+              "/spurge: same, no confirmation message\n"
+              "/del: reply to one message to remove it\n"
+              "/purgefrom then /purgeto: mark the start, then reply to the end\n\n"
+              "I need the Delete messages permission. Telegram only lets me remove messages from the last 48 hours."),
+    "approve": ("✅", "Approvals",
+                "Approved users skip locks, blocklists and flood checks.\n\n"
+                "/approve: reply or @username\n/unapprove\n/approved: list everyone\n"
+                "/unapproveall\n/approval: check someone's status"),
+    "locks": ("🔒", "Locks",
+              "Locked things get deleted for normal members. Admins and approved users are exempt.\n\n"
+              "/lock sticker photo: lock one or more types\n/unlock sticker\n/locks: see what is locked\n"
+              "/locktypes: every lock type\n/lockwarns on: breaking a lock adds a warning\n\n"
+              "Custom punishment: /lock invitelink ### no ads {ban}\n"
+              "Reset it: /lock invitelink ###\n\n"
+              "Allowlist: /allowlist @channel or a link, /rmallowlist, /rmallowlistall"),
+    "blocklist": ("🚫", "Blocklists",
+                  "Messages with blocklisted words get deleted.\n\n"
+                  "/addblocklist word reason\n/addblocklist \"a sentence\" reason\n"
+                  "/addblocklist (hi, hey) reason: several at once\n/rmblocklist word\n/blocklist\n\n"
+                  "Wildcards: ? one character, * a run of characters, ** anything\n"
+                  "Prefixes: exact:hi and prefix:hi\n\n"
+                  "Settings: /blocklistmode warn (or ban, mute, kick, tban, tmute)\n"
+                  "/blocklistdelete on or off\n/setblocklistreason text\n\n"
+                  "Per word: /addblocklist boo Scary {tmute 6h} or {warn} {nodel}"),
+    "flood": ("🌊", "Antiflood",
+              "Stops people sending too many messages too fast.\n\n"
+              "/flood: see your settings\n/setflood 7: trigger after 7 messages\n"
+              "/setfloodtimer 10 30s: 10 messages within 30 seconds\n/setfloodtimer off\n"
+              "/floodmode ban, mute, kick, tban or tmute (example: /floodmode tmute 3h)\n"
+              "/clearflood on: also delete the flood messages\n\n"
+              "Admins and approved users are never affected."),
+    "raid": ("🚨", "Antiraid",
+             "During a raid, every new member is temp-banned.\n\n"
+             "/antiraid: switch on (or /antiraid 3h for a set time)\n/antiraid off\n"
+             "/raidtime 6h: how long raid mode lasts\n/raidactiontime 1h: how long joiners are banned\n"
+             "/autoantiraid 15: starts by itself if 15 people join in a minute\n/autoantiraid off"),
+    "rules": ("📜", "Rules",
+              "/rules: read the group rules\n/setrules text: set them (admins)\n/resetrules\n"
+              "/privaterules on: /rules is sent to their PM\n"
+              "/setrulesbutton text and /resetrulesbutton: name of the rules button"),
+    "report": ("🚨", "Reports",
+               "Members can call the admins to a bad message.\n\n"
+               "Reply to the message with /report or @admin\n"
+               "/reports on or off (admins)\n\n"
+               "Admins cannot report, and admins cannot be reported."),
+    "pins": ("📌", "Pins",
+             "/pin: reply to a message (add loud to notify everyone)\n"
+             "/permapin text: I send and pin your text\n/unpin: reply to unpin one, or unpins the latest\n"
+             "/unpinall\n/pinned: jump to the pinned message\n"
+             "/antichannelpin on: undo Telegram's auto-pin of channel posts\n"
+             "/cleanlinked on: delete posts from the linked channel"),
+    "welcome": ("👋", "Welcome",
+               "/welcome on or off: greet new members\n"
+               "/setwelcome text: set the message (or send a photo with it)\n"
+               "/resetwelcome: back to default\n"
+               "/goodbye, /setgoodbye, /resetgoodbye: same for leavers\n"
+               "/cleanwelcome on: delete the old welcome\n"
+               "/welcomehelp: all fillings, random replies and buttons"),
+    "captcha": ("🔐", "Captcha",
+               "<b>What it does</b>\n"
+               "New members are muted the moment they join. They must "
+               "prove they are human before they can chat. Bots and "
+               "spammers usually fail, so they never reach your members.\n\n"
+               "<b>Turn it on</b>\n"
+               "/welcome on first, then /captcha on. /captcha alone shows "
+               "your current settings.\n\n"
+               "<b>Modes</b> (/captchamode)\n"
+               "button: tap one button. Easiest for members.\n"
+               "math: answer a sum like 4 + 7 = ?\n"
+               "text: type a short code shown in the message.\n\n"
+               "<b>Time limits</b>\n"
+               "/captchakicktime 5m: how long they have to verify.\n"
+               "/captchakick on: remove people who do not verify "
+               "(they can join again later).\n"
+               "/captchamutetime 1h: keep them muted for a while after "
+               "verifying. 0 means no extra mute.\n"
+               "Times use s, m, h, d, w (example 30m, 2h).\n\n"
+               "<b>Custom button text</b>\n"
+               "/setcaptchatext I am real: changes the button label.\n"
+               "/resetcaptchatext: back to the default.\n\n"
+               "Admins and approved members skip the captcha."),
+    "clean": ("🧹", "Cleaning",
+               "<b>What it does</b>\n"
+               "Keeps your group tidy by deleting messages the bot does "
+               "not need you to see.\n\n"
+               "<b>Clean commands</b>\n"
+               "Deletes the command message itself a few seconds after "
+               "it runs, so /warn or /ban do not fill the chat.\n"
+               "/cleancommand all: clean every type\n"
+               "/cleancommand admin: only commands sent by admins\n"
+               "/cleancommand user: only commands sent by members\n"
+               "/cleancommand other: commands aimed at other bots\n"
+               "/keepcommand user: stop cleaning that type\n"
+               "/cleancommand alone shows what is on.\n\n"
+               "<b>Clean service messages</b>\n"
+               "Service messages are the grey lines Telegram adds, like "
+               "Asha joined or Raj pinned a message.\n"
+               "/cleanservice join: delete joined lines\n"
+               "/cleanservice leave: delete left lines\n"
+               "Other types: photo, pin, title, videochat, other, all.\n"
+               "/keepservice or /nocleanservice: stop cleaning a type\n"
+               "/cleanservicetypes: what each type means\n\n"
+               "Example: /cleanservice join leave"),
+    "disable": ("🚫", "Disabling",
+               "<b>What it does</b>\n"
+               "Stops members from using a command in your group, "
+               "without removing the bot feature for other groups.\n\n"
+               "/disable rob: members can no longer use /rob here\n"
+               "/enable rob: allow it again\n"
+               "/disabled: list what is disabled\n"
+               "/disableable: commands that can never be disabled\n\n"
+               "<b>Options</b>\n"
+               "/disabledel on: also delete the blocked command message\n"
+               "/disableadmin on: block admins too (off by default)\n\n"
+               "Example: /disable spin"),
+    "logs": ("📋", "Log Channel",
+               "<b>What it does</b>\n"
+               "Sends a record of every ban, mute, kick and warn to a "
+               "private channel, so your team can review them.\n\n"
+               "<b>Set up</b>\n"
+               "1. Create a channel and add Rumi as admin.\n"
+               "2. In your group send /setlog -100123456789 (the "
+               "channel id).\n"
+               "3. Rumi posts a test line to confirm.\n\n"
+               "/logchannel: show the link and what is off\n"
+               "/unsetlog: remove the link\n"
+               "/nolog warn: stop logging one category\n"
+               "/log warn: log it again\n"
+               "/logcategories: ban, mute, kick, warn, lock, blocklist, "
+               "flood, settings"),
+    "misc3": ("⚙️", "Admin Settings",
+               "<b>/anonadmin on</b>\n"
+               "Admins who post as the group (anonymous) can use admin "
+               "commands. Off by default for safety.\n\n"
+               "<b>/silentactions on</b>\n"
+               "Hides ban, mute and warn notices from the group. Admins "
+               "still see them in the log channel, so link one with "
+               "/setlog first.\n\n"
+               "<b>/adminerror on or off</b>\n"
+               "Whether members get a reply when they try an admin "
+               "command. (Setting is saved; full effect comes in a later update.)"),
+    "notes": ('📝', 'Notes', '<b>What it does</b>\n<blockquote>Notes are saved messages your group can read any time. Great for rules, links, FAQs and group info. Admins save them, everyone can read them.</blockquote>\n\n<b>Commands</b>\n/save name text: save a note. You can also reply to any message (text, photo, video, sticker, voice, file) with /save name and Rumi keeps it.\n/get name: show a note. Add noformat to see the raw text with all the codes, like /get rules noformat\n#name: typing #rules in the chat works exactly like /get rules\n/notes: list every note in this group\n/clear name: delete one note\n/clearallnotes: delete all notes\n/privatenotes on or off: when on, a note shows an Open note button and members read it in a private chat with Rumi, so the group stays clean\n\n<b>Example</b>\n<blockquote>/save rules Hi {first}, be kind and no spam</blockquote>\nMembers type #rules and see: Hi Aarav, be kind and no spam\n\n<b>Fillings</b> (replaced for each reader)\n{first} first name, {last} last name, {fullname} both, {username} username, {mention} a tap-to-open name, {id} user id, {chatname} group name\n\n<b>Random replies</b>\nPut %%% between answers and Rumi picks one each time.\nExample: /save hello Hey there %%% Hi hi %%% Welcome in\n\n<b>Buttons</b>\nAdd a link button with [Text](buttonurl://https://example.com)\nAdd :same to put it on the same row as the one before: [Text](buttonurl://https://example.com:same)\nColours: add :blue, :green or :red\nA button can also open another note: [Rules](buttonurl://#rules)\n\n<b>Special tags</b> (put them anywhere in the note)\n{private}: this note always opens in private\n{noprivate}: this note always shows in the group\n{admin}: only admins can read this note\n{nonotif}: send without a sound\n{protect}: stop forwarding and saving\n{mediaspoiler}: hide photos and videos behind a spoiler'),
+    "filters": ('🔎', 'Filters', '<b>What it does</b>\n<blockquote>A filter is an automatic reply. When someone writes a trigger word, Rumi answers on its own. Great for greetings, FAQs and common questions.</blockquote>\n\n<b>Commands</b>\n/filter word reply: set an automatic reply. You can also reply to a photo, video, sticker or file with /filter word\n/filters: list every filter in this group\n/stop word: remove one filter\n/clearfilters: remove all filters\n\n<b>Example</b>\n<blockquote>/filter price Our plans start at 99 rupees</blockquote>\nNow when anyone writes the word price anywhere in a message, Rumi sends that reply.\n\n<b>Trigger options</b> (put these in front of the word)\nexact:word : Rumi replies only when the whole message is exactly that word.\nExample: /filter exact:hi Hello there\nprefix:word : Rumi replies when the message starts with that word.\nExample: /filter prefix:good Have a great day\nWith no option, Rumi replies when the word appears anywhere as a whole word.\n\n<b>Fillings</b> (replaced for each person)\n{first} first name, {last} last name, {fullname} both, {username} username, {mention} a tap-to-open name, {id} user id, {chatname} group name\nExample: /filter hello Hey {first}, welcome to {chatname}\n\n<b>Random replies</b>\nPut %%% between answers and Rumi picks one each time.\nExample: /filter gm Good morning %%% Gm gm %%% Rise and shine\n\n<b>Buttons</b>\nAdd a link button with [Text](buttonurl://https://example.com)\nAdd :same to share a row, and :blue, :green or :red for colours.\nA button can also open a saved note: [Rules](buttonurl://#rules)\n\n<b>Other tags</b>\n{nonotif}: send without a sound\n{protect}: stop forwarding and saving\n{mediaspoiler}: hide photos and videos behind a spoiler\n\n<b>What members see</b>\nMembers just write a message. Rumi replies to it with your saved answer. They never need a command.'),
+    "backup": ("📦", "Backup & Reset", """<b>What it does</b>
+<blockquote>Saves all of this group's Rumi settings into one small file, so you can restore them later or copy them to another group. Perfect when you set up a group carefully and never want to redo it 💫</blockquote>
+
+<b>What is saved</b>
+Notes, filters, rules, locks, blocklist, allowlist, welcome and goodbye texts, captcha, antiflood, antiraid, report, pin, cleaning, disabled commands, log channel, warn settings and other group settings.
+
+<b>What is never touched</b>
+Wallets, coins, ranks, warns of members, approved members, AFK and anything personal. Backups only hold group settings.
+
+<b>Commands</b>
+/export: sends you the backup file. Any admin can use it.
+/import: loads a backup file into this group. Only the group creator can use it.
+/reset: clears all Rumi settings of this group. Only the group creator can use it, and it asks to confirm first.
+
+<b>How to export</b>
+Type /export in your group. Rumi sends a file named like rumi_backup_12345.json. Keep it safe, it is your backup.
+
+<b>How to import</b>
+1. Send the backup file into the group you want to fill.
+2. Reply to that file with /import
+3. Rumi loads everything and tells you how many entries were added.
+Important: import replaces the settings of the sections found in the file. Anything in those sections that is not in the file is removed. If something goes wrong, nothing is changed.
+
+<b>How to reset</b>
+Type /reset. Rumi shows two buttons: Yes, reset and Cancel. Only the group creator can press them. After Yes, every setting listed above is wiped and the group starts fresh.
+
+<b>Example</b>
+<blockquote>Group A is perfect. In group A: /export
+Open group B, forward the file there, reply to it with /import
+Group B now has the same notes, filters and rules ✨</blockquote>
+
+<b>What members see</b>
+Members see nothing special. Only admins and the creator use these commands. If a normal member tries, Rumi politely says it is for admins or the creator only.
+
+<b>Good to know</b>
+Active raid timers and the last welcome message are not saved on purpose, so an old raid mode never comes back by mistake.
+"""),
+    "topics": ("🗂", "Topics", """<b>What it does</b>
+<blockquote>Topics split one big group into neat rooms, like Memes, Music or Support. These commands let admins create and manage those rooms without opening group settings 💫</blockquote>
+
+<b>Before you start</b>
+1. Turn on Topics in your group settings (the group must be a supergroup).
+2. Make Rumi an admin with the Manage Topics right.
+
+<b>Commands</b>
+/newtopic name: creates a new topic.
+/renametopic name: renames the topic you are standing in.
+/closetopic: closes the current topic, so only admins can write there.
+/reopentopic: opens a closed topic again for everyone.
+/deletetopic: deletes the current topic and everything inside it.
+
+<b>Examples</b>
+<blockquote>/newtopic Memes and fun
+Rumi creates a topic called Memes and fun.
+
+Inside that topic:
+/renametopic Chill zone
+/closetopic
+/reopentopic</blockquote>
+
+<b>Good to know</b>
+/renametopic, /closetopic, /reopentopic and /deletetopic must be sent inside the topic you want to change. /newtopic can be sent anywhere in the group.
+/deletetopic cannot be undone, so use it carefully.
+
+<b>What members see</b>
+Members only see the result: a new room appears, a name changes, or a room becomes read-only. If a normal member tries these commands, Rumi politely says they are for admins only.
+
+<b>If something fails</b>
+Most of the time it means Rumi is missing the Manage Topics right, or the group does not have Topics turned on. Fix that and try again ✨
+"""),
+    "connect": ("🔗", "Connections", """<b>What it does</b>
+<blockquote>Links your private chat with Rumi to one of your groups. It is the first step to managing a group from your DM, without cluttering the group chat 💫</blockquote>
+
+<b>Commands</b>
+/connect group_id: links you to a group. You must be an admin there, and Rumi must be inside it.
+/connection: shows which group you are linked to right now.
+/disconnect: removes the link.
+/reconnect: shows a button to link your last group again in one tap.
+
+<b>All of these are used in a private chat with Rumi, not inside the group.</b>
+
+<b>How to find the group id</b>
+Add me to the group, then ask an admin to send /id there. Copy the number. It usually starts with -100.
+
+<b>Example</b>
+<blockquote>In my private chat with Rumi:
+/connect -1001234567890
+Rumi answers: you are linked to My Group.
+
+Later:
+/connection shows the linked group
+/disconnect removes the link
+/reconnect brings it back with one tap ✨</blockquote>
+
+<b>Good to know</b>
+You can be linked to one group at a time. Connecting to another group replaces the old link.
+Only admins of that group can connect to it, so nobody can link themselves to a group they do not manage.
+
+<b>What members see</b>
+Nothing. Connections happen privately in your DM, so the group stays clean.
+
+<b>Coming next</b>
+Once linked, more group commands will be usable from your DM. For now the link is saved and ready ✨
+"""),
+    "lang": ("🌐", "Language", """<b>What it does</b>
+<blockquote>Lets every member pick the language Rumi uses with them. Right now English and Hindi are available, and more languages will come later 💫</blockquote>
+
+<b>Command</b>
+/setlang: shows language buttons. Tap the one you like and Rumi saves it.
+
+<b>Example</b>
+<blockquote>/setlang
+Rumi shows: English and Hindi buttons.
+Tap Hindi, and Rumi confirms in Hindi ✨</blockquote>
+
+<b>Good to know</b>
+Your choice is personal. It is saved only for you, so a friend in the same group can use a different language.
+You can change it any time by sending /setlang again.
+At the moment the language applies to the language menu itself. Other Rumi messages will be translated step by step in future updates.
+
+<b>What members see</b>
+Two buttons and a short confirmation message. Nothing else changes in the group.
+"""),
+    "extras": ("🎈", "Extras", """<b>What it does</b>
+<blockquote>Small helpful commands that anyone can use. No setup needed, just type them 💫</blockquote>
+
+<b>Commands</b>
+/runs: Rumi shows a playful message about you running away. Just for fun.
+/limits: shows Telegram's limits for message length, captions, buttons and note names. Handy when a long note fails to send.
+/privacy: explains what Rumi keeps so its features can work, and what it never asks for.
+/markdownhelp: shows the text tags Rumi understands in notes, filters and welcome texts, like bold, italic, spoiler and links.
+/donate: tells you the best way to support Rumi.
+
+<b>Example</b>
+<blockquote>/limits
+Rumi lists: a text message holds up to 4096 characters, a caption up to 1024, and a message can carry up to 100 buttons ✨</blockquote>
+
+<b>Good to know</b>
+These commands work in groups and in private chat.
+/markdownhelp is a quick reminder. The full guide, with fillings and buttons, is in the Notes page of /help.
+
+<b>What members see</b>
+A short, friendly message with a quote box. Nothing is saved or changed.
+"""),
+    "admin": ("👮", "Admin Tools",
+              "/promote and /demote: reply or @username\n"
+              "/adminlist: who runs this group\n"
+              "/admincache: refresh the admin list\n"
+              "/id: your ID and the group ID, or a replied user's ID"),
+}
+
+def mod_home() -> tuple[str, InlineKeyboardMarkup]:
+    text = (
+        "🛡️ <b>Moderation</b>\n<blockquote>Pick a topic to see how each command works.\n"
+        "Blue = topics, green = back, red = close 💫</blockquote>"
+    )
+    b = [btn(f"{i} {t}", f"axhm:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
+    rows = [b[j : j + 3] for j in range(0, len(b), 3)]
+    rows.append([btn("⬅ Back", "axh:home"), btn("✖ Close", "axh:close", style="danger")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def mod_page(key: str) -> tuple[str, InlineKeyboardMarkup]:
+    i, t, body = PAGES[key]
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[btn("⬅ Back", "axhm:home"), btn("✖ Close", "axh:close", style="danger")]]
+    )
+    return f"{i} <b>{t}</b>\n<blockquote>{body}</blockquote>", kb
+
+
+async def _show(q: CallbackQuery, text: str, kb: InlineKeyboardMarkup) -> None:
+    if q.message is None:
+        return
+    try:
+        await q.message.edit_text(text, parse_mode=H, reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "axh:mod")
+async def mod_open_cb(query: CallbackQuery) -> None:
+    await query.answer()
+    text, kb = mod_home()
+    await _show(query, text, kb)
+
+
+@router.callback_query(F.data.startswith("axhm:"))
+async def sub_cb(query: CallbackQuery) -> None:
+    await query.answer()
+    parts = (query.data or "").split(":", 1)
+    key = parts[1] if len(parts) > 1 else "home"
+    text, kb = mod_home() if key == "home" or key not in PAGES else mod_page(key)
+    await _show(query, text, kb)
+
+
+@router.message(Command("help"))
+async def help_cmd(message: Message) -> None:
+    text, kb = ax_menu.home()
+    await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+@router.message(Command("modhelp"))
+async def modhelp_cmd(message: Message) -> None:
+    text, kb = mod_home()
+    await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)

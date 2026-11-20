@@ -1,0 +1,3 @@
+{
+"👋 <b>Welcome guide 1/3: the basics</b>\n<blockquote>/setwelcome your text sets the message.\nSend a photo with /setwelcome as caption to add a picture.\n/welcome on or off turns it on or off.\n/resetwelcome goes back to the default.\n/cleanwelcome on deletes the old welcome when a new one comes.</blockquote>\n<b>Fillings</b> are words in curly brackets that change per person:\n<blockquote>{first} first name\n{last} last name\n{fullname} both names\n{username} @username, or name if none\n{mention} a tap-able name\n{id} their id\n{chatname} group name</blockquote>Example: <code>/setwelcome Hi {first}, welcome to {chatname}!</code>\nShows: <i>Hi Asha, welcome to My Group!</i>": ""
+}

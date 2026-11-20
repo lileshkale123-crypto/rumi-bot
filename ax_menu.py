@@ -1,0 +1,207 @@
+"""/features menu for the new group tools (aiogram 3.x)."""
+from aiogram import F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+from ax_common import btn
+
+router = Router(name="ax_menu")
+H = ParseMode.HTML
+PAGES = {
+    "set": ("⚙️", "Settings", "/settings: open the menu\n/setflood 6: anti-spam\n"
+            "/setwelcome text or photo\n/setgoodbye text or photo\n"
+            "Tags: {first_name} {chat_name}"),
+    "notes": ("📒", "Notes & Filters", "/save name text: save a note\n/get name\n/notes\n"
+              "/clear name\n/clearallnotes\n\n/filter word reply: auto-reply\n"
+              "/filters\n/stop word\n/clearfilters\n\nReply to any media with /save or /filter."),
+    "fun": ("💞", "Fun & Social", "/ship: random pair, +10 XP each\n/match: reply to someone\n"
+            "/couple: couple of the day, $500 each\n/q: reply to make a quote sticker\n/qcolors: pick quote colours\n"
+            "/td: Truth or Dare lobby\n/truth: random truth\n/dare: random dare\n"
+            "/pact: reply to swear a Blood Pact\n/betray: break it, costs $50,000\n/bounty: reply + amount"),
+    "you": ("🪪", "Profile & Status", "/info: yourself, or a reply or @username\n"
+            "/afk reason: mark yourself away\n/afk off"),
+}
+
+PAGES["chat"] = ("💬", "Chat and Economy",
+    "Say rumi or reply to my message and I'll chat with you.\n"
+    "I also react to messages with emojis.\n\n"
+    "/start: your snapshot and games\n"
+    "/wallet /claim /pay /guard /rob /rankings\n"
+    "/vault /deposit /withdraw /work /spin\n"
+    "/bluff /mafia /stopmafia /mafiatop")
+
+PAGES["shop"] = ("🛍", "Title Shop",
+    "Spend cash or gems on titles. Your equipped title shows on your /profile card and next to your name in /rankings.\n\n"
+    "<b>/shop</b>\n"
+    "Opens the shop with every title and its price. Owned titles show a tick. Tap a button to buy. "
+    "You need to have used /start once so you have a wallet.\n\n"
+    "<b>/titles</b>\n"
+    "Shows the titles you own. Tap one to wear it, tap Remove title to wear none. You can switch any time for free.\n\n"
+    "<b>Cash titles</b>\n"
+    "🌱 Fresh Face $20,000\n"
+    "🎀 Sweetheart $50,000\n"
+    "🎲 Lucky Charm $125,000\n"
+    "🥷 Shadow $250,000\n"
+    "💸 Money Maker $500,000\n"
+    "🔪 Menace $750,000\n"
+    "👑 Royal $1,000,000\n\n"
+    "<b>Gem titles</b>\n"
+    "💎 Gem Lord 150 gems\n"
+    "🌙 Moonlit Legend 400 gems\n"
+    "🦋 Rumi's Chosen 1,000 gems\n\n"
+    "<b>Example</b>\n"
+    "Type /shop, tap Royal, then type /titles and tap Royal to wear it. "
+    "Now /profile shows Royal under your level.\n\n"
+    "<b>What members see</b>\n"
+    "Everyone sees your title beside your name in /rankings. "
+    "On the profile card it is shown as plain gold text, in the rankings it also has its emoji.\n\n"
+    "<b>Good to know</b>\n"
+    "Titles are yours forever, buying never lowers your XP or level, "
+    "and the buttons only work for the person who opened the menu.")
+
+PAGES["channel"] = ("\U0001F6E1", "Channel Protection",
+    "Add Rumi to your channel as admin and it keeps an eye on it for you. "
+    "It never spams your channel.\n\n"
+    "<b>How to start</b>\n"
+    "1. Tap Add to your channel on /start.\n"
+    "2. Pick your channel and keep the suggested admin rights.\n"
+    "3. Rumi posts one short Protected by Rumi message with two buttons.\n\n"
+    "<b>What the channel sees</b>\n"
+    "One post when Rumi joins, then one short post every 2 days. Each deletes itself after 3.5 hours, so your feed stays clean. "
+    "Nothing else is ever posted there.\n\n"
+    "<b>What you get privately</b>\n"
+    "Every few hours Rumi checks your member count. If it drops a lot (10 members or 10 percent, "
+    "whichever is bigger), Rumi sends you one private message with the old and new count. "
+    "Every week you also get a short summary with your member count and the change. You must have pressed /start with Rumi once so it can message you.\n\n"
+    "<b>Example</b>\n"
+    "Your channel goes from 500 to 430 members overnight. You get a private message: "
+    "went from 500 to 430, minus 70.\n\n"
+    "<b>What Rumi cannot do</b>\n"
+    "Telegram gives bots no control over reports, so Rumi does not claim to block them. "
+    "It helps you notice trouble early.\n\n"
+    "<b>Good to know</b>\n"
+    "Removing Rumi from the channel stops all checks. Your data for that channel is deleted.")
+
+PAGES["more"] = ("\u2728", "More Commands",
+    "/clan: build or join a Clan\n"
+    "/topgroups: see the top groups\n"
+    "/tagall: mention everyone (admins)\n"
+    "/admins: call the group admins\n"
+    "/speak: Rumi speaks\n"
+    "/kang: take a sticker for yourself\n/mypacks: see your sticker packs\n"
+    "/id: get a user or chat ID\n"
+    "/ping: check if Rumi is awake\n"
+    "/setlang: choose English or Hindi\n"
+    "/privacy: what Rumi keeps\n"
+    "/donate: support Rumi\n"
+    "/modhelp: full moderation guide")
+
+PAGES["premium"] = ("💎", "Rumi Premium",
+    "A special upgrade for your wallet and your name.\n\n"
+    "What you get:\n"
+    "A bigger, cleaner wallet card with no extra buttons, and your own emoji in front of your name.\n\n"
+    "/premium: see the offer and buy it for 35 Telegram Stars. If you already have it, it tells you.\n\n"
+    "/setemoji: choose the emoji shown before your name in /wallet. Three ways to use it:\n"
+    "1. Reply to a message that has an emoji, then send /setemoji\n"
+    "2. Send /setemoji and an emoji in the same message\n"
+    "3. Forward a message that has the emoji, then send /setemoji\n\n"
+    "Example: /setemoji 😼\n\n"
+    "Good to know: a Telegram Premium emoji only shows as animated for people who have Telegram Premium. Others see a normal emoji.\n\n"
+    "What members see: premium members get the PREMIUM WALLET card with their emoji before their name. Everyone else sees the normal wallet.\n\n"
+    "Owner only:\n"
+    "/givepremium USER_ID: give someone Premium for free\n"
+    "/removepremium USER_ID: take it away\n"
+    "You can also reply to the person instead of typing the ID.\n")
+
+PAGES["invite"] = ("🎁", "Invite and Rewards",
+    "Earn coins by bringing people to Rumi.\n\n"
+    "Referral:\n"
+    "/referral: see your link and how many friends you have brought.\n"
+    "Share your link. When a brand new person opens Rumi with it, you get 5,000 cash right away.\n"
+    "When that friend reaches level 3 or has been playing for 24 hours, you get 2,000 more.\n"
+    "Your friend also gets 500 cash on their first /claim.\n\n"
+    "There is no limit on how many friends you can invite. Only brand new users count, and each person can only be invited once.\n\n"
+    "Add Rumi to a group:\n"
+    "Add Rumi to a group that has 50 or more members and you get 20,000 cash.\n"
+    "This is paid once per group, so removing and re-adding Rumi does not pay again.\n\n"
+    "What members see: Rumi posts a thank you message in the group, and you get a message when a friend joins with your link.\n")
+
+PAGES["broadcast"] = ("📢", "Broadcast (owners)",
+    "Send one message to many chats at once. Only the bot owners can use this.\n\n"
+    "/broadcast: send to every group Rumi is in.\n"
+    "/dmbroadcast: send to every person who uses Rumi.\n\n"
+    "How to use:\n"
+    "1. Write the message you want to send (text, GIF, sticker, premium emoji, anything).\n"
+    "2. Reply to that message with /broadcast or /dmbroadcast.\n"
+    "3. Rumi shows a preview with Confirm and Cancel buttons. Nothing is sent until you press Confirm.\n"
+    "4. After sending, press Delete broadcast to remove it from every chat.\n\n"
+    "Good to know: some people never opened Rumi in DM, so a few DM sends will fail. That is normal.\n")
+
+def home() -> tuple[str, InlineKeyboardMarkup]:
+    text = (
+        "✨ <b>Rumi Group Tools</b>\n<blockquote>Pick a category to see what I can do 💫\n"
+        "Economy and games are in the Chat page 🌙</blockquote>"
+    )
+    b = [btn(f"{i} {t}", f"axh:{k}", style="primary") for k, (i, t, _) in PAGES.items()]
+    b.insert(0, btn("🛡️ Moderation", "axhm:home", style="primary"))
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            *[b[i : i + 2] for i in range(0, len(b), 2)],
+            [btn("✖ Close", "axh:close", style="danger")],
+        ]
+    )
+    return text, kb
+
+
+def page(key: str) -> tuple[str, InlineKeyboardMarkup]:
+    i, t, body = PAGES[key]
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[btn("⬅ Back", "axh:home"), btn("✖ Close", "axh:close", style="danger")]]
+    )
+    return f"{i} <b>{t}</b>\n<blockquote>{body}</blockquote>", kb
+
+
+@router.message(Command("features"))
+async def features_cmd(message: Message) -> None:
+    text, kb = home()
+    await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("axh:"))
+async def menu_cb(query: CallbackQuery) -> None:
+    parts = (query.data or "").split(":", 1)
+    key = parts[1] if len(parts) > 1 else "home"
+    await query.answer()
+    if query.message is None:
+        return
+    if key == "close":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+    text, kb = home() if key == "home" or key not in PAGES else page(key)
+    try:
+        await query.message.edit_text(text, parse_mode=H, reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "startmenu")
+async def start_menu_cb(query: CallbackQuery) -> None:
+    await query.answer()
+    if query.message is None:
+        return
+    text, kb = home()
+    try:
+        await query.message.edit_text(text, parse_mode=H, reply_markup=kb)
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            return
+        await query.message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
