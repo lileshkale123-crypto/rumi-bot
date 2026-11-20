@@ -23,6 +23,7 @@ import bot_context
 import db
 import keepalive
 import migrate_step1
+import migrate_step2a
 
 load_dotenv()
 
@@ -60,11 +61,6 @@ POLLING_UPDATES = [
     "removed_chat_boost",
 ]
 
-# Ordered by priority:
-# 1) Global error/perf/i18n/tracking/gate middlewares & early interceptors
-# 2) Deep-link /start and override routers before generic /start
-# 3) Core economy, games, moderation, social & utility routers
-# 4) Fallback text/media watchers last
 MODULE_ORDER = [
     "ax_errors",
     "ax_perf",
@@ -273,8 +269,9 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     bot_context.set_main_context(main_ctx)
     dispatcher["bot_ctx"] = main_ctx
 
-    # Safe idempotent Step 1 migration (never crashes startup on error)
+    # Safe idempotent startup migrations (never crash startup on error)
     await migrate_step1.run_step1_migration(pool, me.id)
+    await migrate_step2a.run_step2a_migration(pool, me.id)
 
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     if not scheduler.running:

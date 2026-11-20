@@ -1,4 +1,4 @@
-"""Shared helpers for the Astraea-style features in Rumi (aiogram 3.x)."""
+"""Shared helpers for group & utility features (aiogram 3.x, per-bot isolated)."""
 import asyncio
 import html
 import logging
@@ -10,13 +10,17 @@ from aiogram import Bot
 from aiogram.enums import ChatMemberStatus
 from aiogram.types import InlineKeyboardButton, Message
 
+import bot_context
+
 log = logging.getLogger(__name__)
 
 ADMIN_STATES = (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
-ANON_ON: set[int] = set()
+# Supports both (bot_id, chat_id) and legacy chat_id until ax_misc3 is converted
+ANON_ON: set[Any] = set()
 ANON_ID = 1087968824  # GroupAnonymousBot
-_ADMIN_CACHE: dict[tuple[int, int], tuple[Any, float]] = {}  # (chat_id, user_id) -> (ChatMember, timestamp)
+# (bot_id, chat_id, user_id) -> (ChatMember, timestamp)
+_ADMIN_CACHE: dict[tuple[int, int, int], tuple[Any, float]] = {}
 _ADMIN_CACHE_MAX = 5000
 ADMIN_TTL = 120  # safe: chat_member updates invalidate instantly (see ax_addprompt)
 
@@ -114,18 +118,18 @@ def _prune_admin_cache(now: float) -> None:
     for k in expired:
         _ADMIN_CACHE.pop(k, None)
     if len(_ADMIN_CACHE) > _ADMIN_CACHE_MAX:
-        # Evict oldest 20%
         oldest = sorted(_ADMIN_CACHE.items(), key=lambda kv: kv[1][1])[: _ADMIN_CACHE_MAX // 5]
         for k, _ in oldest:
             _ADMIN_CACHE.pop(k, None)
 
 
-def invalidate(chat_id: int, user_id: int | None = None) -> None:
+def invalidate(chat_id: int, user_id: int | None = None, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
     if user_id is None:
-        for k in [k for k in _ADMIN_CACHE if k[0] == chat_id]:
+        for k in [k for k in _ADMIN_CACHE if k[0] == bid and k[1] == chat_id]:
             _ADMIN_CACHE.pop(k, None)
     else:
-        _ADMIN_CACHE.pop((chat_id, user_id), None)
+        _ADMIN_CACHE.pop((bid, chat_id, user_id), None)
     try:
         import ax_lockcore
         ax_lockcore._admin_cache.clear()
@@ -133,16 +137,19 @@ def invalidate(chat_id: int, user_id: int | None = None) -> None:
         pass
 
 
-def remember(chat_id: int, member) -> None:
+def remember(chat_id: int, member, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
     now = _time.time()
     _prune_admin_cache(now)
-    _ADMIN_CACHE[(chat_id, member.user.id)] = (member, now)
+    _ADMIN_CACHE[(bid, chat_id, member.user.id)] = (member, now)
 
 
 async def get_member(bot: Bot, chat_id: int, user_id: int):
-    """ChatMember (cached). Returns None when Telegram can't tell us."""
+    """ChatMember (cached per bot). Returns None when Telegram can't tell us."""
+    bid = bot.id
+    key = (bid, chat_id, user_id)
     now = _time.time()
-    hit = _ADMIN_CACHE.get((chat_id, user_id))
+    hit = _ADMIN_CACHE.get(key)
     if hit and now - hit[1] < ADMIN_TTL:
         return hit[0]
     try:
@@ -150,7 +157,7 @@ async def get_member(bot: Bot, chat_id: int, user_id: int):
     except Exception:
         return None
     _prune_admin_cache(now)
-    _ADMIN_CACHE[(chat_id, user_id)] = (member, now)
+    _ADMIN_CACHE[key] = (member, now)
     return member
 
 
@@ -158,7 +165,7 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int, right: str | None = Non
     """True if the user is an admin. If `right` is given (e.g. 'can_restrict_members'),
     the admin must also hold that permission. The group creator holds every permission."""
     if user_id == ANON_ID:
-        return chat_id in ANON_ON  # anonymous admins can't be checked per right
+        return (bot.id, chat_id) in ANON_ON or chat_id in ANON_ON
     member = await get_member(bot, chat_id, user_id)
     if member is None or member.status not in ADMIN_STATES:
         return False
@@ -179,10 +186,12 @@ def right_label(right: str | None) -> str:
     return RIGHT_NAMES.get(right or "", "the needed permission")
 
 
-async def find_user_by_username(pool, username: str):
+async def find_user_by_username(pool, username: str, bot_id: int | None = None):
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         return await conn.fetchrow(
-            "SELECT id, first_name FROM users WHERE username ILIKE $1",
+            "SELECT id, first_name FROM users WHERE bot_id = $1 AND username ILIKE $2",
+            bid,
             username,
         )
 
@@ -192,6 +201,7 @@ async def resolve_target(
     bot: Bot,
     pool,
     args: list[str] | None = None,
+    bot_id: int | None = None,
 ):
     """Resolve a target user via reply, text_mention, numeric id, or @username.
     Returns a User or SimpleNamespace(id, first_name, username, is_bot), or None."""
@@ -214,8 +224,9 @@ async def resolve_target(
         except Exception:
             return None
 
+    bid = bot_id if bot_id is not None else bot.id
     uname = ident.lstrip("@")
-    row = await find_user_by_username(pool, uname)
+    row = await find_user_by_username(pool, uname, bot_id=bid)
     if row:
         return SimpleNamespace(
             id=row["id"],
@@ -226,29 +237,33 @@ async def resolve_target(
     return None
 
 
-async def track_user(pool, user, chat) -> None:
-    """Remember users and group members; never creates wallets."""
+async def track_user(pool, user, chat, bot_id: int | None = None) -> None:
+    """Remember users and group members per bot; never creates wallets."""
     if user is None or user.is_bot:
         return
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO users (id, username, first_name) VALUES ($1, $2, $3) "
-            "ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username, "
-            "first_name = EXCLUDED.first_name, updated_at = now()",
+            "INSERT INTO users (bot_id, id, username, first_name) VALUES ($1, $2, $3, $4) "
+            "ON CONFLICT (id) DO UPDATE SET bot_id = EXCLUDED.bot_id, "
+            "username = EXCLUDED.username, first_name = EXCLUDED.first_name, updated_at = now()",
+            bid,
             user.id,
             user.username,
             user.first_name,
         )
         await conn.execute(
-            "INSERT INTO ax_user_stats (user_id, message_count) VALUES ($1, 1) "
-            "ON CONFLICT (user_id) DO UPDATE SET last_seen = now(), "
+            "INSERT INTO ax_user_stats (bot_id, user_id, message_count) VALUES ($1, $2, 1) "
+            "ON CONFLICT (user_id) DO UPDATE SET bot_id = EXCLUDED.bot_id, last_seen = now(), "
             "message_count = ax_user_stats.message_count + 1",
+            bid,
             user.id,
         )
         if chat is not None and chat.type != "private":
             await conn.execute(
-                "INSERT INTO ax_chat_members (chat_id, user_id) VALUES ($1, $2) "
+                "INSERT INTO ax_chat_members (bot_id, chat_id, user_id) VALUES ($1, $2, $3) "
                 "ON CONFLICT DO NOTHING",
+                bid,
                 chat.id,
                 user.id,
             )
