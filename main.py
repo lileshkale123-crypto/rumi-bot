@@ -24,6 +24,7 @@ import db
 import keepalive
 import migrate_step1
 import migrate_step2a
+import migrate_step2b
 
 load_dotenv()
 
@@ -272,6 +273,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     # Safe idempotent startup migrations (never crash startup on error)
     await migrate_step1.run_step1_migration(pool, me.id)
     await migrate_step2a.run_step2a_migration(pool, me.id)
+    await migrate_step2b.run_step2b_migration(pool, me.id)
 
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     if not scheduler.running:

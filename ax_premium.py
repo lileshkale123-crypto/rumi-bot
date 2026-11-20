@@ -1,4 +1,4 @@
-"""Rumi Premium: 35 Stars, owner grant, wallet emoji (aiogram 3.x)."""
+"""Premium membership: Stars invoice, owner grant, wallet emoji (aiogram 3.x, bot_id & brand aware)."""
 import logging
 import time
 
@@ -8,8 +8,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, LabeledPrice, Message
 
+import bot_context
 from ax_adminpanel import OWNER_IDS
 from ax_common import btn, cmd_args, esc
+from bot_context import BotContext, get_brand
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_premium")
@@ -18,7 +20,7 @@ H = ParseMode.HTML
 PRICE = 35
 _READY = [False]
 
-_CACHE: dict[int, tuple[float, dict | None]] = {}
+_CACHE: dict[tuple[int, int], tuple[float, dict | None]] = {}
 _CACHE_TTL = 120.0
 _CACHE_MAX = 10_000
 
@@ -26,17 +28,19 @@ _CACHE_MAX = 10_000
 def _prune_cache(now: float) -> None:
     if len(_CACHE) <= _CACHE_MAX:
         return
-    expired = [uid for uid, (ts, _) in _CACHE.items() if now - ts >= _CACHE_TTL]
-    for uid in expired:
-        _CACHE.pop(uid, None)
+    expired = [k for k, (ts, _) in _CACHE.items() if now - ts >= _CACHE_TTL]
+    for k in expired:
+        _CACHE.pop(k, None)
     if len(_CACHE) > _CACHE_MAX:
         oldest = sorted(_CACHE.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
-        for uid, _ in oldest:
-            _CACHE.pop(uid, None)
+        for k, _ in oldest:
+            _CACHE.pop(k, None)
 
 
-def invalidate(uid: int) -> None:
-    _CACHE.pop(uid, None)
+def invalidate(uid: int, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    _CACHE.pop((bid, uid), None)
+    _CACHE.pop((0, uid), None)
 
 
 async def ensure(pool: asyncpg.Pool) -> None:
@@ -46,25 +50,33 @@ async def ensure(pool: asyncpg.Pool) -> None:
         await c.execute(
             "CREATE TABLE IF NOT EXISTS ax_premium ("
             "user_id BIGINT PRIMARY KEY, emoji_id TEXT, emoji_char TEXT, "
-            "since TIMESTAMPTZ NOT NULL DEFAULT now())"
+            "since TIMESTAMPTZ NOT NULL DEFAULT now(), "
+            "bot_id BIGINT NOT NULL DEFAULT 0)"
         )
     _READY[0] = True
 
 
-async def get_premium(pool: asyncpg.Pool, uid: int) -> dict | None:
+async def get_premium(
+    pool: asyncpg.Pool,
+    uid: int,
+    bot_id: int | None = None,
+) -> dict | None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, uid)
     now = time.time()
-    hit = _CACHE.get(uid)
+    hit = _CACHE.get(key)
     if hit and now - hit[0] < _CACHE_TTL:
         return dict(hit[1]) if hit[1] is not None else None
     await ensure(pool)
     async with pool.acquire() as c:
         row = await c.fetchrow(
-            "SELECT emoji_id, emoji_char FROM ax_premium WHERE user_id=$1",
+            "SELECT emoji_id, emoji_char FROM ax_premium WHERE bot_id=$1 AND user_id=$2",
+            bid,
             uid,
         )
     val = dict(row) if row is not None else None
     _prune_cache(now)
-    _CACHE[uid] = (now, val)
+    _CACHE[key] = (now, val)
     return dict(val) if val is not None else None
 
 
@@ -77,14 +89,17 @@ def emoji_html(row) -> str:
     return ch + " "
 
 
-async def _grant(pool: asyncpg.Pool, uid: int) -> None:
+async def _grant(pool: asyncpg.Pool, uid: int, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
     await ensure(pool)
     async with pool.acquire() as c:
         await c.execute(
-            "INSERT INTO ax_premium (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+            "INSERT INTO ax_premium (bot_id, user_id) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET bot_id = EXCLUDED.bot_id",
+            bid,
             uid,
         )
-    invalidate(uid)
+    invalidate(uid, bot_id=bid)
 
 
 def _target(message: Message) -> tuple[int | None, str | None]:
@@ -98,13 +113,15 @@ def _target(message: Message) -> tuple[int | None, str | None]:
 
 
 @router.message(Command("premium"))
-async def premium_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def premium_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None:
         return
-    row = await get_premium(pool, message.from_user.id)
+    bid = bot_ctx.bot_id
+    bname = esc(get_brand(bid).name)
+    row = await get_premium(pool, message.from_user.id, bot_id=bid)
     if row is not None:
         await message.reply(
-            "💎 <b>You are Rumi Premium</b>\n<blockquote>Reply to an emoji "
+            f"💎 <b>You are {bname} Premium</b>\n<blockquote>Reply to an emoji "
             "with /setemoji to wear it before your name.</blockquote>",
             parse_mode=H,
         )
@@ -113,7 +130,7 @@ async def premium_cmd(message: Message, pool: asyncpg.Pool) -> None:
         inline_keyboard=[[btn("⭐ Get Premium - %d Stars" % PRICE, "axp:buy", style="success")]]
     )
     await message.reply(
-        "💎 <b>Rumi Premium</b>\n<blockquote>A bigger, cleaner wallet card "
+        f"💎 <b>{bname} Premium</b>\n<blockquote>A bigger, cleaner wallet card "
         "and your own emoji before your name.</blockquote>",
         parse_mode=H,
         reply_markup=kb,
@@ -121,28 +138,30 @@ async def premium_cmd(message: Message, pool: asyncpg.Pool) -> None:
 
 
 @router.callback_query(F.data == "axp:buy")
-async def buy(query: CallbackQuery, bot: Bot) -> None:
+async def buy(query: CallbackQuery, bot: Bot, bot_ctx: BotContext) -> None:
     await query.answer()
     if query.message is None:
         return
+    bname = get_brand(bot_ctx.bot_id).name
     await bot.send_invoice(
         chat_id=query.message.chat.id,
-        title="Rumi Premium",
+        title=f"{bname} Premium",
         description="Premium wallet and name emoji",
         payload="premium:%d" % query.from_user.id,
         provider_token="",
         currency="XTR",
-        prices=[LabeledPrice(label="Rumi Premium", amount=PRICE)],
+        prices=[LabeledPrice(label=f"{bname} Premium", amount=PRICE)],
     )
 
 
 @router.message(F.successful_payment.invoice_payload.startswith("premium:"))
-async def paid(message: Message, pool: asyncpg.Pool) -> None:
+async def paid(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
+    bid = bot_ctx.bot_id
     try:
-        await _grant(pool, user.id)
+        await _grant(pool, user.id, bot_id=bid)
     except Exception:
         log.exception("PREMIUM save failed")
     await message.reply(
@@ -153,38 +172,40 @@ async def paid(message: Message, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("givepremium"))
-async def givepremium(message: Message, pool: asyncpg.Pool) -> None:
+async def givepremium(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None or message.from_user.id not in OWNER_IDS:
         return
     uid, name = _target(message)
     if uid is None:
         await message.reply("Use: /givepremium USER_ID (or reply)")
         return
-    await _grant(pool, uid)
+    await _grant(pool, uid, bot_id=bot_ctx.bot_id)
     await message.reply("💎 <b>%s</b> is now Premium" % esc(name), parse_mode=H)
 
 
 @router.message(Command("removepremium"))
-async def removepremium(message: Message, pool: asyncpg.Pool) -> None:
+async def removepremium(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if message.from_user is None or message.from_user.id not in OWNER_IDS:
         return
     uid, name = _target(message)
     if uid is None:
         await message.reply("Use: /removepremium USER_ID (or reply)")
         return
+    bid = bot_ctx.bot_id
     await ensure(pool)
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_premium WHERE user_id=$1", uid)
-    invalidate(uid)
+        await c.execute("DELETE FROM ax_premium WHERE bot_id=$1 AND user_id=$2", bid, uid)
+    invalidate(uid, bot_id=bid)
     await message.reply("Removed Premium from %s" % esc(name), parse_mode=H)
 
 
 @router.message(Command("setemoji"))
-async def setemoji(message: Message, pool: asyncpg.Pool) -> None:
+async def setemoji(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
-    if await get_premium(pool, user.id) is None and user.id not in OWNER_IDS:
+    bid = bot_ctx.bot_id
+    if await get_premium(pool, user.id, bot_id=bid) is None and user.id not in OWNER_IDS:
         await message.reply("💎 This is a Premium feature. Try /premium")
         return
 
@@ -216,15 +237,16 @@ async def setemoji(message: Message, pool: asyncpg.Pool) -> None:
         return
 
     if user.id in OWNER_IDS:
-        await _grant(pool, user.id)
+        await _grant(pool, user.id, bot_id=bid)
     async with pool.acquire() as c:
         await c.execute(
-            "UPDATE ax_premium SET emoji_id=$2, emoji_char=$3 WHERE user_id=$1",
+            "UPDATE ax_premium SET emoji_id=$3, emoji_char=$4 WHERE bot_id=$1 AND user_id=$2",
+            bid,
             user.id,
             eid,
             ch,
         )
-    invalidate(user.id)
+    invalidate(user.id, bot_id=bid)
     note = "premium emoji ID found" if eid else "normal emoji only, no premium ID"
     await message.reply("✨ Emoji saved (%s). Check /wallet" % note)
 

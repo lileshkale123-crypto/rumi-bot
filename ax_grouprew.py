@@ -1,4 +1,4 @@
-"""20k cash for adding Rumi to a group with 50+ members (once per group) (aiogram 3.x)."""
+"""20k cash for adding bot to a group with 50+ members (once per group) (aiogram 3.x, bot_id & brand aware)."""
 import html
 import logging
 from typing import Any, Awaitable, Callable
@@ -8,9 +8,11 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.enums import ChatMemberStatus, ParseMode
 from aiogram.types import ChatMemberUpdated, TelegramObject
 
+import bot_context
 import services
 from ax_common import fire
 from ax_referral import _credit
+from bot_context import get_brand
 
 log = logging.getLogger(__name__)
 H = ParseMode.HTML
@@ -27,12 +29,13 @@ async def _ensure(pool: asyncpg.Pool) -> None:
         await c.execute(
             "CREATE TABLE IF NOT EXISTS ax_group_rewards ("
             "chat_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, "
-            "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+            "bot_id BIGINT NOT NULL DEFAULT 0)"
         )
     _READY[0] = True
 
 
-async def on_added(event: ChatMemberUpdated, bot: Bot, pool: asyncpg.Pool) -> None:
+async def on_added(event: ChatMemberUpdated, bot: Bot, pool: asyncpg.Pool, bot_id: int) -> None:
     if event.chat.type not in ("group", "supergroup"):
         return
     old = event.old_chat_member.status
@@ -52,20 +55,22 @@ async def on_added(event: ChatMemberUpdated, bot: Bot, pool: asyncpg.Pool) -> No
     if count < MIN_MEMBERS:
         return
 
+    bname = get_brand(bot_id).name
     try:
         await _ensure(pool)
-        await services.ensure_user_and_wallet(pool, adder.id, adder.username, adder.first_name)
+        await services.ensure_user_and_wallet(pool, adder.id, adder.username, adder.first_name, bot_id=bot_id)
         async with pool.acquire() as c:
             async with c.transaction():
                 ins = await c.fetchval(
-                    "INSERT INTO ax_group_rewards (chat_id, user_id) VALUES ($1,$2) "
+                    "INSERT INTO ax_group_rewards (bot_id, chat_id, user_id) VALUES ($1,$2,$3) "
                     "ON CONFLICT DO NOTHING RETURNING chat_id",
+                    bot_id,
                     event.chat.id,
                     adder.id,
                 )
                 if ins is None:
                     return
-                if not await _credit(c, adder.id, REWARD, "group_add_reward"):
+                if not await _credit(c, adder.id, REWARD, "group_add_reward", bot_id=bot_id):
                     raise RuntimeError("adder has no wallet")
     except Exception:
         log.exception("group add reward failed")
@@ -74,7 +79,7 @@ async def on_added(event: ChatMemberUpdated, bot: Bot, pool: asyncpg.Pool) -> No
     try:
         await bot.send_message(
             event.chat.id,
-            "🎁 <b>Thank you, %s</b>\n<blockquote>You added Rumi to a group with "
+            f"🎁 <b>Thank you, %s</b>\n<blockquote>You added {html.escape(bname)} to a group with "
             "%d members and earned <code>20,000</code> cash 💖</blockquote>"
             % (html.escape(adder.first_name or "Friend"), count),
             parse_mode=H,
@@ -96,7 +101,8 @@ class GroupRewardMiddleware(BaseMiddleware):
             bot: Bot | None = data.get("bot")
             pool: asyncpg.Pool | None = data.get("pool")
             if bot is not None and pool is not None:
-                fire(on_added(event, bot, pool))
+                bid = data.get("bot_id") or bot_context.resolve_bot_id(bot.id)
+                fire(on_added(event, bot, pool, bid))
         return await handler(event, data)
 
 

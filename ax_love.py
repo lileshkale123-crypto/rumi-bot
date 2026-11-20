@@ -1,4 +1,4 @@
-"""/ship, /match and /couple (aiogram 3.x)."""
+"""/ship, /match and /couple (aiogram 3.x, bot_id & brand aware)."""
 import hashlib
 import os
 import random
@@ -10,8 +10,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
+import bot_context
 import services
 from ax_common import esc
+from bot_context import BotContext, get_brand
 
 router = Router(name="ax_love")
 
@@ -107,21 +109,24 @@ async def groups_only(message: Message) -> bool:
 async def members(pool: asyncpg.Pool, chat_id: int, bot_id: int):
     async with pool.acquire() as c:
         return await c.fetch(
-            "SELECT u.id, u.username, u.first_name FROM ax_chat_members m JOIN users u ON u.id = m.user_id "
-            "WHERE m.chat_id=$1 AND u.id<>$2",
+            "SELECT u.id, u.username, u.first_name FROM ax_chat_members m "
+            "JOIN users u ON u.id = m.user_id AND u.bot_id = m.bot_id "
+            "WHERE m.bot_id=$1 AND m.chat_id=$2 AND u.id<>$3",
+            bot_id,
             chat_id,
             bot_id,
         )
 
 
 @router.message(Command("ship"))
-async def ship_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def ship_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if await groups_only(message):
         return
+    bid = bot_ctx.bot_id
     chat_id = message.chat.id
     now = datetime.now(timezone.utc)
 
-    rows = await members(pool, chat_id, bot.id)
+    rows = await members(pool, chat_id, bid)
     if len(rows) < 2:
         await message.reply(
             "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>",
@@ -131,15 +136,15 @@ async def ship_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
     a, b = random.sample(rows, 2)
     for r in (a, b):
-        await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"])
+        await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"], bot_id=bid)
 
     gem = random.random() < 0.01
     async with pool.acquire() as c:
         async with c.transaction():
-            # Serialize per-chat ship cooldown so concurrent /ship commands cannot double-fire
             await c.execute("SELECT pg_advisory_xact_lock($1)", chat_id)
             last = await c.fetchval(
-                "SELECT last_time FROM ax_ship_cooldowns WHERE chat_id=$1",
+                "SELECT last_time FROM ax_ship_cooldowns WHERE bot_id=$1 AND chat_id=$2",
+                bid,
                 chat_id,
             )
             if last and (now - last).total_seconds() < 300:
@@ -148,12 +153,17 @@ async def ship_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             else:
                 cooldown_left = None
                 for r in sorted((a, b), key=lambda row: row["id"]):
-                    await services.award_xp(c, r["id"], 10)
+                    await services.award_xp(c, r["id"], 10, bot_id=bid)
                     if gem:
-                        await c.execute("UPDATE wallets SET gems = gems + 1 WHERE user_id=$1", r["id"])
+                        await c.execute(
+                            "UPDATE wallets SET gems = gems + 1 WHERE bot_id=$1 AND user_id=$2",
+                            bid,
+                            r["id"],
+                        )
                 await c.execute(
-                    "INSERT INTO ax_ship_cooldowns (chat_id, last_time) VALUES ($1,$2) "
-                    "ON CONFLICT (chat_id) DO UPDATE SET last_time=$2",
+                    "INSERT INTO ax_ship_cooldowns (bot_id, chat_id, last_time) VALUES ($1,$2,$3) "
+                    "ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, last_time=$3",
+                    bid,
                     chat_id,
                     now,
                 )
@@ -175,7 +185,7 @@ async def ship_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("match"))
-async def match_cmd(message: Message, bot: Bot) -> None:
+async def match_cmd(message: Message, bot: Bot, bot_ctx: BotContext) -> None:
     if await groups_only(message):
         return
     me = message.from_user
@@ -189,6 +199,7 @@ async def match_cmd(message: Message, bot: Bot) -> None:
         )
         return
     t = rp.from_user
+    bname = esc(get_brand(bot_ctx.bot_id).name)
     if t.id == me.id:
         await send(
             message,
@@ -199,7 +210,7 @@ async def match_cmd(message: Message, bot: Bot) -> None:
         await send(
             message,
             "match",
-            "🤖 <b>Rumi appreciates you</b>\n<blockquote>But we're just good friends 🌸</blockquote>",
+            f"🤖 <b>{bname} appreciates you</b>\n<blockquote>But we're just good friends 🌸</blockquote>",
         )
     else:
         day = datetime.now(IST).date().isoformat()
@@ -211,12 +222,13 @@ async def match_cmd(message: Message, bot: Bot) -> None:
 
 
 @router.message(Command("couple"))
-async def couple_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def couple_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if await groups_only(message):
         return
+    bid = bot_ctx.bot_id
     chat_id = message.chat.id
     day = datetime.now(IST).date()
-    rows = await members(pool, chat_id, bot.id)
+    rows = await members(pool, chat_id, bid)
     if len(rows) < 2:
         await message.reply(
             "💫 <b>Not enough members yet</b>\n<blockquote>Let more people chat first ✨</blockquote>",
@@ -226,22 +238,28 @@ async def couple_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
     a, b = random.sample(rows, 2)
     for r in (a, b):
-        await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"])
+        await services.ensure_user_and_wallet(pool, r["id"], r["username"], r["first_name"], bot_id=bid)
 
     async with pool.acquire() as c:
         async with c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock($1)", chat_id)
             row = await c.fetchrow(
-                "SELECT day, user_a, user_b, compatibility FROM ax_couple_of_day WHERE chat_id=$1",
+                "SELECT day, user_a, user_b, compatibility FROM ax_couple_of_day WHERE bot_id=$1 AND chat_id=$2",
+                bid,
                 chat_id,
             )
             fresh = not row or row["day"] != day
             if fresh:
                 pct = score(a["id"], b["id"], day.isoformat())
                 for r in sorted((a, b), key=lambda row_: row_["id"]):
-                    w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", r["id"])
+                    w = await c.fetchrow(
+                        "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+                        bid,
+                        r["id"],
+                    )
                     await c.execute(
-                        "UPDATE wallets SET cash = cash + 500, updated_at = now() WHERE user_id=$1",
+                        "UPDATE wallets SET cash = cash + 500, updated_at = now() WHERE bot_id=$1 AND user_id=$2",
+                        bid,
                         r["id"],
                     )
                     await services.insert_transaction(
@@ -253,11 +271,13 @@ async def couple_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
                         balance_before=w["cash"],
                         balance_after=w["cash"] + 500,
                         source="couple_command",
-                        idempotency_key=f"couple:{chat_id}:{day.isoformat()}:{r['id']}",
+                        idempotency_key=f"couple:{bid}:{chat_id}:{day.isoformat()}:{r['id']}",
+                        bot_id=bid,
                     )
                 await c.execute(
-                    "INSERT INTO ax_couple_of_day (chat_id, day, user_a, user_b, compatibility) VALUES ($1,$2,$3,$4,$5) "
-                    "ON CONFLICT (chat_id) DO UPDATE SET day=$2, user_a=$3, user_b=$4, compatibility=$5",
+                    "INSERT INTO ax_couple_of_day (bot_id, chat_id, day, user_a, user_b, compatibility) VALUES ($1,$2,$3,$4,$5,$6) "
+                    "ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, day=$3, user_a=$4, user_b=$5, compatibility=$6",
+                    bid,
                     chat_id,
                     day,
                     a["id"],
@@ -268,7 +288,12 @@ async def couple_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             else:
                 ids, pct_final = (row["user_a"], row["user_b"]), row["compatibility"]
             names = [
-                await c.fetchval("SELECT first_name FROM users WHERE id=$1", i) or "Someone"
+                await c.fetchval(
+                    "SELECT first_name FROM users WHERE bot_id=$1 AND id=$2",
+                    bid,
+                    i,
+                )
+                or "Someone"
                 for i in ids
             ]
 

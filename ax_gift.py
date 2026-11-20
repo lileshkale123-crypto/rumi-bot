@@ -1,5 +1,4 @@
-"""Gifts: /giftshop (buy), /mygifts (inventory), /sendgift <name> (reply to someone) (aiogram 3.x).
-GIFs come from the free Giphy API (needs GIPHY_API_KEY in .env). A different GIF each time."""
+"""Gifts: /giftshop (buy), /mygifts (inventory), /sendgift <name> (reply to someone) (aiogram 3.x, bot_id aware)."""
 import logging
 import os
 import random
@@ -13,18 +12,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+import bot_context
 import config
 from ax_common import cmd_args, esc
+from bot_context import BotContext, get_brand
 from services import ensure_user_and_wallet
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_gift")
 H = ParseMode.HTML
 
-# ---------------------------------------------------------------------------
-# GIFT LIST. To add a gift, copy one line and change it.
-# id: (emoji, name, price, [giphy search words], note)
-# ---------------------------------------------------------------------------
 ITEMS = {
     "rose": ("🌹", "Rose", 1500, ["red rose flower", "rose flower animated"],
              "A little flower to say you matter."),
@@ -57,7 +54,6 @@ ITEMS = {
 }
 BOX = "surprisebox"
 
-# Other ways people may type a gift name.
 ALIASES = {
     "gf": "girlfriend", "girl": "girlfriend", "bf": "boyfriend", "boy": "boyfriend",
     "love": "loveletter", "letter": "loveletter", "box": BOX, "surprise": BOX,
@@ -81,11 +77,8 @@ def mention(u) -> str:
     return '<b><a href="tg://user?id=%d">%s</a></b>' % (u.id, esc(u.first_name or "Someone"))
 
 
-# ---------------------------------------------------------------------------
-# GIPHY (shared async HTTP client + bounded cache)
-# ---------------------------------------------------------------------------
-_CACHE: dict[str, tuple[float, list[str]]] = {}  # search words -> (time, [urls])
-_RECENT: dict[str, list[str]] = {}               # item id -> last few urls used
+_CACHE: dict[str, tuple[float, list[str]]] = {}
+_RECENT: dict[str, list[str]] = {}
 TTL = 3600.0
 _CACHE_MAX = 200
 _http_client: httpx.AsyncClient | None = None
@@ -156,21 +149,28 @@ async def get_gif(iid: str) -> str | None:
     return pick
 
 
-# ---------------------------------------------------------------------------
-# MONEY + INVENTORY (all inside one database transaction)
-# ---------------------------------------------------------------------------
-async def _pay(c, uid: int, price: int) -> tuple[str, int]:
+async def _pay(c, uid: int, price: int, bot_id: int) -> tuple[str, int]:
     """Returns ('ok', cash_after) / ('poor', cash) / ('nowallet', 0). Call inside a transaction."""
-    w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", uid)
+    w = await c.fetchrow(
+        "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+        bot_id,
+        uid,
+    )
     if w is None:
         return "nowallet", 0
     before = w["cash"]
     if before < price:
         return "poor", before
-    await c.execute("UPDATE wallets SET cash=cash-$1, updated_at=now() WHERE user_id=$2", price, uid)
     await c.execute(
-        "INSERT INTO transactions (user_id,type,currency,amount,balance_before,balance_after,source) "
-        "VALUES ($1,'debit','cash',$2,$3,$4,'gift')",
+        "UPDATE wallets SET cash=cash-$1, updated_at=now() WHERE bot_id=$2 AND user_id=$3",
+        price,
+        bot_id,
+        uid,
+    )
+    await c.execute(
+        "INSERT INTO transactions (bot_id,user_id,type,currency,amount,balance_before,balance_after,source) "
+        "VALUES ($1,$2,'debit','cash',$3,$4,$5,'gift')",
+        bot_id,
         uid,
         price,
         before,
@@ -179,17 +179,29 @@ async def _pay(c, uid: int, price: int) -> tuple[str, int]:
     return "ok", before - price
 
 
-async def _inv(pool: asyncpg.Pool, uid: int) -> dict[str, int]:
-    rows = await pool.fetch("SELECT item_id, qty FROM ax_gift_inv WHERE user_id=$1 AND qty>0", uid)
+async def _inv(pool: asyncpg.Pool, uid: int, bot_id: int) -> dict[str, int]:
+    rows = await pool.fetch(
+        "SELECT item_id, qty FROM ax_gift_inv WHERE bot_id=$1 AND user_id=$2 AND qty>0",
+        bot_id,
+        uid,
+    )
     return {r["item_id"]: r["qty"] for r in rows}
 
 
-# ---------------------------------------------------------------------------
-# /giftshop
-# ---------------------------------------------------------------------------
-async def _shop_view(pool: asyncpg.Pool, uid: int, name: str) -> tuple[str, InlineKeyboardMarkup]:
-    inv = await _inv(pool, uid)
-    w = await pool.fetchrow("SELECT cash FROM wallets WHERE user_id=$1", uid)
+async def _shop_view(
+    pool: asyncpg.Pool,
+    uid: int,
+    name: str,
+    bot_id: int | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    bid = bot_context.resolve_bot_id(bot_id)
+    brand = get_brand(bid)
+    inv = await _inv(pool, uid, bid)
+    w = await pool.fetchrow(
+        "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2",
+        bid,
+        uid,
+    )
     cash = w["cash"] if w else 0
     lines, btns = [], []
     for iid, (e, n, p, _, _) in ITEMS.items():
@@ -198,7 +210,7 @@ async def _shop_view(pool: asyncpg.Pool, uid: int, name: str) -> tuple[str, Inli
         btns.append(InlineKeyboardButton(text=f"{e} {n}", callback_data=f"axgift:buy:{iid}:{uid}"))
     rows = [btns[i : i + 2] for i in range(0, len(btns), 2)]
     text = (
-        f"🎁 <b>Rumi Gift Shop</b>\n\n<b>{esc(name)}</b>, tap a gift to buy it 💜\n\n"
+        f"🎁 <b>{esc(brand.name)} Gift Shop</b>\n\n<b>{esc(name)}</b>, tap a gift to buy it 💜\n\n"
         f"<blockquote>{chr(10).join(lines)}</blockquote>\n"
         f"You have <code>{money(cash)}</code>\n"
         f"Send one: reply to someone with <code>/sendgift rose</code>\n"
@@ -208,17 +220,18 @@ async def _shop_view(pool: asyncpg.Pool, uid: int, name: str) -> tuple[str, Inli
 
 
 @router.message(Command("giftshop"))
-async def giftshop_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def giftshop_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     u = message.from_user
     if u is None:
         return
-    await ensure_user_and_wallet(pool, u.id, u.username, u.first_name)
-    text, kb = await _shop_view(pool, u.id, u.first_name or "Friend")
+    bid = bot_ctx.bot_id
+    await ensure_user_and_wallet(pool, u.id, u.username, u.first_name, bot_id=bid)
+    text, kb = await _shop_view(pool, u.id, u.first_name or "Friend", bot_id=bid)
     await message.reply(text, parse_mode=H, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("axgift:"))
-async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool) -> None:
+async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 4 or not parts[3].isdigit():
         await query.answer()
@@ -231,20 +244,23 @@ async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool) -> None:
     if act != "buy" or iid not in ITEMS:
         await query.answer()
         return
+    bid = bot_ctx.bot_id
+    brand = get_brand(bid)
     e, n, price, _, _ = ITEMS[iid]
     row = None
     async with pool.acquire() as c:
         async with c.transaction():
-            st, cash = await _pay(c, uid, price)
+            st, cash = await _pay(c, uid, price, bid)
             if st == "ok":
                 row = await c.fetchrow(
-                    "INSERT INTO ax_gift_inv (user_id,item_id,qty) VALUES ($1,$2,1) "
-                    "ON CONFLICT (user_id,item_id) DO UPDATE SET qty=ax_gift_inv.qty+1 RETURNING qty",
+                    "INSERT INTO ax_gift_inv (bot_id,user_id,item_id,qty) VALUES ($1,$2,$3,1) "
+                    "ON CONFLICT (user_id,item_id) DO UPDATE SET bot_id=$1, qty=ax_gift_inv.qty+1 RETURNING qty",
+                    bid,
                     uid,
                     iid,
                 )
     if st == "nowallet":
-        await query.answer("Send /start to Rumi first 💜", show_alert=True)
+        await query.answer(f"Send /start to {brand.name} first 💜", show_alert=True)
         return
     if st == "poor":
         await query.answer(f"Not enough cash 💔 You have {money(cash)}", show_alert=True)
@@ -253,7 +269,7 @@ async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool) -> None:
         f"Bought {e} {n} 💜 You now have {row['qty']}. Send it with /sendgift {iid}",
         show_alert=True,
     )
-    text, kb = await _shop_view(pool, uid, query.from_user.first_name or "Friend")
+    text, kb = await _shop_view(pool, uid, query.from_user.first_name or "Friend", bot_id=bid)
     if query.message:
         try:
             await query.message.edit_text(text, parse_mode=H, reply_markup=kb)
@@ -261,14 +277,12 @@ async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool) -> None:
             pass
 
 
-# ---------------------------------------------------------------------------
-# /mygifts
-# ---------------------------------------------------------------------------
 @router.message(Command("mygifts"))
-async def mygifts_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def mygifts_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     u = message.from_user
     if u is None:
         return
+    bid = bot_ctx.bot_id
     target = u
     if (
         message.reply_to_message
@@ -276,8 +290,12 @@ async def mygifts_cmd(message: Message, pool: asyncpg.Pool) -> None:
         and not message.reply_to_message.from_user.is_bot
     ):
         target = message.reply_to_message.from_user
-    inv = await _inv(pool, target.id)
-    rows = await pool.fetch("SELECT item_id, qty FROM ax_gift_recv WHERE user_id=$1 AND qty>0", target.id)
+    inv = await _inv(pool, target.id, bid)
+    rows = await pool.fetch(
+        "SELECT item_id, qty FROM ax_gift_recv WHERE bot_id=$1 AND user_id=$2 AND qty>0",
+        bid,
+        target.id,
+    )
     got = {r["item_id"]: r["qty"] for r in rows}
     own = "\n".join(f"{ITEMS[i][0]} {ITEMS[i][1]} × <b>{q}</b>" for i, q in inv.items() if i in ITEMS)
     rec = "\n".join(f"{ITEMS[i][0]} {ITEMS[i][1]} × <b>{q}</b>" for i, q in got.items() if i in ITEMS)
@@ -289,11 +307,8 @@ async def mygifts_cmd(message: Message, pool: asyncpg.Pool) -> None:
     await message.reply(text, parse_mode=H)
 
 
-# ---------------------------------------------------------------------------
-# /sendgift
-# ---------------------------------------------------------------------------
 @router.message(Command("sendgift"))
-async def sendgift_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def sendgift_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     a = message.from_user
     if a is None:
         return
@@ -315,7 +330,9 @@ async def sendgift_cmd(message: Message, pool: asyncpg.Pool) -> None:
         await message.reply("I don't know that gift 💔 See /giftshop")
         return
 
-    await ensure_user_and_wallet(pool, a.id, a.username, a.first_name)
+    bid = bot_ctx.bot_id
+    brand = get_brand(bid)
+    await ensure_user_and_wallet(pool, a.id, a.username, a.first_name, bot_id=bid)
     e, n, price, _, note = ITEMS[iid]
 
     shown = iid
@@ -326,25 +343,28 @@ async def sendgift_cmd(message: Message, pool: asyncpg.Pool) -> None:
     async with pool.acquire() as c:
         async with c.transaction():
             row = await c.fetchrow(
-                "UPDATE ax_gift_inv SET qty=qty-1 WHERE user_id=$1 AND item_id=$2 AND qty>0 RETURNING qty",
+                "UPDATE ax_gift_inv SET qty=qty-1 "
+                "WHERE bot_id=$1 AND user_id=$2 AND item_id=$3 AND qty>0 RETURNING qty",
+                bid,
                 a.id,
                 iid,
             )
             if row:
                 st, cash, left = "inv", 0, row["qty"]
             else:
-                st, cash = await _pay(c, a.id, price)
+                st, cash = await _pay(c, a.id, price, bid)
                 left = 0
             if st in ("inv", "ok"):
                 await c.execute(
-                    "INSERT INTO ax_gift_recv (user_id,item_id,qty) VALUES ($1,$2,1) "
-                    "ON CONFLICT (user_id,item_id) DO UPDATE SET qty=ax_gift_recv.qty+1",
+                    "INSERT INTO ax_gift_recv (bot_id,user_id,item_id,qty) VALUES ($1,$2,$3,1) "
+                    "ON CONFLICT (user_id,item_id) DO UPDATE SET bot_id=$1, qty=ax_gift_recv.qty+1",
+                    bid,
                     b.id,
                     shown,
                 )
 
     if st == "nowallet":
-        await message.reply("Send /start to Rumi first 💜")
+        await message.reply(f"Send /start to {brand.name} first 💜")
         return
     if st == "poor":
         await message.reply(

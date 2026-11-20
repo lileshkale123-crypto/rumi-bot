@@ -1,4 +1,4 @@
-"""Referral system: /start ref_<id> tracks it, instant 5k + 2k bonus + 500 on first /claim (aiogram 3.x + APScheduler)."""
+"""Referral system: /start ref_<id> tracks it, instant 5k + 2k bonus + 500 on first /claim (aiogram 3.x + APScheduler, bot_id & brand aware)."""
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -9,7 +9,9 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import bot_context
 from ax_common import get_bot_username
+from bot_context import BotContext, get_brand
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_referral")
@@ -31,22 +33,27 @@ async def _bonus_ensure(pool: asyncpg.Pool) -> None:
             "CREATE TABLE IF NOT EXISTS ax_ref_bonus ("
             "new_user_id BIGINT PRIMARY KEY, referrer_id BIGINT NOT NULL, "
             "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
-            "bonus_paid BOOLEAN NOT NULL DEFAULT FALSE)"
+            "bonus_paid BOOLEAN NOT NULL DEFAULT FALSE, "
+            "bot_id BIGINT NOT NULL DEFAULT 0)"
         )
     _BONUS_READY[0] = True
 
 
-async def _credit(c, uid: int, amount: int, source: str) -> bool:
+async def _credit(c, uid: int, amount: int, source: str, bot_id: int | None = None) -> bool:
+    bid = bot_context.resolve_bot_id(bot_id)
     new_cash = await c.fetchval(
-        "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE user_id=$2 RETURNING cash",
+        "UPDATE wallets SET cash = cash + $1, updated_at = now() "
+        "WHERE bot_id=$2 AND user_id=$3 RETURNING cash",
         amount,
+        bid,
         uid,
     )
     if new_cash is None:
         return False
     await c.execute(
-        "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-        "balance_after, source) VALUES ($1,'credit','cash',$2,$3,$4,$5)",
+        "INSERT INTO transactions (bot_id, user_id, type, currency, amount, balance_before, "
+        "balance_after, source) VALUES ($1,$2,'credit','cash',$3,$4,$5,$6)",
+        bid,
         uid,
         amount,
         new_cash - amount,
@@ -56,12 +63,21 @@ async def _credit(c, uid: int, amount: int, source: str) -> bool:
     return True
 
 
-async def _instant_pay(bot: Bot, pool: asyncpg.Pool, new_id: int, referrer_id: int) -> None:
+async def _instant_pay(
+    bot: Bot,
+    pool: asyncpg.Pool,
+    new_id: int,
+    referrer_id: int,
+    bot_id: int | None = None,
+) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    bname = get_brand(bid).name
     try:
         await _bonus_ensure(pool)
         async with pool.acquire() as c:
             row = await c.fetchrow(
-                "SELECT referrer_id FROM ax_referrals WHERE new_user_id=$1",
+                "SELECT referrer_id FROM ax_referrals WHERE bot_id=$1 AND new_user_id=$2",
+                bid,
                 new_id,
             )
             if row is None:
@@ -69,18 +85,20 @@ async def _instant_pay(bot: Bot, pool: asyncpg.Pool, new_id: int, referrer_id: i
             ref = row["referrer_id"]
             async with c.transaction():
                 ins = await c.fetchval(
-                    "INSERT INTO ax_ref_bonus (new_user_id, referrer_id) VALUES ($1,$2) "
+                    "INSERT INTO ax_ref_bonus (bot_id, new_user_id, referrer_id) VALUES ($1,$2,$3) "
                     "ON CONFLICT DO NOTHING RETURNING new_user_id",
+                    bid,
                     new_id,
                     ref,
                 )
                 if ins is None:
                     return
-                if not await _credit(c, ref, INSTANT, "referral_instant"):
+                if not await _credit(c, ref, INSTANT, "referral_instant", bot_id=bid):
                     raise RuntimeError("referrer has no wallet")
             n = await c.fetchval(
-                "SELECT count(*) FROM ax_ref_bonus WHERE referrer_id=$1 "
+                "SELECT count(*) FROM ax_ref_bonus WHERE bot_id=$1 AND referrer_id=$2 "
                 "AND created_at > now() - interval '10 minutes'",
+                bid,
                 ref,
             )
     except Exception:
@@ -90,7 +108,7 @@ async def _instant_pay(bot: Bot, pool: asyncpg.Pool, new_id: int, referrer_id: i
     try:
         await bot.send_message(
             ref,
-            "🎉 <b>New referral</b>\n<blockquote>Someone joined Rumi with your link. "
+            f"🎉 <b>New referral</b>\n<blockquote>Someone joined {bname} with your link. "
             "You earned <code>5,000</code> cash. Get <code>2,000</code> more when they "
             "reach level 3 or play for 24 hours.</blockquote>",
             parse_mode=H,
@@ -113,10 +131,16 @@ async def _instant_pay(bot: Bot, pool: asyncpg.Pool, new_id: int, referrer_id: i
 
 
 @router.message(F.chat.type == "private", F.text.regexp(r"^/start(?:@\w+)?\s+ref_\d+"))
-async def _capture_start(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def _capture_start(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     user = message.from_user
     if user is None or not message.text:
         return
+    bid = bot_ctx.bot_id
     parts = message.text.split(maxsplit=1)
     if len(parts) >= 2 and parts[1].startswith("ref_"):
         ref_part = parts[1][4:].split()[0]
@@ -124,50 +148,65 @@ async def _capture_start(message: Message, bot: Bot, pool: asyncpg.Pool) -> None
             referrer_id = int(ref_part)
             if referrer_id != user.id:
                 async with pool.acquire() as c:
-                    existing = await c.fetchval("SELECT 1 FROM users WHERE id=$1", user.id)
+                    existing = await c.fetchval(
+                        "SELECT 1 FROM users WHERE bot_id=$1 AND id=$2",
+                        bid,
+                        user.id,
+                    )
                     if not existing:
                         await c.execute(
-                            "INSERT INTO ax_referrals (new_user_id, referrer_id) VALUES ($1,$2) "
+                            "INSERT INTO ax_referrals (bot_id, new_user_id, referrer_id) VALUES ($1,$2,$3) "
                             "ON CONFLICT DO NOTHING",
+                            bid,
                             user.id,
                             referrer_id,
                         )
-                        await _instant_pay(bot, pool, user.id, referrer_id)
+                        await _instant_pay(bot, pool, user.id, referrer_id, bot_id=bid)
 
-    # Delegate to the normal /start welcome card so the new user gets their wallet & start message
     import handlers
 
-    await handlers.start_command(message, bot, pool)
+    await handlers.start_command(message, bot, pool, bot_ctx)
 
 
-async def _pay_on_first_claim(pool: asyncpg.Pool, bot: Bot, user_id: int) -> None:
+async def _pay_on_first_claim(
+    pool: asyncpg.Pool,
+    bot: Bot,
+    user_id: int,
+    bot_id: int | None = None,
+) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    bname = get_brand(bid).name
     referrer_id = None
     async with pool.acquire() as c:
         async with c.transaction():
             row = await c.fetchrow(
                 "UPDATE ax_referrals SET rewarded=TRUE "
-                "WHERE new_user_id=$1 AND rewarded=FALSE "
+                "WHERE bot_id=$1 AND new_user_id=$2 AND rewarded=FALSE "
                 "RETURNING referrer_id",
+                bid,
                 user_id,
             )
             if row is None:
                 return
             referrer_id = row["referrer_id"]
             w = await c.fetchrow(
-                "SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE",
+                "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+                bid,
                 user_id,
             )
             if w is not None:
                 new_cash = w["cash"] + REWARD
                 await c.execute(
-                    "UPDATE wallets SET cash=$1, updated_at=now() WHERE user_id=$2",
+                    "UPDATE wallets SET cash=$1, updated_at=now() WHERE bot_id=$2 AND user_id=$3",
                     new_cash,
+                    bid,
                     user_id,
                 )
                 await c.execute(
-                    "INSERT INTO transactions (user_id, type, currency, "
+                    "INSERT INTO transactions (bot_id, user_id, type, currency, "
                     "amount, balance_before, balance_after, source) "
-                    "VALUES ($1,'credit','cash',$2,$3,$4,$5)",
+                    "VALUES ($1,$2,'credit','cash',$3,$4,$5,$6)",
+                    bid,
                     user_id,
                     REWARD,
                     w["cash"],
@@ -178,7 +217,7 @@ async def _pay_on_first_claim(pool: asyncpg.Pool, bot: Bot, user_id: int) -> Non
         try:
             await bot.send_message(
                 referrer_id,
-                "\U0001f389 Your referral just played Rumi!",
+                f"\U0001f389 Your referral just played {bname}!",
                 parse_mode=H,
             )
         except Exception:
@@ -186,13 +225,15 @@ async def _pay_on_first_claim(pool: asyncpg.Pool, bot: Bot, user_id: int) -> Non
 
 
 @router.message(Command("referral"))
-async def referral_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def referral_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         count = await c.fetchval(
-            "SELECT COUNT(*) FROM ax_referrals WHERE referrer_id=$1 AND rewarded=TRUE",
+            "SELECT COUNT(*) FROM ax_referrals WHERE bot_id=$1 AND referrer_id=$2 AND rewarded=TRUE",
+            bid,
             user.id,
         )
     uname = await get_bot_username(bot)
@@ -213,13 +254,14 @@ async def _bonus_job(bot: Bot, pool: asyncpg.Pool) -> None:
         await _bonus_ensure(pool)
         async with pool.acquire() as c:
             rows = await c.fetch(
-                "SELECT b.new_user_id, b.referrer_id FROM ax_ref_bonus b "
-                "JOIN users u ON u.id=b.new_user_id "
-                "LEFT JOIN wallets w ON w.user_id=b.new_user_id "
+                "SELECT b.bot_id, b.new_user_id, b.referrer_id FROM ax_ref_bonus b "
+                "JOIN users u ON u.id=b.new_user_id AND u.bot_id=b.bot_id "
+                "LEFT JOIN wallets w ON w.user_id=b.new_user_id AND w.bot_id=b.bot_id "
                 "WHERE b.bonus_paid=FALSE AND (w.level >= 3 "
                 "OR u.created_at < now() - interval '24 hours') LIMIT 50"
             )
         for r in rows:
+            bid = r["bot_id"] or bot_context.get_main_context().bot_id
             try:
                 async with pool.acquire() as c:
                     async with c.transaction():
@@ -230,7 +272,7 @@ async def _bonus_job(bot: Bot, pool: asyncpg.Pool) -> None:
                         )
                         if ok is None:
                             continue
-                        if not await _credit(c, r["referrer_id"], BONUS, "referral_bonus2"):
+                        if not await _credit(c, r["referrer_id"], BONUS, "referral_bonus2", bot_id=bid):
                             raise RuntimeError("referrer has no wallet")
             except Exception:
                 log.warning("referral bonus payout skipped for referrer %s", r["referrer_id"])

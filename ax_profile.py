@@ -1,4 +1,4 @@
-"""/profile: premium image card (aiogram 3.x)."""
+"""/profile: visual profile card (aiogram 3.x, bot_id & brand aware)."""
 import asyncio
 import functools
 import html
@@ -20,9 +20,11 @@ from aiogram.types import (
 )
 from PIL import Image, ImageDraw, ImageFont
 
+import bot_context
 import config
 import db
 import services
+from bot_context import BotContext, get_brand
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_profile")
@@ -57,6 +59,7 @@ def render(
     clan: str | None,
     photo: bytes | None,
     title: str | None = None,
+    footer_name: str = "RUMI",
 ) -> bytes:
     W, H = 900, 480
     img = Image.new("RGB", (W, H))
@@ -112,7 +115,7 @@ def render(
         d.rounded_rectangle((x, 300, x + 190, 400), 18, fill=(55, 40, 95))
         d.text((x + 16, 315), label, font=font(16), fill=(170, 160, 210))
         d.text((x + 16, 350), str(val)[:11], font=font(26, True), fill=(255, 255, 255))
-    d.text((W // 2, 438), "RUMI", font=font(18, True), fill=(255, 200, 120), anchor="mm")
+    d.text((W // 2, 438), clean_name(footer_name).upper(), font=font(18, True), fill=(255, 200, 120), anchor="mm")
 
     buf = io.BytesIO()
     img.save(buf, "PNG")
@@ -134,19 +137,26 @@ async def _fetch_avatar(bot: Bot, user_id: int) -> bytes | None:
 
 
 @router.message(Command("profile"))
-async def profile_cmd(message: Message, bot: Bot, pool: asyncpg.Pool | None = None) -> None:
+async def profile_cmd(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool | None = None,
+    bot_ctx: BotContext | None = None,
+) -> None:
     me = message.from_user
     if me is None:
         return
+    bid = bot_context.resolve_bot_id(bot_ctx.bot_id if bot_ctx else None)
+    brand = get_brand(bid)
     target = me
     r = message.reply_to_message
     if r and r.from_user and not r.from_user.is_bot:
         target = r.from_user
 
     p = pool or db.get_pool()
-    w = await services.get_wallet(p, target.id)
+    w = await services.get_wallet(p, target.id, bot_id=bid)
     if not w:
-        await message.reply("No wallet yet 💜 they need to send /start to Rumi first.")
+        await message.reply(f"No wallet yet 💜 they need to send /start to {brand.name} first.")
         return
 
     import ax_shop
@@ -158,7 +168,7 @@ async def profile_cmd(message: Message, bot: Bot, pool: asyncpg.Pool | None = No
             target.id,
         ),
         _fetch_avatar(bot, target.id),
-        ax_shop.get_title(p, target.id),
+        ax_shop.get_title(p, target.id, bot_id=bid),
         return_exceptions=True,
     )
     clan_name = clan_row["name"] if (clan_row and not isinstance(clan_row, BaseException)) else None
@@ -179,6 +189,7 @@ async def profile_cmd(message: Message, bot: Bot, pool: asyncpg.Pool | None = No
         clan_name,
         photo_bytes,
         title_str,
+        brand.upper_name,
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔴 Close", callback_data=f"prof_close:{me.id}")]]

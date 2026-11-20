@@ -1,4 +1,4 @@
-"""Fun command: /kill (reply) sends target dead for ~8h. /revive pays to come back early (aiogram 3.x)."""
+"""Fun command: /kill (reply) sends target dead for ~8h. /revive pays to come back early (aiogram 3.x, bot_id aware)."""
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -8,8 +8,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message
 
+import bot_context
 import services
 from ax_common import esc
+from bot_context import BotContext
 
 router = Router(name="ax_kill")
 
@@ -22,21 +24,26 @@ REVIVE_MIN = 300
 REVIVE_MAX = 400
 
 
-async def _dead_until(pool: asyncpg.Pool, user_id: int) -> datetime | None:
+async def _dead_until(pool: asyncpg.Pool, user_id: int, bot_id: int) -> datetime | None:
     async with pool.acquire() as c:
-        row = await c.fetchrow("SELECT dead_until FROM ax_kill_status WHERE user_id=$1", user_id)
+        row = await c.fetchrow(
+            "SELECT dead_until FROM ax_kill_status WHERE bot_id=$1 AND user_id=$2",
+            bot_id,
+            user_id,
+        )
     if row is None or row["dead_until"] <= datetime.now(timezone.utc):
         return None
     return row["dead_until"]
 
 
 @router.message(Command("kill"))
-async def kill_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def kill_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
+    bid = bot_ctx.bot_id
 
-    if await _dead_until(pool, user.id):
+    if await _dead_until(pool, user.id, bid):
         await message.reply(
             "\U0001f480 You're dead right now. Use /revive to come back, or wait it out."
         )
@@ -50,7 +57,7 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool) -> None:
         await message.reply("You can't kill yourself.")
         return
 
-    tw = await services.get_wallet(pool, target.id)
+    tw = await services.get_wallet(pool, target.id, bot_id=bid)
     sh = tw["shield_until"] if tw else None
     if sh and sh > datetime.now(timezone.utc):
         await message.reply(
@@ -64,32 +71,38 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool) -> None:
     dead_until = datetime.now(timezone.utc) + timedelta(hours=hours)
     amount = random.randint(MIN_KILL, MAX_KILL)
 
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
     status = "ok"
     async with pool.acquire() as c:
         async with c.transaction():
-            # Atomic conditional upsert prevents two simultaneous /kill commands from both paying out
             marked = await c.fetchval(
-                "INSERT INTO ax_kill_status (user_id, dead_until) VALUES ($1, $2) "
-                "ON CONFLICT (user_id) DO UPDATE SET dead_until = EXCLUDED.dead_until "
+                "INSERT INTO ax_kill_status (bot_id, user_id, dead_until) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id) DO UPDATE SET bot_id = EXCLUDED.bot_id, dead_until = EXCLUDED.dead_until "
                 "WHERE ax_kill_status.dead_until <= now() RETURNING user_id",
+                bid,
                 target.id,
                 dead_until,
             )
             if marked is None:
                 status = "already_dead"
             else:
-                w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", user.id)
+                w = await c.fetchrow(
+                    "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+                    bid,
+                    user.id,
+                )
                 new_cash = w["cash"] + amount
                 await c.execute(
-                    "UPDATE wallets SET cash=$1, updated_at=now() WHERE user_id=$2",
+                    "UPDATE wallets SET cash=$1, updated_at=now() WHERE bot_id=$2 AND user_id=$3",
                     new_cash,
+                    bid,
                     user.id,
                 )
                 await c.execute(
-                    "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-                    "balance_after, related_user_id, source) VALUES ($1,'credit','cash',$2,$3,$4,$5,$6)",
+                    "INSERT INTO transactions (bot_id, user_id, type, currency, amount, balance_before, "
+                    "balance_after, related_user_id, source) VALUES ($1,$2,'credit','cash',$3,$4,$5,$6,$7)",
+                    bid,
                     user.id,
                     amount,
                     w["cash"],
@@ -112,29 +125,35 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("revive"))
-async def revive_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def revive_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
+    bid = bot_ctx.bot_id
 
-    if not await _dead_until(pool, user.id):
+    if not await _dead_until(pool, user.id, bid):
         await message.reply("You're not dead.")
         return
 
     cost = random.randint(REVIVE_MIN, REVIVE_MAX)
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
 
     status = "ok"
     have_cash = 0
     async with pool.acquire() as c:
         async with c.transaction():
-            w = await c.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", user.id)
+            w = await c.fetchrow(
+                "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+                bid,
+                user.id,
+            )
             have_cash = w["cash"]
             if have_cash < cost:
                 status = "poor"
             else:
                 deleted = await c.fetchval(
-                    "DELETE FROM ax_kill_status WHERE user_id=$1 AND dead_until > now() RETURNING user_id",
+                    "DELETE FROM ax_kill_status WHERE bot_id=$1 AND user_id=$2 AND dead_until > now() RETURNING user_id",
+                    bid,
                     user.id,
                 )
                 if deleted is None:
@@ -142,13 +161,15 @@ async def revive_cmd(message: Message, pool: asyncpg.Pool) -> None:
                 else:
                     new_cash = have_cash - cost
                     await c.execute(
-                        "UPDATE wallets SET cash=$1, updated_at=now() WHERE user_id=$2",
+                        "UPDATE wallets SET cash=$1, updated_at=now() WHERE bot_id=$2 AND user_id=$3",
                         new_cash,
+                        bid,
                         user.id,
                     )
                     await c.execute(
-                        "INSERT INTO transactions (user_id, type, currency, amount, balance_before, "
-                        "balance_after, source) VALUES ($1,'debit','cash',$2,$3,$4,$5)",
+                        "INSERT INTO transactions (bot_id, user_id, type, currency, amount, balance_before, "
+                        "balance_after, source) VALUES ($1,$2,'debit','cash',$3,$4,$5,$6)",
+                        bid,
                         user.id,
                         cost,
                         have_cash,
