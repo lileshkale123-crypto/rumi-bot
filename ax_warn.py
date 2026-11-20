@@ -1,4 +1,4 @@
-"""Warn system with reasons, per-group limit, mode and expiry (aiogram 3.x).
+"""Warn system with reasons, per-group limit, mode and expiry (aiogram 3.x, bot_id aware).
 /warn /dwarn /swarn /warns /rmwarn /unwarn (+ Remove-warn button)."""
 import logging
 import time as _time
@@ -10,14 +10,16 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 import ax_mod
+import bot_context
 from ax_common import btn, cmd_args, esc, fire, is_admin
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_warn")
 
 ICONS = {"ban": "🔨", "mute": "🔇", "kick": "👢", "tban": "🔨", "tmute": "🔇"}
 
-_SCACHE: dict[int, tuple[float, dict]] = {}
+_SCACHE: dict[tuple[int, int], tuple[float, dict]] = {}
 _SCACHE_MAX = 5000
 _SCACHE_TTL = 60.0
 
@@ -25,39 +27,58 @@ _SCACHE_TTL = 60.0
 def _prune_scache(now: float) -> None:
     if len(_SCACHE) <= _SCACHE_MAX:
         return
-    expired = [cid for cid, (ts, _) in _SCACHE.items() if now - ts >= _SCACHE_TTL]
-    for cid in expired:
-        _SCACHE.pop(cid, None)
+    expired = [k for k, (ts, _) in _SCACHE.items() if now - ts >= _SCACHE_TTL]
+    for k in expired:
+        _SCACHE.pop(k, None)
     if len(_SCACHE) > _SCACHE_MAX:
         oldest = sorted(_SCACHE.items(), key=lambda kv: kv[1][0])[: _SCACHE_MAX // 5]
-        for cid, _ in oldest:
-            _SCACHE.pop(cid, None)
+        for k, _ in oldest:
+            _SCACHE.pop(k, None)
 
 
-async def get_settings(c, chat_id: int) -> dict:
+def invalidate_settings(chat_id: int, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    _SCACHE.pop((bid, chat_id), None)
+
+
+async def get_settings(c, chat_id: int, bot_id: int | None = None) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, chat_id)
     now = _time.time()
-    hit = _SCACHE.get(chat_id)
+    hit = _SCACHE.get(key)
     if hit and now - hit[0] < _SCACHE_TTL:
         return dict(hit[1])
-    row = await c.fetchrow("SELECT * FROM ax_warn_settings WHERE chat_id=$1", chat_id)
+    row = await c.fetchrow(
+        "SELECT * FROM ax_warn_settings WHERE bot_id=$1 AND chat_id=$2",
+        bid,
+        chat_id,
+    )
     s = (
         dict(row)
         if row
         else {"warn_limit": 3, "warn_mode": "mute", "warn_mode_secs": 86400, "warn_expire_secs": 0}
     )
     _prune_scache(now)
-    _SCACHE[chat_id] = (now, s)
+    _SCACHE[key] = (now, s)
     return dict(s)
 
 
-async def add_warn(pool: asyncpg.Pool, chat_id: int, uid: int, reason: str | None) -> tuple[dict, int]:
+async def add_warn(
+    pool: asyncpg.Pool,
+    chat_id: int,
+    uid: int,
+    reason: str | None,
+    bot_id: int | None = None,
+) -> tuple[dict, int]:
     """Save a warning and count the active ones in a single database round trip."""
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as c:
-        s = await get_settings(c, chat_id)
+        s = await get_settings(c, chat_id, bot_id=bid)
         n = await c.fetchval(
-            "WITH ins AS (INSERT INTO ax_warn_log (chat_id, user_id, reason) VALUES ($1,$2,$3) RETURNING 1) "
-            "SELECT 1 + (SELECT COUNT(*) FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2 "
-            "AND ($4::float8 <= 0 OR created_at > now() - make_interval(secs => $4::float8)))",
+            "WITH ins AS (INSERT INTO ax_warn_log (bot_id, chat_id, user_id, reason) VALUES ($1,$2,$3,$4) RETURNING 1) "
+            "SELECT 1 + (SELECT COUNT(*) FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3 "
+            "AND ($5::float8 <= 0 OR created_at > now() - make_interval(secs => $5::float8)))",
+            bid,
             chat_id,
             uid,
             reason,
@@ -66,12 +87,20 @@ async def add_warn(pool: asyncpg.Pool, chat_id: int, uid: int, reason: str | Non
     return s, int(n)
 
 
-async def count_active(c, chat_id: int, uid: int, expire_secs: int) -> int:
+async def count_active(
+    c,
+    chat_id: int,
+    uid: int,
+    expire_secs: int,
+    bot_id: int | None = None,
+) -> int:
+    bid = bot_context.resolve_bot_id(bot_id)
     if expire_secs > 0:
         return int(
             await c.fetchval(
-                "SELECT COUNT(*) FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2 "
-                "AND created_at > now() - make_interval(secs => $3)",
+                "SELECT COUNT(*) FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3 "
+                "AND created_at > now() - make_interval(secs => $4)",
+                bid,
                 chat_id,
                 uid,
                 float(expire_secs),
@@ -79,23 +108,27 @@ async def count_active(c, chat_id: int, uid: int, expire_secs: int) -> int:
         )
     return int(
         await c.fetchval(
-            "SELECT COUNT(*) FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2",
+            "SELECT COUNT(*) FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+            bid,
             chat_id,
             uid,
         )
     )
 
 
-async def remove_latest(c, chat_id: int, uid: int):
+async def remove_latest(c, chat_id: int, uid: int, bot_id: int | None = None):
+    bid = bot_context.resolve_bot_id(bot_id)
     return await c.fetchval(
         "DELETE FROM ax_warn_log WHERE id = (SELECT id FROM ax_warn_log "
-        "WHERE chat_id=$1 AND user_id=$2 ORDER BY id DESC LIMIT 1) RETURNING id",
+        "WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3 ORDER BY id DESC LIMIT 1) RETURNING id",
+        bid,
         chat_id,
         uid,
     )
 
 
 async def punish(bot: Bot, pool: asyncpg.Pool, chat_id: int, uid: int, mode: str, secs: int) -> None:
+    bid = bot_context.resolve_bot_id(bot.id)
     if mode in ("tban", "tmute"):
         until = datetime.now(timezone.utc) + timedelta(seconds=secs)
         kind = "ban" if mode == "tban" else "mute"
@@ -105,15 +138,16 @@ async def punish(bot: Bot, pool: asyncpg.Pool, chat_id: int, uid: int, mode: str
             await bot.ban_chat_member(chat_id, uid, until_date=until)
         async with pool.acquire() as c:
             await c.execute(
-                "INSERT INTO ax_temp_punish (chat_id, user_id, ptype, expires_at, reason) "
-                "VALUES ($1,$2,$3,$4,'warn limit') ON CONFLICT (chat_id, user_id, ptype) "
-                "DO UPDATE SET expires_at=$4",
+                "INSERT INTO ax_temp_punish (bot_id, chat_id, user_id, ptype, expires_at, reason) "
+                "VALUES ($1,$2,$3,$4,$5,'warn limit') ON CONFLICT (chat_id, user_id, ptype) "
+                "DO UPDATE SET bot_id=$1, expires_at=$5",
+                bid,
                 chat_id,
                 uid,
                 kind,
                 until,
             )
-        ax_mod.NEED[0] = True
+        ax_mod.NEED[bid] = True
     else:
         await ax_mod.perform(mode, bot, pool, chat_id, uid)
 
@@ -136,7 +170,7 @@ async def _log_warn(bot: Bot, pool: asyncpg.Pool, chat_id: int, actor, target, d
 
 
 def make_warn(mode: str):
-    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
         if mode == "d" and not message.reply_to_message:
             await ax_mod.say(
                 message,
@@ -153,8 +187,9 @@ def make_warn(mode: str):
         d = args if message.reply_to_message else args[1:]
         reason = " ".join(d) or None
         chat_id = message.chat.id
+        bid = bot_ctx.bot_id
 
-        s, n = await add_warn(pool, chat_id, target.id, reason)
+        s, n = await add_warn(pool, chat_id, target.id, reason, bot_id=bid)
         limit = s["warn_limit"]
         note = f"\n📝 {esc(reason)}" if reason else ""
 
@@ -170,7 +205,8 @@ def make_warn(mode: str):
                 return
             async with pool.acquire() as c:
                 await c.execute(
-                    "DELETE FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2",
+                    "DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+                    bid,
                     chat_id,
                     target.id,
                 )
@@ -211,20 +247,22 @@ def make_warn(mode: str):
 
 
 @router.message(Command("warns"))
-async def warns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     target = await ax_mod.gate(message, bot, pool, False)
     if target is None:
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        s = await get_settings(c, chat_id)
+        s = await get_settings(c, chat_id, bot_id=bid)
         rows = await c.fetch(
-            "SELECT reason, created_at FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2 "
+            "SELECT reason, created_at FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3 "
             "ORDER BY id DESC LIMIT 10",
+            bid,
             chat_id,
             target.id,
         )
-        n = await count_active(c, chat_id, target.id, s["warn_expire_secs"])
+        n = await count_active(c, chat_id, target.id, s["warn_expire_secs"], bot_id=bid)
     if not rows:
         await ax_mod.say(
             message,
@@ -246,15 +284,16 @@ async def warns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("rmwarn", "unwarn"))
-async def rmwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def rmwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     target = await ax_mod.gate(message, bot, pool, False)
     if target is None:
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        done = await remove_latest(c, chat_id, target.id)
-        s = await get_settings(c, chat_id)
-        n = await count_active(c, chat_id, target.id, s["warn_expire_secs"])
+        done = await remove_latest(c, chat_id, target.id, bot_id=bid)
+        s = await get_settings(c, chat_id, bot_id=bid)
+        n = await count_active(c, chat_id, target.id, s["warn_expire_secs"], bot_id=bid)
     if not done:
         await ax_mod.say(
             message,
@@ -275,7 +314,7 @@ async def rmwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.callback_query(F.data.startswith("axw:"))
-async def warn_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warn_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit() or query.message is None:
         await query.answer()
@@ -286,7 +325,7 @@ async def warn_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> N
         return
     uid = int(parts[2])
     async with pool.acquire() as c:
-        done = await remove_latest(c, chat.id, uid)
+        done = await remove_latest(c, chat.id, uid, bot_id=bot_ctx.bot_id)
     await query.answer("Warning removed ✅" if done else "No warnings left")
     try:
         await query.message.edit_reply_markup(reply_markup=None)

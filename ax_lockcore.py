@@ -1,4 +1,4 @@
-"""Lock engine: which lock types a message breaks, plus the outer lock middleware (aiogram 3.x)."""
+"""Lock engine: which lock types a message breaks, plus the outer lock middleware (aiogram 3.x, per-bot isolated)."""
 import logging
 import re
 import time
@@ -10,6 +10,7 @@ from aiogram.enums import MessageEntityType as E
 from aiogram.types import Message, TelegramObject
 
 import ax_approve
+import bot_context
 from ax_common import is_admin
 
 log = logging.getLogger(__name__)
@@ -61,11 +62,13 @@ _BOTLINK = re.compile(r"(t\.me/\w+bot\b|@\w+bot\b)", re.I)
 _CASH = re.compile(r"\$[A-Z]{2,8}\b")
 _PHONE = re.compile(r"\+?\d[\d\s\-]{8,14}\d")
 
-_cfg: dict[int, tuple[float, dict[str, tuple[str | None, str | None]], set[str], bool]] = {}
+# Keyed by (bot_id, chat_id)
+_cfg: dict[tuple[int, int], tuple[float, dict[str, tuple[str | None, str | None]], set[str], bool]] = {}
 _CFG_MAX = 5000
 _CFG_TTL = 30.0
 
-_admin_cache: dict[tuple[int, int], tuple[float, bool]] = {}
+# Keyed by (bot_id, chat_id, uid)
+_admin_cache: dict[tuple[int, int, int], tuple[float, bool]] = {}
 _ADMIN_CACHE_MAX = 5000
 _ADMIN_CACHE_TTL = 10.0
 
@@ -157,13 +160,13 @@ def violations(msg: Message) -> set[str]:
 def _prune_cfg(now: float) -> None:
     if len(_cfg) <= _CFG_MAX:
         return
-    expired = [cid for cid, (ts, _, _, _) in _cfg.items() if now - ts >= _CFG_TTL]
-    for cid in expired:
-        _cfg.pop(cid, None)
+    expired = [k for k, (ts, _, _, _) in _cfg.items() if now - ts >= _CFG_TTL]
+    for k in expired:
+        _cfg.pop(k, None)
     if len(_cfg) > _CFG_MAX:
         oldest = sorted(_cfg.items(), key=lambda kv: kv[1][0])[: _CFG_MAX // 5]
-        for cid, _ in oldest:
-            _cfg.pop(cid, None)
+        for k, _ in oldest:
+            _cfg.pop(k, None)
 
 
 def _prune_admin_cache(now: float) -> None:
@@ -178,32 +181,44 @@ def _prune_admin_cache(now: float) -> None:
             _admin_cache.pop(k, None)
 
 
-async def load(pool: asyncpg.Pool, chat_id: int):
+async def load(pool: asyncpg.Pool, chat_id: int, bot_id: int | None = None):
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, chat_id)
     now = time.time()
-    hit = _cfg.get(chat_id)
+    hit = _cfg.get(key)
     if hit and now - hit[0] < _CFG_TTL:
         return hit[1], hit[2], hit[3]
     async with pool.acquire() as c:
         rows = await c.fetch(
-            "SELECT lock_type, action, reason FROM ax_locks WHERE chat_id=$1",
+            "SELECT lock_type, action, reason FROM ax_locks WHERE bot_id=$1 AND chat_id=$2",
+            bid,
             chat_id,
         )
         allow = {
             r["item"].lower()
-            for r in await c.fetch("SELECT item FROM ax_allowlist WHERE chat_id=$1", chat_id)
+            for r in await c.fetch(
+                "SELECT item FROM ax_allowlist WHERE bot_id=$1 AND chat_id=$2",
+                bid,
+                chat_id,
+            )
         }
-        lw = await c.fetchval(
-            "SELECT lockwarns FROM ax_lock_settings WHERE chat_id=$1",
-            chat_id,
-        ) or False
+        lw = (
+            await c.fetchval(
+                "SELECT lockwarns FROM ax_lock_settings WHERE bot_id=$1 AND chat_id=$2",
+                bid,
+                chat_id,
+            )
+            or False
+        )
     locks = {r["lock_type"]: (r["action"], r["reason"]) for r in rows}
     _prune_cfg(now)
-    _cfg[chat_id] = (now, locks, allow, lw)
+    _cfg[key] = (now, locks, allow, lw)
     return locks, allow, lw
 
 
-def invalidate(chat_id: int) -> None:
-    _cfg.pop(chat_id, None)
+def invalidate(chat_id: int, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    _cfg.pop((bid, chat_id), None)
 
 
 def _allowed(msg: Message, allow: set[str]) -> bool:
@@ -225,7 +240,7 @@ def _allowed(msg: Message, allow: set[str]) -> bool:
 
 async def _is_admin_cached(bot: Bot, chat_id: int, uid: int) -> bool:
     now = time.time()
-    k = (chat_id, uid)
+    k = (bot.id, chat_id, uid)
     hit = _admin_cache.get(k)
     if hit and now - hit[0] < _ADMIN_CACHE_TTL:
         return hit[1]
@@ -250,7 +265,8 @@ async def check_locks(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
     if not is_anon_channel and (user is None or user.is_bot):
         return False
 
-    locks, allow, lw = await load(pool, chat.id)
+    bid = bot.id
+    locks, allow, lw = await load(pool, chat.id, bot_id=bid)
     if not locks:
         return False
 
@@ -259,7 +275,7 @@ async def check_locks(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
         return False
 
     if user is not None and not user.is_bot:
-        if await ax_approve.is_approved(pool, chat.id, user.id) or await _is_admin_cached(
+        if await ax_approve.is_approved(pool, chat.id, user.id, bot_id=bid) or await _is_admin_cached(
             bot, chat.id, user.id
         ):
             return False
@@ -278,14 +294,18 @@ async def check_locks(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
             try:
                 import ax_actions
 
-                await ax_actions.run(bot, pool, chat.id, user, action, reason or f"Locked: {hit[0]}")
+                await ax_actions.run(
+                    bot, pool, chat.id, user, action, reason or f"Locked: {hit[0]}", bot_id=bid
+                )
             except Exception as e:
                 log.warning("lock action failed: %s", e)
         elif lw:
             try:
                 import ax_actions
 
-                await ax_actions.run(bot, pool, chat.id, user, "warn", f"Locked: {hit[0]}")
+                await ax_actions.run(
+                    bot, pool, chat.id, user, "warn", f"Locked: {hit[0]}", bot_id=bid
+                )
             except Exception as e:
                 log.warning("lockwarn failed: %s", e)
     return True

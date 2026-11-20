@@ -1,4 +1,4 @@
-"""Antiraid: /antiraid /raidtime /raidactiontime /autoantiraid + join middleware (aiogram 3.x)."""
+"""Antiraid: /antiraid /raidtime /raidactiontime /autoantiraid + join middleware (aiogram 3.x, bot_id aware)."""
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -11,16 +11,18 @@ from aiogram.filters import Command
 from aiogram.types import Message, TelegramObject
 
 import ax_mod
+import bot_context
 from ax_common import cmd_args, fire, is_admin
 from ax_warn2 import fmt_time, parse_time
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_raid")
 
-_joins: dict[int, list[float]] = {}  # chat_id -> list of join timestamps
+_joins: dict[tuple[int, int], list[float]] = {}  # (bot_id, chat_id) -> list of join timestamps
 _JOINS_MAX = 5000
 
-_SC: dict[int, tuple[float, dict]] = {}
+_SC: dict[tuple[int, int], tuple[float, dict]] = {}
 _SC_MAX = 5000
 _SC_TTL = 20.0
 _middleware_registered = False
@@ -29,26 +31,30 @@ _middleware_registered = False
 def _prune_sc(now: float) -> None:
     if len(_SC) <= _SC_MAX:
         return
-    expired = [cid for cid, (ts, _) in _SC.items() if now - ts >= _SC_TTL * 5]
-    for cid in expired:
-        _SC.pop(cid, None)
+    expired = [k for k, (ts, _) in _SC.items() if now - ts >= _SC_TTL * 5]
+    for k in expired:
+        _SC.pop(k, None)
     if len(_SC) > _SC_MAX:
         oldest = sorted(_SC.items(), key=lambda kv: kv[1][0])[: _SC_MAX // 5]
-        for cid, _ in oldest:
-            _SC.pop(cid, None)
+        for k, _ in oldest:
+            _SC.pop(k, None)
 
 
 def _prune_joins(now: float) -> None:
     if len(_joins) <= _JOINS_MAX:
         return
-    stale = [cid for cid, lst in _joins.items() if not lst or now - lst[-1] >= 60.0]
-    for cid in stale:
-        _joins.pop(cid, None)
+    stale = [k for k, lst in _joins.items() if not lst or now - lst[-1] >= 60.0]
+    for k in stale:
+        _joins.pop(k, None)
 
 
-async def _reload(pool: asyncpg.Pool, chat_id: int) -> dict:
+async def _reload(pool: asyncpg.Pool, chat_id: int, bot_id: int) -> dict:
     async with pool.acquire() as c:
-        r = await c.fetchrow("SELECT * FROM ax_raid_settings WHERE chat_id=$1", chat_id)
+        r = await c.fetchrow(
+            "SELECT * FROM ax_raid_settings WHERE bot_id=$1 AND chat_id=$2",
+            bot_id,
+            chat_id,
+        )
     v = (
         dict(r)
         if r
@@ -56,28 +62,31 @@ async def _reload(pool: asyncpg.Pool, chat_id: int) -> dict:
     )
     now = time.time()
     _prune_sc(now)
-    _SC[chat_id] = (now, v)
+    _SC[(bot_id, chat_id)] = (now, v)
     return dict(v)
 
 
-async def get(pool: asyncpg.Pool, chat_id: int) -> dict:
-    hit = _SC.get(chat_id)
+async def get(pool: asyncpg.Pool, chat_id: int, bot_id: int | None = None) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, chat_id)
+    hit = _SC.get(key)
     if hit:
         now = time.time()
         if now - hit[0] >= _SC_TTL:
-            _SC[chat_id] = (now, hit[1])  # one refresh at a time
-            fire(_reload(pool, chat_id))
+            _SC[key] = (now, hit[1])
+            fire(_reload(pool, chat_id, bid))
         return dict(hit[1])
-    return await _reload(pool, chat_id)
+    return await _reload(pool, chat_id, bid)
 
 
-async def save(pool: asyncpg.Pool, chat_id: int, col: str, val) -> None:
+async def save(pool: asyncpg.Pool, chat_id: int, col: str, val, bot_id: int) -> None:
     assert col in ("raid_until", "raid_secs", "action_secs", "auto_limit")
-    _SC.pop(chat_id, None)
+    _SC.pop((bot_id, chat_id), None)
     async with pool.acquire() as c:
         await c.execute(
-            f"INSERT INTO ax_raid_settings (chat_id, {col}) VALUES ($1,$2) "
-            f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            f"INSERT INTO ax_raid_settings (bot_id, chat_id, {col}) VALUES ($1,$2,$3) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, {col}=$3",
+            bot_id,
             chat_id,
             val,
         )
@@ -115,14 +124,15 @@ async def _gate(message: Message, bot: Bot) -> bool:
 
 
 @router.message(Command("antiraid"))
-async def antiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def antiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
-    s = await get(pool, chat_id)
+    bid = bot_ctx.bot_id
+    s = await get(pool, chat_id, bot_id=bid)
     args = cmd_args(message)
     if args and args[0].lower() in ("off", "no"):
-        await save(pool, chat_id, "raid_until", None)
+        await save(pool, chat_id, "raid_until", None, bid)
         await ax_mod.say(
             message,
             "✅ <b>Antiraid off</b>\n<blockquote>New members can join normally again</blockquote>",
@@ -149,7 +159,7 @@ async def antiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
-    await save(pool, chat_id, "raid_until", datetime.now(timezone.utc) + timedelta(seconds=secs))
+    await save(pool, chat_id, "raid_until", datetime.now(timezone.utc) + timedelta(seconds=secs), bid)
     await ax_mod.say(
         message,
         f"🚨 <b>Antiraid ON</b>\n<blockquote>For <b>{fmt_time(secs)}</b>, every new member is banned for "
@@ -165,13 +175,14 @@ async def _time_cmd(
     col: str,
     label: str,
     example: str,
+    bid: int,
 ) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
     args = cmd_args(message)
     if not args:
-        s = await get(pool, chat_id)
+        s = await get(pool, chat_id, bot_id=bid)
         await ax_mod.say(
             message,
             f"⚙️ <b>{label}</b>\n<blockquote>Currently <b>{fmt_time(s[col])}</b></blockquote>",
@@ -186,7 +197,7 @@ async def _time_cmd(
             bot=bot,
         )
         return
-    await save(pool, chat_id, col, secs)
+    await save(pool, chat_id, col, secs, bid)
     await ax_mod.say(
         message,
         f"✅ <b>{label} set</b>\n<blockquote><b>{fmt_time(secs)}</b></blockquote>",
@@ -195,23 +206,24 @@ async def _time_cmd(
 
 
 @router.message(Command("raidtime"))
-async def raidtime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
-    await _time_cmd(message, bot, pool, "raid_secs", "Raid duration", "/raidtime 6h")
+async def raidtime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _time_cmd(message, bot, pool, "raid_secs", "Raid duration", "/raidtime 6h", bot_ctx.bot_id)
 
 
 @router.message(Command("raidactiontime"))
-async def raidactiontime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
-    await _time_cmd(message, bot, pool, "action_secs", "Raid ban length", "/raidactiontime 1h")
+async def raidactiontime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _time_cmd(message, bot, pool, "action_secs", "Raid ban length", "/raidactiontime 1h", bot_ctx.bot_id)
 
 
 @router.message(Command("autoantiraid"))
-async def autoantiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def autoantiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     if not args:
-        s = await get(pool, chat_id)
+        s = await get(pool, chat_id, bot_id=bid)
         cur = f"{s['auto_limit']} joins per minute" if s["auto_limit"] else "off"
         await ax_mod.say(
             message,
@@ -221,7 +233,7 @@ async def autoantiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> No
         )
         return
     if args[0].lower() in ("off", "no", "0"):
-        await save(pool, chat_id, "auto_limit", 0)
+        await save(pool, chat_id, "auto_limit", 0, bid)
         await ax_mod.say(
             message,
             "✅ <b>Auto antiraid off</b>\n<blockquote>I won't switch it on by myself</blockquote>",
@@ -235,7 +247,7 @@ async def autoantiraid_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> No
             bot=bot,
         )
         return
-    await save(pool, chat_id, "auto_limit", int(args[0]))
+    await save(pool, chat_id, "auto_limit", int(args[0]), bid)
     await ax_mod.say(
         message,
         f"✅ <b>Auto antiraid on</b>\n<blockquote>If <b>{args[0]}</b> people join within a minute, antiraid starts by itself 🚨</blockquote>",
@@ -248,15 +260,17 @@ async def handle_join_raid(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
     chat = msg.chat
     if chat.type == "private" or not msg.new_chat_members:
         return False
-    s = await get(pool, chat.id)
+    bid = bot.id
+    jkey = (bid, chat.id)
+    s = await get(pool, chat.id, bot_id=bid)
     now = time.time()
     if s["auto_limit"] > 0:
         _prune_joins(now)
-        lst = [t for t in _joins.get(chat.id, []) if now - t < 60.0] + [now] * len(msg.new_chat_members)
-        _joins[chat.id] = lst
+        lst = [t for t in _joins.get(jkey, []) if now - t < 60.0] + [now] * len(msg.new_chat_members)
+        _joins[jkey] = lst
         if len(lst) >= s["auto_limit"] and not active(s):
             until = datetime.now(timezone.utc) + timedelta(seconds=s["raid_secs"])
-            await save(pool, chat.id, "raid_until", until)
+            await save(pool, chat.id, "raid_until", until, bid)
             s["raid_until"] = until
             try:
                 await bot.send_message(

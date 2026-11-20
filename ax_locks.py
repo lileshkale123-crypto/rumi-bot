@@ -1,4 +1,4 @@
-"""Lock commands: /lock /unlock /locks /locktypes /lockwarns /allowlist /rmallowlist /rmallowlistall (aiogram 3.x)."""
+"""Lock commands: /lock /unlock /locks /locktypes /lockwarns /allowlist /rmallowlist /rmallowlistall (aiogram 3.x, bot_id aware)."""
 import re
 
 import asyncpg
@@ -10,6 +10,7 @@ import ax_actions
 import ax_lockcore as core
 import ax_mod
 from ax_common import cmd_args, esc, is_admin
+from bot_context import BotContext
 
 router = Router(name="ax_locks")
 _ACT = re.compile(r"\{([^}]+)\}")
@@ -38,7 +39,6 @@ async def _gate(message: Message, bot: Bot) -> bool:
 
 
 def _split(message: Message) -> tuple[list[str], str | None, str | None, bool]:
-    """Return (types list, reason or None, action or None, has_hash)."""
     text = message.text or ""
     parts = text.split(None, 1)
     body = parts[1] if len(parts) > 1 else ""
@@ -55,7 +55,7 @@ def _split(message: Message) -> tuple[list[str], str | None, str | None, bool]:
 
 
 @router.message(Command("lock"))
-async def lock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def lock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     types, reason, action, has_hash = _split(message)
@@ -86,24 +86,27 @@ async def lock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         return
 
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         for t in types:
             if has_hash and not action and not reason:
                 await c.execute(
-                    "UPDATE ax_locks SET action=NULL, reason=NULL WHERE chat_id=$1 AND lock_type=$2",
+                    "UPDATE ax_locks SET action=NULL, reason=NULL WHERE bot_id=$1 AND chat_id=$2 AND lock_type=$3",
+                    bid,
                     chat_id,
                     t,
                 )
                 continue
             await c.execute(
-                "INSERT INTO ax_locks (chat_id, lock_type, action, reason) VALUES ($1,$2,$3,$4) "
-                "ON CONFLICT (chat_id, lock_type) DO UPDATE SET action=$3, reason=$4",
+                "INSERT INTO ax_locks (bot_id, chat_id, lock_type, action, reason) VALUES ($1,$2,$3,$4,$5) "
+                "ON CONFLICT (chat_id, lock_type) DO UPDATE SET bot_id=$1, action=$4, reason=$5",
+                bid,
                 chat_id,
                 t,
                 action,
                 reason,
             )
-    core.invalidate(chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     extra = f"\n⚔️ Action: <b>{esc(action)}</b>" if action else ""
     await ax_mod.say(
         message,
@@ -114,7 +117,7 @@ async def lock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("unlock"))
-async def unlock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def unlock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     types = [t.lower() for t in cmd_args(message)]
@@ -126,18 +129,20 @@ async def unlock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         if "all" in types:
-            await c.execute("DELETE FROM ax_locks WHERE chat_id=$1", chat_id)
+            await c.execute("DELETE FROM ax_locks WHERE bot_id=$1 AND chat_id=$2", bid, chat_id)
             shown = "everything"
         else:
             await c.execute(
-                "DELETE FROM ax_locks WHERE chat_id=$1 AND lock_type = ANY($2::text[])",
+                "DELETE FROM ax_locks WHERE bot_id=$1 AND chat_id=$2 AND lock_type = ANY($3::text[])",
+                bid,
                 chat_id,
                 types,
             )
             shown = ", ".join(types)
-    core.invalidate(chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         f"🔓 <b>Unlocked</b>\n<blockquote>{esc(shown)} ✨</blockquote>",
@@ -146,13 +151,15 @@ async def unlock_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("locks"))
-async def locks_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def locks_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         rows = await c.fetch(
-            "SELECT lock_type, action FROM ax_locks WHERE chat_id=$1 ORDER BY lock_type",
+            "SELECT lock_type, action FROM ax_locks WHERE bot_id=$1 AND chat_id=$2 ORDER BY lock_type",
+            bid,
             chat_id,
         )
     if not rows:
@@ -184,10 +191,11 @@ async def locktypes_cmd(message: Message, bot: Bot) -> None:
 
 
 @router.message(Command("lockwarns"))
-async def lockwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def lockwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     arg = args[0].lower() if args else ""
     async with pool.acquire() as c:
@@ -198,7 +206,8 @@ async def lockwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         else:
             cur = (
                 await c.fetchval(
-                    "SELECT lockwarns FROM ax_lock_settings WHERE chat_id=$1",
+                    "SELECT lockwarns FROM ax_lock_settings WHERE bot_id=$1 AND chat_id=$2",
+                    bid,
                     chat_id,
                 )
                 or False
@@ -211,12 +220,13 @@ async def lockwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             )
             return
         await c.execute(
-            "INSERT INTO ax_lock_settings (chat_id, lockwarns) VALUES ($1,$2) "
-            "ON CONFLICT (chat_id) DO UPDATE SET lockwarns=$2",
+            "INSERT INTO ax_lock_settings (bot_id, chat_id, lockwarns) VALUES ($1,$2,$3) "
+            "ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, lockwarns=$3",
+            bid,
             chat_id,
             val,
         )
-    core.invalidate(chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         f"✅ <b>Lock warns {'on' if val else 'off'}</b>\n<blockquote>"
@@ -226,30 +236,34 @@ async def lockwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("allowlist"))
-async def allowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def allowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = [a.lower() for a in cmd_args(message)]
     async with pool.acquire() as c:
         for a in args:
             await c.execute(
-                "INSERT INTO ax_allowlist (chat_id, item) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                "INSERT INTO ax_allowlist (bot_id, chat_id, item) VALUES ($1,$2,$3) "
+                "ON CONFLICT (chat_id, item) DO UPDATE SET bot_id=$1",
+                bid,
                 chat_id,
                 a,
             )
         rows = await c.fetch(
-            "SELECT item FROM ax_allowlist WHERE chat_id=$1 ORDER BY item",
+            "SELECT item FROM ax_allowlist WHERE bot_id=$1 AND chat_id=$2 ORDER BY item",
+            bid,
             chat_id,
         )
-    core.invalidate(chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     lines = "\n".join(f"• {esc(r['item'])}" for r in rows) or "Empty"
     head = "✅ <b>Allowlist updated</b>" if args else "📋 <b>Allowlist</b>"
     await ax_mod.say(message, f"{head}\n<blockquote>{lines}</blockquote>", bot=bot)
 
 
 @router.message(Command("rmallowlist"))
-async def rmallowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def rmallowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     args = [a.lower() for a in cmd_args(message)]
@@ -261,13 +275,15 @@ async def rmallowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> Non
         )
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         await c.execute(
-            "DELETE FROM ax_allowlist WHERE chat_id=$1 AND item = ANY($2::text[])",
+            "DELETE FROM ax_allowlist WHERE bot_id=$1 AND chat_id=$2 AND item = ANY($3::text[])",
+            bid,
             chat_id,
             args,
         )
-    core.invalidate(chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         "✅ <b>Removed from allowlist</b>\n<blockquote>Locks apply to those items again</blockquote>",
@@ -276,13 +292,14 @@ async def rmallowlist_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> Non
 
 
 @router.message(Command("rmallowlistall"))
-async def rmallowlistall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def rmallowlistall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_allowlist WHERE chat_id=$1", chat_id)
-    core.invalidate(chat_id)
+        await c.execute("DELETE FROM ax_allowlist WHERE bot_id=$1 AND chat_id=$2", bid, chat_id)
+    core.invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         "✅ <b>Allowlist cleared</b>\n<blockquote>Everything on it is checked again</blockquote>",

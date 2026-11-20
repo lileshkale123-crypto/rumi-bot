@@ -1,5 +1,5 @@
 """Blocklists: /addblocklist /rmblocklist /blocklist /unblocklistall /blocklistmode
-/blocklistdelete /setblocklistreason /resetblocklistreason + outer middleware (aiogram 3.x)."""
+/blocklistdelete /setblocklistreason /resetblocklistreason + outer middleware (aiogram 3.x, bot_id aware)."""
 import logging
 import re
 import time
@@ -15,7 +15,9 @@ import ax_actions
 import ax_approve
 import ax_lockcore
 import ax_mod
+import bot_context
 from ax_common import cmd_args, esc, is_admin
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_blocklist")
@@ -23,14 +25,13 @@ router = Router(name="ax_blocklist")
 MODES = ("nothing", "ban", "mute", "kick", "warn", "tban", "tmute")
 _TAG = re.compile(r"\{([^}]+)\}")
 
-_cache: dict[int, tuple[float, list[tuple[re.Pattern, str, str | None]], dict]] = {}
+_cache: dict[tuple[int, int], tuple[float, list[tuple[re.Pattern, str, str | None]], dict]] = {}
 _CACHE_MAX = 5000
 _CACHE_TTL = 30.0
 _middleware_registered = False
 
 
 def parse_triggers(body: str) -> tuple[list[str], str]:
-    """'(hi, "hi there") reason' or '"a b" reason' or 'word reason' -> (triggers, rest)."""
     body = body.strip()
     if body.startswith("("):
         end = body.find(")")
@@ -79,27 +80,31 @@ def compile_trigger(trig: str) -> re.Pattern:
 def _prune_cache(now: float) -> None:
     if len(_cache) <= _CACHE_MAX:
         return
-    expired = [cid for cid, (ts, _, _) in _cache.items() if now - ts >= _CACHE_TTL]
-    for cid in expired:
-        _cache.pop(cid, None)
+    expired = [k for k, (ts, _, _) in _cache.items() if now - ts >= _CACHE_TTL]
+    for k in expired:
+        _cache.pop(k, None)
     if len(_cache) > _CACHE_MAX:
         oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
-        for cid, _ in oldest:
-            _cache.pop(cid, None)
+        for k, _ in oldest:
+            _cache.pop(k, None)
 
 
-async def load(pool: asyncpg.Pool, chat_id: int):
+async def load(pool: asyncpg.Pool, chat_id: int, bot_id: int | None = None):
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, chat_id)
     now = time.time()
-    hit = _cache.get(chat_id)
+    hit = _cache.get(key)
     if hit and now - hit[0] < _CACHE_TTL:
         return hit[1], hit[2]
     async with pool.acquire() as c:
         rows = await c.fetch(
-            "SELECT trigger, reason FROM ax_blocklist WHERE chat_id=$1",
+            "SELECT trigger, reason FROM ax_blocklist WHERE bot_id=$1 AND chat_id=$2",
+            bid,
             chat_id,
         )
         s = await c.fetchrow(
-            "SELECT * FROM ax_blocklist_settings WHERE chat_id=$1",
+            "SELECT * FROM ax_blocklist_settings WHERE bot_id=$1 AND chat_id=$2",
+            bid,
             chat_id,
         )
     settings = (
@@ -114,12 +119,13 @@ async def load(pool: asyncpg.Pool, chat_id: int):
         except re.error:
             pass
     _prune_cache(now)
-    _cache[chat_id] = (now, comp, settings)
+    _cache[key] = (now, comp, settings)
     return comp, settings
 
 
-def invalidate(chat_id: int) -> None:
-    _cache.pop(chat_id, None)
+def invalidate(chat_id: int, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
+    _cache.pop((bid, chat_id), None)
 
 
 async def check_blocklist(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
@@ -134,7 +140,8 @@ async def check_blocklist(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
     if not text:
         return False
 
-    comp, s = await load(pool, chat.id)
+    bid = bot.id
+    comp, s = await load(pool, chat.id, bot_id=bid)
     if not comp:
         return False
 
@@ -142,7 +149,7 @@ async def check_blocklist(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
     if hit is None:
         return False
 
-    if await ax_approve.is_approved(pool, chat.id, user.id) or await ax_lockcore._is_admin_cached(
+    if await ax_approve.is_approved(pool, chat.id, user.id, bot_id=bid) or await ax_lockcore._is_admin_cached(
         bot, chat.id, user.id
     ):
         return False
@@ -173,7 +180,9 @@ async def check_blocklist(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
 
     if action and action != "nothing":
         try:
-            await ax_actions.run(bot, pool, chat.id, user, action, reason or f"Blocklisted: {trig}")
+            await ax_actions.run(
+                bot, pool, chat.id, user, action, reason or f"Blocklisted: {trig}", bot_id=bid
+            )
         except Exception as e:
             log.warning("blocklist action failed: %s", e)
 
@@ -219,7 +228,7 @@ async def _gate(message: Message, bot: Bot) -> bool:
 
 
 @router.message(Command("addblocklist"))
-async def add_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def add_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     text = message.text or ""
@@ -236,16 +245,18 @@ async def add_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         for t in trigs:
             await c.execute(
-                "INSERT INTO ax_blocklist (chat_id, trigger, reason) VALUES ($1,$2,$3) "
-                "ON CONFLICT (chat_id, trigger) DO UPDATE SET reason=$3",
+                "INSERT INTO ax_blocklist (bot_id, chat_id, trigger, reason) VALUES ($1,$2,$3,$4) "
+                "ON CONFLICT (chat_id, trigger) DO UPDATE SET bot_id=$1, reason=$4",
+                bid,
                 chat_id,
                 t.lower(),
                 reason or None,
             )
-    invalidate(chat_id)
+    invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         f"🚫 <b>Blocklisted</b>\n<blockquote>{esc(', '.join(trigs))}</blockquote>",
@@ -254,7 +265,7 @@ async def add_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("rmblocklist"))
-async def rm_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def rm_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     text = message.text or ""
@@ -269,13 +280,15 @@ async def rm_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         await c.execute(
-            "DELETE FROM ax_blocklist WHERE chat_id=$1 AND trigger = ANY($2::text[])",
+            "DELETE FROM ax_blocklist WHERE bot_id=$1 AND chat_id=$2 AND trigger = ANY($3::text[])",
+            bid,
             chat_id,
             [t.lower() for t in trigs],
         )
-    invalidate(chat_id)
+    invalidate(chat_id, bot_id=bid)
     await ax_mod.say(
         message,
         f"✅ <b>Removed</b>\n<blockquote>{esc(', '.join(trigs))}</blockquote>",
@@ -284,13 +297,15 @@ async def rm_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("blocklist"))
-async def list_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def list_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         rows = await c.fetch(
-            "SELECT trigger FROM ax_blocklist WHERE chat_id=$1 ORDER BY trigger LIMIT 100",
+            "SELECT trigger FROM ax_blocklist WHERE bot_id=$1 AND chat_id=$2 ORDER BY trigger LIMIT 100",
+            bid,
             chat_id,
         )
     if not rows:
@@ -306,7 +321,7 @@ async def list_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("unblocklistall"))
-async def clearall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def clearall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     chat = message.chat
     user = message.from_user
     if chat.type == "private" or user is None:
@@ -322,9 +337,10 @@ async def clearall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_blocklist WHERE chat_id=$1", chat.id)
-    invalidate(chat.id)
+        await c.execute("DELETE FROM ax_blocklist WHERE bot_id=$1 AND chat_id=$2", bid, chat.id)
+    invalidate(chat.id, bot_id=bid)
     await ax_mod.say(
         message,
         "✅ <b>Blocklist cleared</b>\n<blockquote>All triggers removed</blockquote>",
@@ -332,26 +348,28 @@ async def clearall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     )
 
 
-async def _set(pool: asyncpg.Pool, chat_id: int, col: str, val) -> None:
+async def _set(pool: asyncpg.Pool, chat_id: int, col: str, val, bot_id: int) -> None:
     assert col in ("mode", "mode_secs", "delete_msg", "default_reason")
     async with pool.acquire() as c:
         await c.execute(
-            f"INSERT INTO ax_blocklist_settings (chat_id, {col}) VALUES ($1,$2) "
-            f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            f"INSERT INTO ax_blocklist_settings (bot_id, chat_id, {col}) VALUES ($1,$2,$3) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, {col}=$3",
+            bot_id,
             chat_id,
             val,
         )
-    invalidate(chat_id)
+    invalidate(chat_id, bot_id=bot_id)
 
 
 @router.message(Command("blocklistmode"))
-async def mode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def mode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = [a.lower() for a in cmd_args(message)]
     if not args or args[0] not in MODES:
-        _, s = await load(pool, chat_id)
+        _, s = await load(pool, chat_id, bot_id=bid)
         await ax_mod.say(
             message,
             f"⚙️ <b>Blocklist mode</b>\n<blockquote>Currently <b>{s['mode']}</b>\n"
@@ -368,8 +386,8 @@ async def mode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
                 bot=bot,
             )
             return
-        await _set(pool, chat_id, "mode_secs", secs)
-    await _set(pool, chat_id, "mode", args[0])
+        await _set(pool, chat_id, "mode_secs", secs, bid)
+    await _set(pool, chat_id, "mode", args[0], bid)
     await ax_mod.say(
         message,
         f"✅ <b>Mode set</b>\n<blockquote>Blocklisted words → <b>{args[0]}</b></blockquote>",
@@ -378,14 +396,15 @@ async def mode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("blocklistdelete"))
-async def delete_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def delete_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     arg = args[0].lower() if args else ""
     if arg not in ("on", "off", "yes", "no"):
-        _, s = await load(pool, chat_id)
+        _, s = await load(pool, chat_id, bot_id=bid)
         await ax_mod.say(
             message,
             f"⚙️ <b>Blocklist delete</b>\n<blockquote>Currently <b>{'on' if s['delete_msg'] else 'off'}</b>\n"
@@ -394,7 +413,7 @@ async def delete_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
     val = arg in ("on", "yes")
-    await _set(pool, chat_id, "delete_msg", val)
+    await _set(pool, chat_id, "delete_msg", val, bid)
     await ax_mod.say(
         message,
         f"✅ <b>Delete {'on' if val else 'off'}</b>\n<blockquote>Blocklisted messages are {'deleted' if val else 'kept'}</blockquote>",
@@ -403,7 +422,7 @@ async def delete_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("setblocklistreason"))
-async def setreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def setreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
     text = message.text or ""
@@ -416,7 +435,7 @@ async def setreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
-    await _set(pool, message.chat.id, "default_reason", body)
+    await _set(pool, message.chat.id, "default_reason", body, bot_ctx.bot_id)
     await ax_mod.say(
         message,
         "✅ <b>Default reason set</b>\n<blockquote>" + esc(body) + "</blockquote>",
@@ -425,10 +444,10 @@ async def setreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("resetblocklistreason"))
-async def resetreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def resetreason_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _gate(message, bot):
         return
-    await _set(pool, message.chat.id, "default_reason", None)
+    await _set(pool, message.chat.id, "default_reason", None, bot_ctx.bot_id)
     await ax_mod.say(
         message,
         "✅ <b>Default reason cleared</b>\n<blockquote>Back to no reason</blockquote>",

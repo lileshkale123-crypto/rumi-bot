@@ -1,4 +1,4 @@
-"""Warn settings: /warnlimit /warnmode /warntime /resetwarn /resetallwarns /warnings (aiogram 3.x)."""
+"""Warn settings: /warnlimit /warnmode /warntime /resetwarn /resetallwarns /warnings (aiogram 3.x, bot_id aware)."""
 import logging
 
 import asyncpg
@@ -9,6 +9,7 @@ from aiogram.types import Message
 import ax_mod
 import ax_warn
 from ax_common import cmd_args, is_admin
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_warn2")
@@ -55,28 +56,29 @@ async def admin_only(message: Message, bot: Bot) -> bool:
     return True
 
 
-async def save(pool: asyncpg.Pool, chat_id: int, col: str, value) -> None:
-    # col is always one of our own fixed column names, never user input
+async def save(pool: asyncpg.Pool, chat_id: int, col: str, value, bot_id: int) -> None:
     assert col in ("warn_limit", "warn_mode", "warn_mode_secs", "warn_expire_secs")
     async with pool.acquire() as c:
         await c.execute(
-            f"INSERT INTO ax_warn_settings (chat_id, {col}) VALUES ($1,$2) "
-            f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            f"INSERT INTO ax_warn_settings (bot_id, chat_id, {col}) VALUES ($1,$2,$3) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET bot_id=$1, {col}=$3",
+            bot_id,
             chat_id,
             value,
         )
-    ax_warn._SCACHE.pop(chat_id, None)
+    ax_warn.invalidate_settings(chat_id, bot_id=bot_id)
 
 
 @router.message(Command("warnlimit"))
-async def warnlimit_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warnlimit_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await admin_only(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     if not args:
         async with pool.acquire() as c:
-            s = await ax_warn.get_settings(c, chat_id)
+            s = await ax_warn.get_settings(c, chat_id, bot_id=bid)
         await ax_mod.say(
             message,
             f"📊 <b>Warn limit</b>\n<blockquote>Currently <b>{s['warn_limit']}</b> warnings</blockquote>",
@@ -90,7 +92,7 @@ async def warnlimit_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
-    await save(pool, chat_id, "warn_limit", int(args[0]))
+    await save(pool, chat_id, "warn_limit", int(args[0]), bid)
     await ax_mod.say(
         message,
         f"✅ <b>Warn limit set</b>\n<blockquote>Punishment after <b>{int(args[0])}</b> warnings</blockquote>",
@@ -99,14 +101,15 @@ async def warnlimit_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("warnmode"))
-async def warnmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warnmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await admin_only(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     if not args:
         async with pool.acquire() as c:
-            s = await ax_warn.get_settings(c, chat_id)
+            s = await ax_warn.get_settings(c, chat_id, bot_id=bid)
         extra = f" for {fmt_time(s['warn_mode_secs'])}" if s["warn_mode"] in ("tban", "tmute") else ""
         await ax_mod.say(
             message,
@@ -133,8 +136,8 @@ async def warnmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
                     bot=bot,
                 )
                 return
-        await save(pool, chat_id, "warn_mode_secs", secs)
-    await save(pool, chat_id, "warn_mode", mode)
+        await save(pool, chat_id, "warn_mode_secs", secs, bid)
+    await save(pool, chat_id, "warn_mode", mode, bid)
     extra = f" for <b>{fmt_time(secs)}</b>" if mode in ("tban", "tmute") else ""
     await ax_mod.say(
         message,
@@ -144,14 +147,15 @@ async def warnmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("warntime"))
-async def warntime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warntime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await admin_only(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     args = cmd_args(message)
     if not args:
         async with pool.acquire() as c:
-            s = await ax_warn.get_settings(c, chat_id)
+            s = await ax_warn.get_settings(c, chat_id, bot_id=bid)
         await ax_mod.say(
             message,
             f"⏳ <b>Warn expiry</b>\n<blockquote>Warnings last: <b>{fmt_time(s['warn_expire_secs'])}</b></blockquote>",
@@ -159,7 +163,7 @@ async def warntime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
     if args[0].lower() in ("off", "no", "0"):
-        await save(pool, chat_id, "warn_expire_secs", 0)
+        await save(pool, chat_id, "warn_expire_secs", 0, bid)
         await ax_mod.say(
             message,
             "✅ <b>Expiry off</b>\n<blockquote>Warnings now last forever</blockquote>",
@@ -174,7 +178,7 @@ async def warntime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
-    await save(pool, chat_id, "warn_expire_secs", secs)
+    await save(pool, chat_id, "warn_expire_secs", secs, bid)
     await ax_mod.say(
         message,
         f"✅ <b>Expiry set</b>\n<blockquote>Warnings vanish after <b>{fmt_time(secs)}</b></blockquote>",
@@ -183,14 +187,16 @@ async def warntime_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("resetwarn"))
-async def resetwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def resetwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     target = await ax_mod.gate(message, bot, pool, False)
     if target is None:
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         await c.execute(
-            "DELETE FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2",
+            "DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+            bid,
             chat_id,
             target.id,
         )
@@ -202,12 +208,13 @@ async def resetwarn_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("resetallwarns"))
-async def resetallwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def resetallwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await admin_only(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_warn_log WHERE chat_id=$1", chat_id)
+        await c.execute("DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2", bid, chat_id)
     await ax_mod.say(
         message,
         "✅ <b>All warnings cleared</b>\n<blockquote>Everyone is back to 0 💜</blockquote>",
@@ -216,12 +223,13 @@ async def resetallwarns_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> N
 
 
 @router.message(Command("warnings"))
-async def warnings_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def warnings_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await admin_only(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        s = await ax_warn.get_settings(c, chat_id)
+        s = await ax_warn.get_settings(c, chat_id, bot_id=bid)
     extra = f" ({fmt_time(s['warn_mode_secs'])})" if s["warn_mode"] in ("tban", "tmute") else ""
     await ax_mod.say(
         message,

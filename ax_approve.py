@@ -1,4 +1,4 @@
-"""Approvals: trusted users skip locks and blocklists (aiogram 3.x).
+"""Approvals: trusted users skip locks and blocklists (aiogram 3.x, bot_id aware).
 /approve /unapprove /approved /unapproveall /approval"""
 import time
 
@@ -8,11 +8,13 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 import ax_mod
+import bot_context
 from ax_common import btn, esc, is_admin
+from bot_context import BotContext
 
 router = Router(name="ax_approve")
 
-_cache: dict[tuple[int, int], tuple[float, bool]] = {}  # (chat_id, user_id) -> (time, bool)
+_cache: dict[tuple[int, int, int], tuple[float, bool]] = {}  # (bot_id, chat_id, user_id) -> (time, bool)
 _CACHE_TTL = 60.0
 _CACHE_MAX = 10_000
 
@@ -29,8 +31,14 @@ def _prune_cache(now: float) -> None:
             _cache.pop(k, None)
 
 
-async def is_approved(pool: asyncpg.Pool, chat_id: int, user_id: int) -> bool:
-    key = (chat_id, user_id)
+async def is_approved(
+    pool: asyncpg.Pool,
+    chat_id: int,
+    user_id: int,
+    bot_id: int | None = None,
+) -> bool:
+    bid = bot_context.resolve_bot_id(bot_id)
+    key = (bid, chat_id, user_id)
     now = time.time()
     hit = _cache.get(key)
     if hit and now - hit[0] < _CACHE_TTL:
@@ -38,7 +46,8 @@ async def is_approved(pool: asyncpg.Pool, chat_id: int, user_id: int) -> bool:
     async with pool.acquire() as c:
         ok = bool(
             await c.fetchval(
-                "SELECT 1 FROM ax_approved WHERE chat_id=$1 AND user_id=$2",
+                "SELECT 1 FROM ax_approved WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+                bid,
                 chat_id,
                 user_id,
             )
@@ -71,18 +80,21 @@ async def _admin_gate(message: Message, bot: Bot) -> bool:
 
 
 @router.message(Command("approve"))
-async def approve_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def approve_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     target = await ax_mod.gate(message, bot, pool, True, None)
     if target is None:
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         await c.execute(
-            "INSERT INTO ax_approved (chat_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO ax_approved (bot_id, chat_id, user_id) VALUES ($1,$2,$3) "
+            "ON CONFLICT (chat_id, user_id) DO UPDATE SET bot_id=$1",
+            bid,
             chat_id,
             target.id,
         )
-    _cache.pop((chat_id, target.id), None)
+    _cache.pop((bid, chat_id, target.id), None)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[btn("❌ Unapprove", f"axa:un:{target.id}", style="danger")]]
     )
@@ -100,18 +112,20 @@ async def approve_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("unapprove"))
-async def unapprove_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def unapprove_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     target = await ax_mod.gate(message, bot, pool, False, None)
     if target is None:
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         await c.execute(
-            "DELETE FROM ax_approved WHERE chat_id=$1 AND user_id=$2",
+            "DELETE FROM ax_approved WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+            bid,
             chat_id,
             target.id,
         )
-    _cache.pop((chat_id, target.id), None)
+    _cache.pop((bid, chat_id, target.id), None)
     await ax_mod.say(
         message,
         ax_mod.card("🔒", "Unapproved", target.first_name or "User", "\nRules apply to them again"),
@@ -120,15 +134,17 @@ async def unapprove_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("approved"))
-async def approved_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def approved_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _admin_gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
         rows = await c.fetch(
             "SELECT a.user_id, COALESCE(u.first_name, u.username, 'User') AS name "
-            "FROM ax_approved a LEFT JOIN users u ON u.id = a.user_id "
-            "WHERE a.chat_id=$1 ORDER BY name LIMIT 50",
+            "FROM ax_approved a LEFT JOIN users u ON u.id = a.user_id AND u.bot_id = a.bot_id "
+            "WHERE a.bot_id=$1 AND a.chat_id=$2 ORDER BY name LIMIT 50",
+            bid,
             chat_id,
         )
     if not rows:
@@ -147,13 +163,14 @@ async def approved_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.message(Command("unapproveall"))
-async def unapproveall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def unapproveall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not await _admin_gate(message, bot):
         return
     chat_id = message.chat.id
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_approved WHERE chat_id=$1", chat_id)
-    for k in [k for k in _cache if k[0] == chat_id]:
+        await c.execute("DELETE FROM ax_approved WHERE bot_id=$1 AND chat_id=$2", bid, chat_id)
+    for k in [k for k in _cache if k[0] == bid and k[1] == chat_id]:
         _cache.pop(k, None)
     await ax_mod.say(
         message,
@@ -163,7 +180,7 @@ async def unapproveall_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> No
 
 
 @router.message(Command("approval"))
-async def approval_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def approval_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     chat = message.chat
     if chat.type == "private":
         await ax_mod.say(
@@ -175,7 +192,7 @@ async def approval_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     target = await ax_mod.gate(message, bot, pool, False, None)
     if target is None:
         return
-    ok = await is_approved(pool, chat.id, target.id)
+    ok = await is_approved(pool, chat.id, target.id, bot_id=bot_ctx.bot_id)
     if ok:
         await ax_mod.say(
             message,
@@ -191,7 +208,7 @@ async def approval_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
 
 
 @router.callback_query(F.data.startswith("axa:"))
-async def approve_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+async def approve_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit() or query.message is None:
         await query.answer()
@@ -201,9 +218,15 @@ async def approve_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -
         await query.answer("Admins only ✨", show_alert=True)
         return
     uid = int(parts[2])
+    bid = bot_ctx.bot_id
     async with pool.acquire() as c:
-        await c.execute("DELETE FROM ax_approved WHERE chat_id=$1 AND user_id=$2", chat.id, uid)
-    _cache.pop((chat.id, uid), None)
+        await c.execute(
+            "DELETE FROM ax_approved WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+            bid,
+            chat.id,
+            uid,
+        )
+    _cache.pop((bid, chat.id, uid), None)
     await query.answer("Unapproved ✅")
     try:
         await query.message.edit_reply_markup(reply_markup=None)

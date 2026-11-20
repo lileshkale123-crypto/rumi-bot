@@ -1,4 +1,4 @@
-"""Moderation commands (Astraea-style) for Rumi (aiogram 3.x + APScheduler)."""
+"""Moderation commands (aiogram 3.x + APScheduler, bot_id aware)."""
 import asyncio
 import logging
 import re
@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatPermissions, InlineKeyboardMarkup, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import bot_context
 from ax_common import (
     btn,
     cmd_args,
@@ -22,6 +23,7 @@ from ax_common import (
     resolve_target,
     right_label,
 )
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_mod")
@@ -57,9 +59,9 @@ PROMOTE_GRANTS = (
     "can_delete_messages",
     "can_pin_messages",
     "can_invite_users",
-)  # first one the promoter holds is given
+)
 
-NEED = [True]
+NEED: dict[int, bool] = {}
 
 
 def card(icon: str, title: str, name: str, extra: str = "") -> str:
@@ -79,10 +81,14 @@ async def say(
     kb: InlineKeyboardMarkup | None = None,
     bot: Bot | None = None,
 ):
+    b = bot or message.bot
+    bid = bot_context.resolve_bot_id(getattr(b, "id", None))
     try:
         import ax_misc3
 
-        if "Admins only" in text and message.chat.id in ax_misc3.QUIET:
+        if "Admins only" in text and (
+            (bid, message.chat.id) in ax_misc3.QUIET or message.chat.id in ax_misc3.QUIET
+        ):
             return None
     except Exception:
         pass
@@ -90,11 +96,12 @@ async def say(
     try:
         import ax_actiontopic
 
-        tid = ax_actiontopic.MAP.get(message.chat.id)
+        tid = ax_actiontopic.MAP.get((bid, message.chat.id))
+        if tid is None:
+            tid = ax_actiontopic.MAP.get(message.chat.id)
     except Exception:
         tid = None
 
-    b = bot or message.bot
     if tid and b is not None and not hasattr(message, "_orig_msg"):
         try:
             return await b.send_message(
@@ -123,8 +130,6 @@ async def act_and_reply(
     note: str = "",
     bot: Bot | None = None,
 ) -> bool:
-    """Run the Telegram action and send the confirmation concurrently, so the group
-    sees the reply as early as possible. If the action fails, edit the reply into the error."""
     reply_task = asyncio.create_task(say(message, text, kb, bot=bot))
     try:
         await action
@@ -157,8 +162,7 @@ async def gate(
     protect: bool = True,
     right: str | None = "can_restrict_members",
 ):
-    """Check group, admin rights, and target. Returns target user or None.
-    right: the admin permission sender (and bot) must hold. None = any admin."""
+    """Check group, admin rights, and target. Returns target user or None."""
     chat = message.chat
     user = message.from_user
     if user is None:
@@ -179,7 +183,7 @@ async def gate(
     jobs = [
         is_admin(bot, chat.id, user.id, right),
         is_admin(bot, chat.id, bot.id, right),
-        resolve_target(message, bot, pool),
+        resolve_target(message, bot, pool, bot_id=bot.id),
     ]
     if protect and rp is not None:
         jobs.append(is_admin(bot, chat.id, rp.id))
@@ -232,10 +236,18 @@ async def gate(
     return target
 
 
-async def clear_timer(pool: asyncpg.Pool, chat_id: int, uid: int, ptype: str) -> None:
+async def clear_timer(
+    pool: asyncpg.Pool,
+    chat_id: int,
+    uid: int,
+    ptype: str,
+    bot_id: int | None = None,
+) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as c:
         await c.execute(
-            "DELETE FROM ax_temp_punish WHERE chat_id=$1 AND user_id=$2 AND ptype=$3",
+            "DELETE FROM ax_temp_punish WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3 AND ptype=$4",
+            bid,
             chat_id,
             uid,
             ptype,
@@ -243,16 +255,17 @@ async def clear_timer(pool: asyncpg.Pool, chat_id: int, uid: int, ptype: str) ->
 
 
 async def perform(kind: str, bot: Bot, pool: asyncpg.Pool, chat_id: int, uid: int) -> None:
+    bid = bot_context.resolve_bot_id(bot.id)
     if kind == "mute":
         await bot.restrict_chat_member(chat_id, uid, permissions=MUTED)
     elif kind == "unmute":
         await bot.restrict_chat_member(chat_id, uid, permissions=FULL)
-        fire(clear_timer(pool, chat_id, uid, "mute"))
+        fire(clear_timer(pool, chat_id, uid, "mute", bot_id=bid))
     elif kind == "ban":
         await bot.ban_chat_member(chat_id, uid)
     elif kind == "unban":
         await bot.unban_chat_member(chat_id, uid, only_if_banned=True)
-        fire(clear_timer(pool, chat_id, uid, "ban"))
+        fire(clear_timer(pool, chat_id, uid, "ban", bot_id=bid))
     elif kind == "kick":
         await bot.ban_chat_member(chat_id, uid)
         await bot.unban_chat_member(chat_id, uid)
@@ -352,7 +365,6 @@ async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     parts = args if message.reply_to_message else args[1:]
     title = " ".join(parts)[:16] or None
 
-    # Nobody can hand out a right they don't hold themselves
     grant = {}
     for r in PROMOTE_GRANTS:
         if await is_admin(bot, chat_id, message.from_user.id, r):
@@ -383,7 +395,7 @@ async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     )
     if not ok:
         return
-    invalidate(chat_id, target.id)
+    invalidate(chat_id, target.id, bot_id=bot.id)
     if title:
         try:
             await bot.set_chat_administrator_custom_title(
@@ -442,11 +454,11 @@ async def demote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         bot=bot,
     )
     if ok:
-        invalidate(chat_id, target.id)
+        invalidate(chat_id, target.id, bot_id=bot.id)
 
 
 def make_temp(kind: str):
-    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
         target = await gate(message, bot, pool)
         if target is None:
             return
@@ -463,6 +475,7 @@ def make_temp(kind: str):
         reason = " ".join(d[1:]) or None
         until = datetime.now(timezone.utc) + timedelta(seconds=secs)
         chat_id = message.chat.id
+        bid = bot_ctx.bot_id
         if kind == "mute":
             action = bot.restrict_chat_member(chat_id, target.id, permissions=MUTED, until_date=until)
         else:
@@ -486,31 +499,35 @@ def make_temp(kind: str):
         async def _save() -> None:
             async with pool.acquire() as c:
                 await c.execute(
-                    "INSERT INTO ax_temp_punish (chat_id, user_id, ptype, expires_at, reason) "
-                    "VALUES ($1,$2,$3,$4,$5) "
-                    "ON CONFLICT (chat_id, user_id, ptype) DO UPDATE SET expires_at=$4, reason=$5",
+                    "INSERT INTO ax_temp_punish (bot_id, chat_id, user_id, ptype, expires_at, reason) "
+                    "VALUES ($1,$2,$3,$4,$5,$6) "
+                    "ON CONFLICT (chat_id, user_id, ptype) DO UPDATE SET bot_id=$1, expires_at=$5, reason=$6",
+                    bid,
                     chat_id,
                     target.id,
                     kind,
                     until,
                     reason,
                 )
-            NEED[0] = True
+            NEED[bid] = True
 
-        NEED[0] = True
+        NEED[bid] = True
         fire(_save())
         fire(_log_action(bot, pool, chat_id, message.from_user, f"t{kind}", target, extra))
 
     return cmd
 
 
-async def check_expired(bot: Bot, pool: asyncpg.Pool) -> None:
-    if not NEED[0]:
+async def check_expired(bot: Bot, pool: asyncpg.Pool, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id if bot_id is not None else bot.id)
+    if not NEED.get(bid, True):
         return
     try:
         async with pool.acquire() as c:
             rows = await c.fetch(
-                "SELECT chat_id, user_id, ptype FROM ax_temp_punish WHERE expires_at <= now()"
+                "SELECT chat_id, user_id, ptype FROM ax_temp_punish "
+                "WHERE bot_id=$1 AND expires_at <= now()",
+                bid,
             )
         for r in rows:
             try:
@@ -522,10 +539,10 @@ async def check_expired(bot: Bot, pool: asyncpg.Pool) -> None:
                     r["user_id"],
                 )
             except Exception:
-                await clear_timer(pool, r["chat_id"], r["user_id"], r["ptype"])
+                await clear_timer(pool, r["chat_id"], r["user_id"], r["ptype"], bot_id=bid)
         async with pool.acquire() as c:
-            if not await c.fetchval("SELECT count(*) FROM ax_temp_punish"):
-                NEED[0] = False
+            if not await c.fetchval("SELECT count(*) FROM ax_temp_punish WHERE bot_id=$1", bid):
+                NEED[bid] = False
     except Exception:
         log.exception("check_expired job failed")
 
@@ -540,13 +557,15 @@ router.message(Command("tban"))(make_temp("ban"))
 async def on_startup(bot: Bot, dispatcher) -> None:
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     pool: asyncpg.Pool = dispatcher["pool"]
+    bid = bot_context.resolve_bot_id(bot.id)
+    NEED[bid] = True
     scheduler.add_job(
         check_expired,
         trigger="interval",
         seconds=300,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
-        args=[bot, pool],
-        id="ax_mod:check_expired",
+        args=[bot, pool, bid],
+        id=f"ax_mod:check_expired:{bid}",
         replace_existing=True,
     )
 

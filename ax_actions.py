@@ -1,6 +1,4 @@
-"""Shared punishment helper: ax_actions.run(bot, pool, chat_id, user, action, reason)
-Actions: ban mute kick warn tban tmute delete, plus silent s-versions (sban smute skick swarn).
-action may carry a time: "tmute 6h" or "tban 1d"."""
+"""Shared punishment helper: ax_actions.run(bot, pool, chat_id, user, action, reason) (bot_id aware)."""
 import logging
 import re
 
@@ -11,6 +9,7 @@ from aiogram.enums import ParseMode
 import ax_mod
 import ax_warn
 import ax_warn2
+import bot_context
 from ax_common import esc, fire
 
 log = logging.getLogger(__name__)
@@ -48,21 +47,24 @@ async def run(
     user,
     action: str,
     reason: str | None = None,
+    bot_id: int | None = None,
 ) -> None:
     name, secs, silent = parse_action(action)
     if name is None or name in ("nothing", "delete"):
         return
 
+    bid = bot_context.resolve_bot_id(bot_id if bot_id is not None else bot.id)
     icon, title = "⚠️", "Warned"
     first_name = getattr(user, "first_name", None) or "User"
 
     if name == "warn":
-        s, n = await ax_warn.add_warn(pool, chat_id, user.id, reason)
+        s, n = await ax_warn.add_warn(pool, chat_id, user.id, reason, bot_id=bid)
         if n >= s["warn_limit"]:
             await ax_warn.punish(bot, pool, chat_id, user.id, s["warn_mode"], s["warn_mode_secs"])
             async with pool.acquire() as c:
                 await c.execute(
-                    "DELETE FROM ax_warn_log WHERE chat_id=$1 AND user_id=$2",
+                    "DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
+                    bid,
                     chat_id,
                     user.id,
                 )
@@ -115,7 +117,7 @@ async def run(
     try:
         import ax_misc3
 
-        if chat_id in ax_misc3.SILENT:
+        if (bid, chat_id) in ax_misc3.SILENT or chat_id in ax_misc3.SILENT:
             return
     except Exception:
         pass
@@ -127,7 +129,9 @@ async def run(
     try:
         import ax_actiontopic
 
-        tid = ax_actiontopic.MAP.get(chat_id)
+        tid = ax_actiontopic.MAP.get((bid, chat_id))
+        if tid is None:
+            tid = ax_actiontopic.MAP.get(chat_id)
     except Exception:
         tid = None
 
