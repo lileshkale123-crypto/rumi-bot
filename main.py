@@ -132,6 +132,7 @@ MODULE_ORDER = [
     "ax_admin2",
     "ax_adminpanel",
     "ax_adminpanel2",
+    "ax_ownerpanel",
     "ax_cheat",
     "ax_funmode",
     "ax_kill",
