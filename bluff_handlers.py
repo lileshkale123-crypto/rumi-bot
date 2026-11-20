@@ -1,4 +1,4 @@
-"""Shadow Bluff handlers, timers and game loop (aiogram 3.x)."""
+"""Shadow Bluff handlers, timers and game loop (aiogram 3.x, per-bot isolated)."""
 import asyncio
 import logging
 import random
@@ -16,11 +16,13 @@ import games
 import services
 import ui
 from ax_common import cmd_args
+from bot_context import BotContext
 
 log = logging.getLogger(__name__)
 router = Router(name="bluff_handlers")
 
-RUN: dict[str, dict] = {}  # game_id -> live in-memory state
+# Keyed by (bot_id, game_id) so clones never collide on game state
+RUN: dict[tuple[int, str], dict] = {}
 
 S = config.CURRENCY_SYMBOL
 ERRORS = {
@@ -73,7 +75,7 @@ async def edit_round(bot: Bot, g: dict) -> None:
     text = bui.round_card(g["round"], rows, left)
     kb = bui.round_keyboard(g["id"], games.CARD_LETTERS, g["styled"])
     if not await safe_edit(bot, g, text, kb) and g["styled"]:
-        g["styled"] = False  # green button rejected: fall back to a normal one
+        g["styled"] = False
         log.warning("green button style not accepted, using normal buttons")
         await safe_edit(bot, g, text, bui.round_keyboard(g["id"], games.CARD_LETTERS, False))
 
@@ -84,10 +86,10 @@ async def lobby_timeout(bot: Bot, g: dict) -> None:
     except asyncio.CancelledError:
         return
     async with g["lock"]:
-        if g["phase"] != "lobby" or not await games.refund_game(g["pool"], g["id"]):
+        if g["phase"] != "lobby" or not await games.refund_game(g["pool"], g["id"], bot_id=g["bot_id"]):
             return
         g["phase"] = "closed"
-        RUN.pop(g["id"], None)
+        RUN.pop((g["bot_id"], g["id"]), None)
         await safe_edit(
             bot,
             g,
@@ -96,7 +98,12 @@ async def lobby_timeout(bot: Bot, g: dict) -> None:
 
 
 @router.message(Command("bluff"))
-async def bluff_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def bluff_command(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     user = message.from_user
     chat = message.chat
     if user is None:
@@ -119,8 +126,9 @@ async def bluff_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             parse_mode=ParseMode.HTML,
         )
         return
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
-    res = await games.create_game(pool, chat.id, user.id, wager)
+    bid = bot_ctx.bot_id
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
+    res = await games.create_game(pool, chat.id, user.id, wager, bot_id=bid)
     if res["status"] != "ok":
         await message.reply(
             ui.error_card(ERRORS.get(res["status"], "Something went wrong. Please try again.")),
@@ -136,9 +144,10 @@ async def bluff_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             reply_markup=bui.lobby_keyboard(gid, wager),
         )
     except TelegramAPIError:
-        await games.refund_game(pool, gid)
+        await games.refund_game(pool, gid, bot_id=bid)
         return
     g = {
+        "bot_id": bid,
         "id": gid,
         "pool": pool,
         "chat_id": chat.id,
@@ -151,7 +160,7 @@ async def bluff_command(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         "styled": True,
         "lock": asyncio.Lock(),
     }
-    RUN[gid] = g
+    RUN[(bid, gid)] = g
     g["task"] = asyncio.create_task(lobby_timeout(bot, g))
 
 
@@ -170,8 +179,9 @@ async def join_action(q: CallbackQuery, bot: Bot, g: dict, user) -> None:
     if g["phase"] != "lobby":
         await q.answer("The lobby is closed.", show_alert=True)
         return
-    await services.ensure_user_and_wallet(g["pool"], user.id, user.username, user.first_name)
-    res = await games.join_game(g["pool"], g["id"], user.id)
+    bid = g["bot_id"]
+    await services.ensure_user_and_wallet(g["pool"], user.id, user.username, user.first_name, bot_id=bid)
+    res = await games.join_game(g["pool"], g["id"], user.id, bot_id=bid)
     st = res["status"]
     if st != "ok":
         msg = {
@@ -186,7 +196,7 @@ async def join_action(q: CallbackQuery, bot: Bot, g: dict, user) -> None:
     await q.answer("You joined the game!")
     if len(g["players"]) >= g["max"]:
         g["task"].cancel()
-        await games.mark_active(g["pool"], g["id"])
+        await games.mark_active(g["pool"], g["id"], bot_id=bid)
         await begin_game(bot, g)
     else:
         await edit_lobby(bot, g)
@@ -196,14 +206,15 @@ async def cancel_action(q: CallbackQuery, bot: Bot, g: dict, user) -> None:
     if g["phase"] != "lobby":
         await q.answer("Too late to cancel.", show_alert=True)
         return
-    res = await games.cancel_lobby(g["pool"], g["id"], user.id)
+    bid = g["bot_id"]
+    res = await games.cancel_lobby(g["pool"], g["id"], user.id, bot_id=bid)
     if res["status"] != "ok":
         text = "Only the Monarch can cancel." if res["status"] == "not_host" else "This lobby is already closed."
         await q.answer(text, show_alert=True)
         return
     g["phase"] = "closed"
     g["task"].cancel()
-    RUN.pop(g["id"], None)
+    RUN.pop((bid, g["id"]), None)
     await q.answer("Game cancelled.")
     await safe_edit(
         bot,
@@ -216,7 +227,8 @@ async def start_action(q: CallbackQuery, bot: Bot, g: dict, user) -> None:
     if g["phase"] != "lobby":
         await q.answer("The game already started.", show_alert=True)
         return
-    res = await games.start_game(g["pool"], g["id"], user.id)
+    bid = g["bot_id"]
+    res = await games.start_game(g["pool"], g["id"], user.id, bot_id=bid)
     st = res["status"]
     if st != "ok":
         msg = {
@@ -262,10 +274,10 @@ async def play_action(q: CallbackQuery, g: dict, user, letter: str) -> None:
 
 
 @router.callback_query(F.data.startswith("bluff:"))
-async def bluff_callback(query: CallbackQuery, bot: Bot) -> None:
+async def bluff_callback(query: CallbackQuery, bot: Bot, bot_ctx: BotContext) -> None:
     user = query.from_user
     parts = (query.data or "").split(":")
-    g = RUN.get(parts[2]) if len(parts) > 2 else None
+    g = RUN.get((bot_ctx.bot_id, parts[2])) if len(parts) > 2 else None
     if g is None:
         await query.answer("This game has ended.", show_alert=True)
         return
@@ -308,7 +320,7 @@ async def play_round(bot: Bot, g: dict, round_no: int) -> None:
     async with g["lock"]:
         g["round_open"] = False
         for u in g["players"]:
-            if u not in g["choices"]:  # timed out: play a random remaining card
+            if u not in g["choices"]:
                 letter = random.choice(list(g["hands"][u]))
                 g["choices"][u] = (letter, g["hands"][u].pop(letter))
     values = {u: g["choices"][u][1] for u in g["players"]}
@@ -322,7 +334,7 @@ async def play_round(bot: Bot, g: dict, round_no: int) -> None:
 
 
 async def finish_match(bot: Bot, g: dict) -> None:
-    res = await games.finish_game(g["pool"], g["id"], g["scores"])
+    res = await games.finish_game(g["pool"], g["id"], g["scores"], bot_id=g["bot_id"])
     if res["status"] != "ok":
         log.error("bluff payout refused: %s", res)
         return
@@ -375,6 +387,7 @@ async def celebrate(bot: Bot, g: dict, res: dict, winners: list[tuple[str, int, 
 
 
 async def run_game(bot: Bot, g: dict) -> None:
+    bid = g["bot_id"]
     try:
         for round_no in range(1, 5):
             await play_round(bot, g, round_no)
@@ -385,14 +398,14 @@ async def run_game(bot: Bot, g: dict) -> None:
     except Exception:
         log.exception("bluff game crashed, refunding")
         g["phase"] = "closed"
-        await games.refund_game(g["pool"], g["id"])
+        await games.refund_game(g["pool"], g["id"], bot_id=bid)
         await safe_edit(
             bot,
             g,
             "🃏 <b>SHADOW BLUFF</b>\n<i>The shadows collapsed. Everyone was refunded.</i>",
         )
     finally:
-        RUN.pop(g["id"], None)
+        RUN.pop((bid, g["id"]), None)
 
 
 async def on_shutdown() -> None:

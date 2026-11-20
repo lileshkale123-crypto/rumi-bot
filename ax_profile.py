@@ -163,8 +163,10 @@ async def profile_cmd(
 
     clan_row, photo, card_title = await asyncio.gather(
         p.fetchrow(
-            "SELECT c.name FROM clan_members m JOIN clans c ON c.id = m.clan_id "
-            "WHERE m.user_id = $1",
+            "SELECT c.name FROM clan_members m "
+            "JOIN clans c ON c.id = m.clan_id AND c.bot_id = m.bot_id "
+            "WHERE m.bot_id = $1 AND m.user_id = $2",
+            bid,
             target.id,
         ),
         _fetch_avatar(bot, target.id),

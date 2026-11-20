@@ -1,4 +1,4 @@
-"""Chat events for Rumi: Blood Pacts, Underworld Bounties, Flash Heists (aiogram 3.x + APScheduler)."""
+"""Chat events: Blood Pacts, Underworld Bounties, Flash Heists (aiogram 3.x + APScheduler, bot_id & brand aware)."""
 import asyncio
 import html
 import logging
@@ -13,33 +13,33 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import bot_context
 import services
 from ax_common import cmd_args
+from bot_context import BotContext, get_brand
 
 log = logging.getLogger(__name__)
 router = Router(name="chat_events")
 
-# ---- banners (Telegram file_ids from your DM bot) ----
 BANNER_PACT = "AgACAgUAAxkBAAIQ8GrUt-AtfUycvKCrm31xPSuFSPLiAALnEWsbjaaoVoF1achx5h9AAQADAgADeQADPQQ"
 BANNER_BOUNTY = "AgACAgUAAxkBAAIQ8mrUuBB7Wu8Dt_hTquhyU8TtFoPSAALoEWsbjaaoVv86QfdWbrqvAQADAgADeQADPQQ"
 BANNER_HEIST = "AgACAgUAAxkBAAIQ9GrUvuE9Uvt92A7OTl96CnrUOjmGAAL1EWsbjaaoVk_07OGThb7vAQADAgADeQADPQQ"
 
-# ---- tuning ----
 PACT_BETRAY_COST = 50_000
 PACT_BONUS = 0.05
 BOUNTY_MIN = 1_000
 HEIST_CARGO = 10_000
 HEIST_CREW = 3
-HEIST_MIN_DELAY = 4 * 3600      # next heist 4 to 5 hours after the last
+HEIST_MIN_DELAY = 4 * 3600
 HEIST_MAX_DELAY = 5 * 3600
-HEIST_FIRST_MIN = 1 * 3600      # first heist after a restart
+HEIST_FIRST_MIN = 1 * 3600
 HEIST_FIRST_MAX = 3 * 3600
-HEIST_EXPIRE = 15 * 60          # truck escapes if the crew is not full
+HEIST_EXPIRE = 15 * 60
 
-_heists: dict[tuple[int, int], dict] = {}
+# Keyed by (bot_id, chat_id, message_id) so clones never share active heists
+_heists: dict[tuple[int, int, int], dict] = {}
 
 
-# ------------------------------------------------------------------ helpers
 def _money(n: int) -> str:
     return f"${n:,}"
 
@@ -84,7 +84,7 @@ async def _notice(msg: Message, text: str):
     return await msg.reply(f"<blockquote>{text}</blockquote>", parse_mode=ParseMode.HTML)
 
 
-async def _first_name(bot: Bot, chat_id: int, uid: int, pool: asyncpg.Pool) -> str:
+async def _first_name(bot: Bot, chat_id: int, uid: int, pool: asyncpg.Pool, bot_id: int) -> str:
     try:
         member = await bot.get_chat_member(chat_id, uid)
         if member.user.first_name:
@@ -92,52 +92,69 @@ async def _first_name(bot: Bot, chat_id: int, uid: int, pool: asyncpg.Pool) -> s
     except Exception:
         pass
     try:
-        return html.escape(str(await services.get_display_name(pool, uid)))
+        return html.escape(str(await services.get_display_name(pool, uid, bot_id=bot_id)))
     except Exception:
         return "Player"
 
 
-async def _ensure(pool: asyncpg.Pool, user) -> None:
-    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name)
+async def _ensure(pool: asyncpg.Pool, user, bot_id: int) -> None:
+    await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bot_id)
 
 
-async def _lock_wallets(conn, ids):
-    """Lock wallets lowest id first (same order as _transfer_core) so nothing deadlocks."""
+async def _lock_wallets(conn, ids, bot_id: int):
     rows = {}
     for uid in sorted(set(ids)):
-        rows[uid] = await conn.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", uid)
+        rows[uid] = await conn.fetchrow(
+            "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+            bot_id,
+            uid,
+        )
     return rows
 
 
-async def _pact_of(conn, uid: int):
+async def _pact_of(conn, uid: int, bot_id: int):
     return await conn.fetchrow(
-        "SELECT player1_id, player2_id FROM blood_pacts WHERE player1_id=$1 OR player2_id=$1",
+        "SELECT player1_id, player2_id FROM blood_pacts "
+        "WHERE bot_id=$1 AND (player1_id=$2 OR player2_id=$2)",
+        bot_id,
         uid,
     )
 
 
-# ------------------------------------------------------------ public hooks
-async def pact_multiplier(pool: asyncpg.Pool, user_id: int) -> float:
-    """1.05 if the user has an active Blood Pact, else 1.0 (use on job payouts)."""
+async def pact_multiplier(pool: asyncpg.Pool, user_id: int, bot_id: int | None = None) -> float:
+    """1.05 if the user has an active Blood Pact in this bot, else 1.0."""
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
-        row = await _pact_of(conn, user_id)
+        row = await _pact_of(conn, user_id, bid)
     return 1.0 + PACT_BONUS if row else 1.0
 
 
-async def claim_bounty(conn, robber_id: int, target_id: int) -> int:
+async def claim_bounty(
+    conn,
+    robber_id: int,
+    target_id: int,
+    bot_id: int | None = None,
+) -> int:
     """Call inside the /rob transaction after a SUCCESSFUL rob. Returns coins paid (0 if none)."""
+    bid = bot_context.resolve_bot_id(bot_id)
     amount = await conn.fetchval(
-        "DELETE FROM bounties WHERE target_id=$1 RETURNING bounty_amount",
+        "DELETE FROM bounties WHERE bot_id=$1 AND target_id=$2 RETURNING bounty_amount",
+        bid,
         target_id,
     )
     if not amount:
         return 0
-    wallet = await conn.fetchrow("SELECT cash FROM wallets WHERE user_id=$1 FOR UPDATE", robber_id)
+    wallet = await conn.fetchrow(
+        "SELECT cash FROM wallets WHERE bot_id=$1 AND user_id=$2 FOR UPDATE",
+        bid,
+        robber_id,
+    )
     if wallet is None:
         return 0
     await conn.execute(
-        "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE user_id=$2",
+        "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE bot_id=$2 AND user_id=$3",
         amount,
+        bid,
         robber_id,
     )
     await services.insert_transaction(
@@ -150,13 +167,14 @@ async def claim_bounty(conn, robber_id: int, target_id: int) -> int:
         balance_after=wallet["cash"] + amount,
         related_user_id=target_id,
         source="rob_bounty",
+        bot_id=bid,
     )
     return int(amount)
 
 
 # ------------------------------------------------------------ FEATURE 1: PACTS
 @router.message(Command("pact"))
-async def pact_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def pact_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
@@ -173,11 +191,12 @@ async def pact_cmd(message: Message, pool: asyncpg.Pool) -> None:
         await _notice(message, "🩸 A pact needs <b>two real people</b>, " + _name(user) + " 😜")
         return
 
-    await _ensure(pool, user)
-    await _ensure(pool, target)
+    bid = bot_ctx.bot_id
+    await _ensure(pool, user, bid)
+    await _ensure(pool, target, bid)
     async with pool.acquire() as conn:
-        mine = await _pact_of(conn, user.id)
-        theirs = await _pact_of(conn, target.id)
+        mine = await _pact_of(conn, user.id, bid)
+        theirs = await _pact_of(conn, target.id, bid)
     if mine:
         await _notice(
             message,
@@ -197,19 +216,27 @@ async def pact_cmd(message: Message, pool: asyncpg.Pool) -> None:
     await _reply_card(message, BANNER_PACT, text, _kb("🩸 Accept Pact", f"ce:pact:{user.id}:{target.id}"))
 
 
-async def _pact_accept(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool, proposer: int, target: int) -> None:
+async def _pact_accept(
+    query: CallbackQuery,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    proposer: int,
+    target: int,
+    bid: int,
+) -> None:
     if query.from_user.id != target:
         await query.answer("This offer isn't for you 🩸", show_alert=True)
         return
     status = "ok"
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _lock_wallets(conn, [proposer, target])  # serialises pact changes for both
-            if await _pact_of(conn, proposer) or await _pact_of(conn, target):
+            await _lock_wallets(conn, [proposer, target], bid)
+            if await _pact_of(conn, proposer, bid) or await _pact_of(conn, target, bid):
                 status = "busy"
             else:
                 await conn.execute(
-                    "INSERT INTO blood_pacts (player1_id, player2_id) VALUES ($1, $2)",
+                    "INSERT INTO blood_pacts (bot_id, player1_id, player2_id) VALUES ($1, $2, $3)",
+                    bid,
                     proposer,
                     target,
                 )
@@ -223,7 +250,7 @@ async def _pact_accept(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool, propo
         return
     await query.answer("Pact forged 🩸")
     if query.message:
-        a = await _first_name(bot, query.message.chat.id, proposer, pool)
+        a = await _first_name(bot, query.message.chat.id, proposer, pool, bid)
         b = _name(query.from_user)
         text = (
             "🩸 <b>BLOOD PACT FORGED</b>\n"
@@ -235,17 +262,19 @@ async def _pact_accept(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool, propo
 
 
 @router.message(Command("betray"))
-async def betray_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def betray_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
-    await _ensure(pool, user)
+    bid = bot_ctx.bot_id
+    bname = html.escape(get_brand(bid).name)
+    await _ensure(pool, user, bid)
     status, partner = "ok", None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wallets = await _lock_wallets(conn, [user.id])
+            wallets = await _lock_wallets(conn, [user.id], bid)
             cash = wallets[user.id]["cash"]
-            pact = await _pact_of(conn, user.id)
+            pact = await _pact_of(conn, user.id, bid)
             if pact is None:
                 status = "none"
             else:
@@ -254,12 +283,15 @@ async def betray_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
                     status = "poor"
                 else:
                     await conn.execute(
-                        "DELETE FROM blood_pacts WHERE player1_id=$1 OR player2_id=$1",
+                        "DELETE FROM blood_pacts WHERE bot_id=$1 AND (player1_id=$2 OR player2_id=$2)",
+                        bid,
                         user.id,
                     )
                     await conn.execute(
-                        "UPDATE wallets SET cash = cash - $1, updated_at = now() WHERE user_id=$2",
+                        "UPDATE wallets SET cash = cash - $1, updated_at = now() "
+                        "WHERE bot_id=$2 AND user_id=$3",
                         PACT_BETRAY_COST,
+                        bid,
                         user.id,
                     )
                     await services.insert_transaction(
@@ -272,6 +304,7 @@ async def betray_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
                         balance_after=cash - PACT_BETRAY_COST,
                         related_user_id=partner,
                         source="betray_command",
+                        bot_id=bid,
                     )
 
     if status == "none":
@@ -282,19 +315,19 @@ async def betray_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             f"💸 Betrayal costs <code>{_money(PACT_BETRAY_COST)}</code> Coins and your wallet is short, {_name(user)}. The pact stays 🩸",
         )
     else:
-        pname = await _first_name(bot, message.chat.id, partner, pool)
+        pname = await _first_name(bot, message.chat.id, partner, pool, bid)
         await _notice(
             message,
             "💔 <b>PACT BROKEN</b>\n"
             f"{_name(user)} betrayed {pname}.\n"
             f"💸 <b>Price paid:</b> <code>{_money(PACT_BETRAY_COST)} Coins</code>\n"
-            '<i>Rumi says: "Loyalty is priceless... betrayal is $50,000." 😜</i>',
+            f'<i>{bname} says: "Loyalty is priceless... betrayal is $50,000." 😜</i>',
         )
 
 
 # ---------------------------------------------------------- FEATURE 2: BOUNTIES
 @router.message(Command("bounty"))
-async def bounty_cmd(message: Message, pool: asyncpg.Pool) -> None:
+async def bounty_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None:
         return
@@ -324,22 +357,28 @@ async def bounty_cmd(message: Message, pool: asyncpg.Pool) -> None:
         )
         return
 
-    await _ensure(pool, user)
+    bid = bot_ctx.bot_id
+    bname = html.escape(get_brand(bid).name)
+    await _ensure(pool, user, bid)
     total = None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wallets = await _lock_wallets(conn, [user.id])
+            wallets = await _lock_wallets(conn, [user.id], bid)
             cash = wallets[user.id]["cash"]
             if cash >= amount:
                 await conn.execute(
-                    "UPDATE wallets SET cash = cash - $1, updated_at = now() WHERE user_id=$2",
+                    "UPDATE wallets SET cash = cash - $1, updated_at = now() WHERE bot_id=$2 AND user_id=$3",
                     amount,
+                    bid,
                     user.id,
                 )
                 total = await conn.fetchval(
-                    "INSERT INTO bounties (target_id, bounty_amount) VALUES ($1, $2) "
-                    "ON CONFLICT (target_id) DO UPDATE SET bounty_amount = bounties.bounty_amount + EXCLUDED.bounty_amount "
+                    "INSERT INTO bounties (bot_id, target_id, bounty_amount) VALUES ($1, $2, $3) "
+                    "ON CONFLICT (target_id) DO UPDATE SET "
+                    "bot_id = EXCLUDED.bot_id, "
+                    "bounty_amount = bounties.bounty_amount + EXCLUDED.bounty_amount "
                     "RETURNING bounty_amount",
+                    bid,
                     target.id,
                     amount,
                 )
@@ -353,6 +392,7 @@ async def bounty_cmd(message: Message, pool: asyncpg.Pool) -> None:
                     balance_after=cash - amount,
                     related_user_id=target.id,
                     source="bounty_command",
+                    bot_id=bid,
                 )
     if total is None:
         await _notice(message, f"💸 Your wallet is too light for that bounty, {_name(user)} 🥺")
@@ -362,18 +402,19 @@ async def bounty_cmd(message: Message, pool: asyncpg.Pool) -> None:
         "📜 <b>NEW BOUNTY ISSUED</b>\n"
         f"<blockquote>🎯 <b>Target:</b> {_name(target)}\n"
         f"💰 <b>Reward:</b> <code>{_money(total)} Coins</code>{extra}\n"
-        '<i>Rumi says: "Someone really doesn\'t like you... Watch your back! 😜"</i></blockquote>'
+        f'<i>{bname} says: "Someone really doesn\'t like you... Watch your back! 😜"</i></blockquote>'
     )
     await _reply_card(message, BANNER_BOUNTY, text)
 
 
 # ------------------------------------------------------- FEATURE 3: FLASH HEISTS
-def _heist_text(crew: list[tuple[int, str]]) -> str:
+def _heist_text(crew: list[tuple[int, str]], bot_id: int | None = None) -> str:
+    bname = html.escape(get_brand(bot_id).name)
     names = ", ".join(n for _, n in crew)
     crew_line = f"\n🔫 <b>Crew:</b> {names}" if crew else ""
     return (
         "🚨 <b>ARMORED TRUCK SPOTTED</b>\n"
-        '<blockquote><i>Rumi says: "An unguarded syndicate transport is passing through the chat! '
+        f'<blockquote><i>{bname} says: "An unguarded syndicate transport is passing through the chat! '
         'Who is fast enough?"</i>\n'
         f"💰 <b>Cargo:</b> <code>{_money(HEIST_CARGO)} Coins</code>\n"
         f"👥 <b>Crew Needed:</b> <code>{len(crew)}/{HEIST_CREW}</code>{crew_line}</blockquote>"
@@ -384,28 +425,42 @@ def _heist_kb() -> InlineKeyboardMarkup:
     return _kb("🔫 Join the Heist", "ce:heist")
 
 
-def _schedule_next(scheduler: AsyncIOScheduler, bot: Bot, pool: asyncpg.Pool, delay: int | None = None) -> None:
+def _schedule_next(
+    scheduler: AsyncIOScheduler,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    delay: int | None = None,
+    bot_id: int | None = None,
+) -> None:
+    bid = bot_context.resolve_bot_id(bot_id if bot_id is not None else bot.id)
     wait = delay if delay is not None else random.randint(HEIST_MIN_DELAY, HEIST_MAX_DELAY)
     scheduler.add_job(
         heist_job,
         trigger="date",
         run_date=datetime.now(timezone.utc) + timedelta(seconds=wait),
-        args=[bot, pool, scheduler],
-        id="flash_heist",
+        args=[bot, pool, scheduler, bid],
+        id=f"flash_heist:{bid}",
         replace_existing=True,
     )
 
 
-async def heist_job(bot: Bot, pool: asyncpg.Pool, scheduler: AsyncIOScheduler) -> None:
-    """Picks ONE random group from ax_groups and drops a heist. Re-arms itself 4-5h later."""
+async def heist_job(
+    bot: Bot,
+    pool: asyncpg.Pool,
+    scheduler: AsyncIOScheduler,
+    bot_id: int | None = None,
+) -> None:
+    """Picks ONE random group from ax_groups for this bot and drops a heist."""
+    bid = bot_context.resolve_bot_id(bot_id if bot_id is not None else bot.id)
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT chat_id FROM ax_groups "
-                "WHERE chat_id NOT IN (SELECT chat_id FROM ax_channels) "
-                "ORDER BY random() LIMIT 5"
+                "WHERE bot_id=$1 AND chat_id NOT IN (SELECT chat_id FROM ax_channels WHERE bot_id=$1) "
+                "ORDER BY random() LIMIT 5",
+                bid,
             )
-        for row in rows:  # first group that accepts the message wins
+        for row in rows:
             chat_id = row["chat_id"]
             try:
                 c = await bot.get_chat(chat_id)
@@ -414,11 +469,12 @@ async def heist_job(bot: Bot, pool: asyncpg.Pool, scheduler: AsyncIOScheduler) -
             except Exception:
                 continue
             try:
-                sent = await _bot_card(bot, chat_id, BANNER_HEIST, _heist_text([]), _heist_kb())
+                sent = await _bot_card(bot, chat_id, BANNER_HEIST, _heist_text([], bot_id=bid), _heist_kb())
             except Exception:
                 log.info("heist: cannot post in %s, trying another group", chat_id)
                 continue
-            _heists[(chat_id, sent.message_id)] = {
+            _heists[(bid, chat_id, sent.message_id)] = {
+                "bot_id": bid,
                 "crew": [],
                 "done": False,
                 "lock": asyncio.Lock(),
@@ -428,43 +484,51 @@ async def heist_job(bot: Bot, pool: asyncpg.Pool, scheduler: AsyncIOScheduler) -
                 _heist_expire,
                 trigger="date",
                 run_date=datetime.now(timezone.utc) + timedelta(seconds=HEIST_EXPIRE),
-                args=[chat_id, sent.message_id],
-                id=f"heist_exp:{chat_id}:{sent.message_id}",
+                args=[bid, chat_id, sent.message_id],
+                id=f"heist_exp:{bid}:{chat_id}:{sent.message_id}",
                 replace_existing=True,
             )
             break
     except Exception:
         log.exception("heist_job failed")
     finally:
-        _schedule_next(scheduler, bot, pool)
+        _schedule_next(scheduler, bot, pool, bot_id=bid)
 
 
-async def _heist_expire(chat_id: int, mid: int) -> None:
-    h = _heists.get((chat_id, mid))
+async def _heist_expire(bid: int, chat_id: int, mid: int) -> None:
+    h = _heists.get((bid, chat_id, mid))
     if not h:
         return
     async with h["lock"]:
         if h["done"]:
             return
         h["done"] = True
-    _heists.pop((chat_id, mid), None)
+    _heists.pop((bid, chat_id, mid), None)
+    bname = html.escape(get_brand(bid).name)
     await _edit_card(
         h["msg"],
-        '💨 <b>THE TRUCK GOT AWAY</b>\n<blockquote><i>Rumi says: "Too slow... the crew never assembled." 😜</i></blockquote>',
+        f'💨 <b>THE TRUCK GOT AWAY</b>\n<blockquote><i>{bname} says: "Too slow... the crew never assembled." 😜</i></blockquote>',
     )
 
 
-async def _pay_crew(pool: asyncpg.Pool, chat_id: int, mid: int, crew: list[tuple[int, str]]) -> int:
+async def _pay_crew(
+    pool: asyncpg.Pool,
+    bid: int,
+    chat_id: int,
+    mid: int,
+    crew: list[tuple[int, str]],
+) -> int:
     share = HEIST_CARGO // HEIST_CREW
     ids = [uid for uid, _ in crew]
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wallets = await _lock_wallets(conn, ids)
+            wallets = await _lock_wallets(conn, ids, bid)
             for uid in ids:
                 before = wallets[uid]["cash"]
                 await conn.execute(
-                    "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE user_id=$2",
+                    "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE bot_id=$2 AND user_id=$3",
                     share,
+                    bid,
                     uid,
                 )
                 await services.insert_transaction(
@@ -476,23 +540,29 @@ async def _pay_crew(pool: asyncpg.Pool, chat_id: int, mid: int, crew: list[tuple
                     balance_before=before,
                     balance_after=before + share,
                     source="flash_heist",
-                    idempotency_key=f"heist:{chat_id}:{mid}:{uid}",
+                    idempotency_key=f"heist:{bid}:{chat_id}:{mid}:{uid}",
+                    bot_id=bid,
                 )
     return share
 
 
-async def _heist_join(query: CallbackQuery, pool: asyncpg.Pool, scheduler: AsyncIOScheduler) -> None:
+async def _heist_join(
+    query: CallbackQuery,
+    pool: asyncpg.Pool,
+    scheduler: AsyncIOScheduler,
+    bid: int,
+) -> None:
     msg = query.message
     user = query.from_user
     if msg is None:
         await query.answer()
         return
-    key = (msg.chat.id, msg.message_id)
+    key = (bid, msg.chat.id, msg.message_id)
     h = _heists.get(key)
     if not h or h["done"]:
         await query.answer("This heist is already over 💨", show_alert=True)
         return
-    await _ensure(pool, user)
+    await _ensure(pool, user, bid)
     async with h["lock"]:
         if h["done"]:
             await query.answer("This heist is already over 💨", show_alert=True)
@@ -503,20 +573,20 @@ async def _heist_join(query: CallbackQuery, pool: asyncpg.Pool, scheduler: Async
         h["crew"].append((user.id, _name(user)))
         if len(h["crew"]) < HEIST_CREW:
             await query.answer("You're in the crew! 🔫")
-            await _edit_card(msg, _heist_text(h["crew"]), _heist_kb())
+            await _edit_card(msg, _heist_text(h["crew"], bot_id=bid), _heist_kb())
             return
         h["done"] = True
         crew = list(h["crew"])
 
     await query.answer("Crew complete! 🚨")
     try:
-        scheduler.remove_job(f"heist_exp:{key[0]}:{key[1]}")
+        scheduler.remove_job(f"heist_exp:{bid}:{key[1]}:{key[2]}")
     except JobLookupError:
         pass
     _heists.pop(key, None)
 
     try:
-        share = await _pay_crew(pool, key[0], key[1], crew)
+        share = await _pay_crew(pool, bid, key[1], key[2], crew)
     except Exception:
         log.exception("heist payout failed")
         await _edit_card(
@@ -534,20 +604,21 @@ async def _heist_join(query: CallbackQuery, pool: asyncpg.Pool, scheduler: Async
     )
 
 
-# ------------------------------------------------------------------ routing
 @router.callback_query(F.data.startswith("ce:"))
 async def ce_callback(
     query: CallbackQuery,
     bot: Bot,
     pool: asyncpg.Pool,
     scheduler: AsyncIOScheduler,
+    bot_ctx: BotContext,
 ) -> None:
     parts = (query.data or "").split(":")
+    bid = bot_ctx.bot_id
     try:
         if len(parts) == 4 and parts[1] == "pact":
-            await _pact_accept(query, bot, pool, int(parts[2]), int(parts[3]))
+            await _pact_accept(query, bot, pool, int(parts[2]), int(parts[3]), bid)
         elif len(parts) >= 2 and parts[1] == "heist":
-            await _heist_join(query, pool, scheduler)
+            await _heist_join(query, pool, scheduler, bid)
         else:
             await query.answer()
     except Exception:
@@ -561,7 +632,14 @@ async def ce_callback(
 async def on_startup(bot: Bot, dispatcher) -> None:
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     pool: asyncpg.Pool = dispatcher["pool"]
-    _schedule_next(scheduler, bot, pool, delay=random.randint(HEIST_FIRST_MIN, HEIST_FIRST_MAX))
+    bid = bot_context.resolve_bot_id(bot.id)
+    _schedule_next(
+        scheduler,
+        bot,
+        pool,
+        delay=random.randint(HEIST_FIRST_MIN, HEIST_FIRST_MAX),
+        bot_id=bid,
+    )
 
 
 async def on_shutdown() -> None:

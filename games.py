@@ -1,10 +1,11 @@
-"""Shadow Bluff game logic: hands, escrow, refunds, payouts."""
+"""Shadow Bluff game logic: hands, escrow, refunds, payouts (bot_id aware)."""
 import json
 import random
 import uuid
 
 import asyncpg
 
+import bot_context
 import config
 from services import insert_transaction
 
@@ -30,13 +31,18 @@ def make_hands(player_count: int) -> tuple[list[dict[str, int]], int]:
     return hands, target
 
 
-async def _take_buyin(conn, user_id: int, wager: int, game_id: str) -> str | None:
+async def _take_buyin(conn, user_id: int, wager: int, game_id: str, bot_id: int) -> str | None:
     """Locks the wallet, checks rules, deducts the wager. Returns None if OK, else an error string."""
-    wallet = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", user_id)
+    wallet = await conn.fetchrow(
+        "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+        bot_id,
+        user_id,
+    )
     if wallet is None:
         return "no_wallet"
     busy = await conn.fetchrow(
-        "SELECT id FROM bluff_games WHERE status IN ('lobby','active') AND player_ids @> $1::jsonb",
+        "SELECT id FROM bluff_games WHERE bot_id = $1 AND status IN ('lobby','active') AND player_ids @> $2::jsonb",
+        bot_id,
         json.dumps([user_id]),
     )
     if busy:
@@ -44,8 +50,9 @@ async def _take_buyin(conn, user_id: int, wager: int, game_id: str) -> str | Non
     if wallet["cash"] < wager:
         return "insufficient_funds"
     await conn.execute(
-        "UPDATE wallets SET cash = cash - $1, updated_at = now() WHERE user_id = $2",
+        "UPDATE wallets SET cash = cash - $1, updated_at = now() WHERE bot_id = $2 AND user_id = $3",
         wager,
+        bot_id,
         user_id,
     )
     await insert_transaction(
@@ -58,12 +65,20 @@ async def _take_buyin(conn, user_id: int, wager: int, game_id: str) -> str | Non
         balance_after=wallet["cash"] - wager,
         source="bluff",
         metadata={"game_id": game_id},
-        idempotency_key=f"bluff:{game_id}:buyin:{user_id}",
+        idempotency_key=f"bluff:{bot_id}:{game_id}:buyin:{user_id}",
+        bot_id=bot_id,
     )
     return None
 
 
-async def create_game(pool: asyncpg.Pool, chat_id: int, host_id: int, wager: int) -> dict:
+async def create_game(
+    pool: asyncpg.Pool,
+    chat_id: int,
+    host_id: int,
+    wager: int,
+    bot_id: int | None = None,
+) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     if wager < config.BLUFF_MIN_WAGER:
         return {"status": "wager_too_low"}
     if wager > config.BLUFF_MAX_WAGER:
@@ -73,16 +88,19 @@ async def create_game(pool: asyncpg.Pool, chat_id: int, host_id: int, wager: int
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock($1)", chat_id)
             busy = await conn.fetchrow(
-                "SELECT id FROM bluff_games WHERE chat_id = $1 AND status IN ('lobby','active')",
+                "SELECT id FROM bluff_games WHERE bot_id = $1 AND chat_id = $2 AND status IN ('lobby','active')",
+                bid,
                 chat_id,
             )
             if busy:
                 return {"status": "chat_busy"}
-            err = await _take_buyin(conn, host_id, wager, game_id)
+            err = await _take_buyin(conn, host_id, wager, game_id, bid)
             if err:
                 return {"status": err}
             await conn.execute(
-                "INSERT INTO bluff_games (id, chat_id, wager, status, player_ids) VALUES ($1, $2, $3, 'lobby', $4::jsonb)",
+                "INSERT INTO bluff_games (bot_id, id, chat_id, wager, status, player_ids) "
+                "VALUES ($1, $2, $3, $4, 'lobby', $5::jsonb)",
+                bid,
                 game_id,
                 chat_id,
                 wager,
@@ -91,10 +109,20 @@ async def create_game(pool: asyncpg.Pool, chat_id: int, host_id: int, wager: int
     return {"status": "ok", "game_id": game_id}
 
 
-async def join_game(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
+async def join_game(
+    pool: asyncpg.Pool,
+    game_id: str,
+    user_id: int,
+    bot_id: int | None = None,
+) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            game = await conn.fetchrow("SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE", game_id)
+            game = await conn.fetchrow(
+                "SELECT * FROM bluff_games WHERE bot_id = $1 AND id = $2 FOR UPDATE",
+                bid,
+                game_id,
+            )
             if game is None or game["status"] != "lobby":
                 return {"status": "closed"}
             players = _parse_players(game["player_ids"])
@@ -102,13 +130,14 @@ async def join_game(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
                 return {"status": "already_joined"}
             if len(players) >= config.BLUFF_MAX_PLAYERS:
                 return {"status": "full"}
-            err = await _take_buyin(conn, user_id, game["wager"], game_id)
+            err = await _take_buyin(conn, user_id, game["wager"], game_id, bid)
             if err:
                 return {"status": err}
             players.append(user_id)
             await conn.execute(
-                "UPDATE bluff_games SET player_ids = $1::jsonb WHERE id = $2",
+                "UPDATE bluff_games SET player_ids = $1::jsonb WHERE bot_id = $2 AND id = $3",
                 json.dumps(players),
+                bid,
                 game_id,
             )
     return {"status": "ok", "players": players}
@@ -116,14 +145,20 @@ async def join_game(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
 
 async def _refund_locked(conn, game) -> None:
     """Refund every player. Call with the game row already locked, inside a transaction."""
+    bid = game["bot_id"] or bot_context.get_main_context().bot_id
     players = _parse_players(game["player_ids"])
     for uid in sorted(players):
-        w = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", uid)
+        w = await conn.fetchrow(
+            "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+            bid,
+            uid,
+        )
         if w is None:
             continue
         await conn.execute(
-            "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE user_id = $2",
+            "UPDATE wallets SET cash = cash + $1, updated_at = now() WHERE bot_id = $2 AND user_id = $3",
             game["wager"],
+            bid,
             uid,
         )
         await insert_transaction(
@@ -136,26 +171,51 @@ async def _refund_locked(conn, game) -> None:
             balance_after=w["cash"] + game["wager"],
             source="bluff",
             metadata={"game_id": game["id"]},
-            idempotency_key=f"bluff:{game['id']}:refund:{uid}",
+            idempotency_key=f"bluff:{bid}:{game['id']}:refund:{uid}",
+            bot_id=bid,
         )
-    await conn.execute("UPDATE bluff_games SET status = 'cancelled' WHERE id = $1", game["id"])
+    await conn.execute(
+        "UPDATE bluff_games SET status = 'cancelled' WHERE bot_id = $1 AND id = $2",
+        bid,
+        game["id"],
+    )
 
 
-async def refund_game(pool: asyncpg.Pool, game_id: str) -> bool:
+async def refund_game(pool: asyncpg.Pool, game_id: str, bot_id: int | None = None) -> bool:
     """Used for timeouts and crashes. Returns True if a refund happened."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            game = await conn.fetchrow("SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE", game_id)
+            if bot_id is not None:
+                game = await conn.fetchrow(
+                    "SELECT * FROM bluff_games WHERE bot_id = $1 AND id = $2 FOR UPDATE",
+                    bot_id,
+                    game_id,
+                )
+            else:
+                game = await conn.fetchrow(
+                    "SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE",
+                    game_id,
+                )
             if game is None or game["status"] not in ("lobby", "active"):
                 return False
             await _refund_locked(conn, game)
             return True
 
 
-async def cancel_lobby(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
+async def cancel_lobby(
+    pool: asyncpg.Pool,
+    game_id: str,
+    user_id: int,
+    bot_id: int | None = None,
+) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            game = await conn.fetchrow("SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE", game_id)
+            game = await conn.fetchrow(
+                "SELECT * FROM bluff_games WHERE bot_id = $1 AND id = $2 FOR UPDATE",
+                bid,
+                game_id,
+            )
             if game is None or game["status"] != "lobby":
                 return {"status": "closed"}
             players = _parse_players(game["player_ids"])
@@ -165,10 +225,20 @@ async def cancel_lobby(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
             return {"status": "ok"}
 
 
-async def start_game(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
+async def start_game(
+    pool: asyncpg.Pool,
+    game_id: str,
+    user_id: int,
+    bot_id: int | None = None,
+) -> dict:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            game = await conn.fetchrow("SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE", game_id)
+            game = await conn.fetchrow(
+                "SELECT * FROM bluff_games WHERE bot_id = $1 AND id = $2 FOR UPDATE",
+                bid,
+                game_id,
+            )
             if game is None or game["status"] != "lobby":
                 return {"status": "closed"}
             players = _parse_players(game["player_ids"])
@@ -176,15 +246,29 @@ async def start_game(pool: asyncpg.Pool, game_id: str, user_id: int) -> dict:
                 return {"status": "not_host"}
             if len(players) < config.BLUFF_MIN_PLAYERS:
                 return {"status": "not_enough"}
-            await conn.execute("UPDATE bluff_games SET status = 'active' WHERE id = $1", game_id)
+            await conn.execute(
+                "UPDATE bluff_games SET status = 'active' WHERE bot_id = $1 AND id = $2",
+                bid,
+                game_id,
+            )
             return {"status": "ok", "players": players}
 
 
-async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) -> dict:
+async def finish_game(
+    pool: asyncpg.Pool,
+    game_id: str,
+    scores: dict[int, int],
+    bot_id: int | None = None,
+) -> dict:
     """scores = {user_id: points}. Pays the pot (minus tax) to the top scorer(s), split on ties."""
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            game = await conn.fetchrow("SELECT * FROM bluff_games WHERE id = $1 FOR UPDATE", game_id)
+            game = await conn.fetchrow(
+                "SELECT * FROM bluff_games WHERE bot_id = $1 AND id = $2 FOR UPDATE",
+                bid,
+                game_id,
+            )
             if game is None or game["status"] != "active":
                 return {"status": "closed"}
             players = _parse_players(game["player_ids"])
@@ -194,7 +278,9 @@ async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) 
             tax = int(pot * config.BLUFF_TAX_PERCENT)
             prize = pot - tax
             await conn.fetch(
-                "SELECT user_id FROM wallets WHERE user_id = ANY($1::bigint[]) ORDER BY user_id FOR UPDATE",
+                "SELECT user_id FROM wallets WHERE bot_id = $1 AND user_id = ANY($2::bigint[]) "
+                "ORDER BY user_id FOR UPDATE",
+                bid,
                 [int(p) for p in players],
             )
             best = max(scores.get(u, 0) for u in players)
@@ -202,13 +288,19 @@ async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) 
             share, extra = divmod(prize, len(winners))
             balances = {}
             for uid in sorted(winners):
-                w = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", uid)
+                w = await conn.fetchrow(
+                    "SELECT * FROM wallets WHERE bot_id = $1 AND user_id = $2 FOR UPDATE",
+                    bid,
+                    uid,
+                )
                 if w is None:
                     continue
                 gain = share + (extra if uid == winners[0] else 0)
                 await conn.execute(
-                    "UPDATE wallets SET cash = cash + $1, wins = wins + 1, updated_at = now() WHERE user_id = $2",
+                    "UPDATE wallets SET cash = cash + $1, wins = wins + 1, updated_at = now() "
+                    "WHERE bot_id = $2 AND user_id = $3",
                     gain,
+                    bid,
                     uid,
                 )
                 await insert_transaction(
@@ -221,7 +313,8 @@ async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) 
                     balance_after=w["cash"] + gain,
                     source="bluff",
                     metadata={"game_id": game_id, "points": best, "tax": tax},
-                    idempotency_key=f"bluff:{game_id}:win:{uid}",
+                    idempotency_key=f"bluff:{bid}:{game_id}:win:{uid}",
+                    bot_id=bid,
                 )
                 balances[uid] = w["cash"] + gain
 
@@ -230,9 +323,13 @@ async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) 
             xp_map = {}
             for uid in sorted(players):
                 amt = config.XP_BLUFF_PLAY + (config.XP_BLUFF_WIN if uid in winners else 0)
-                xp_map[uid] = await services.award_xp(conn, uid, amt)
+                xp_map[uid] = await services.award_xp(conn, uid, amt, bot_id=bid)
 
-            await conn.execute("UPDATE bluff_games SET status = 'finished' WHERE id = $1", game_id)
+            await conn.execute(
+                "UPDATE bluff_games SET status = 'finished' WHERE bot_id = $1 AND id = $2",
+                bid,
+                game_id,
+            )
             return {
                 "status": "ok",
                 "winners": winners,
@@ -245,23 +342,30 @@ async def finish_game(pool: asyncpg.Pool, game_id: str, scores: dict[int, int]) 
             }
 
 
-async def refund_unfinished(pool: asyncpg.Pool) -> int:
+async def refund_unfinished(pool: asyncpg.Pool, bot_id: int | None = None) -> int:
     """Run once at startup: refunds any game that was left open by a restart."""
     async with pool.acquire() as conn:
-        ids = [
-            r["id"]
-            for r in await conn.fetch("SELECT id FROM bluff_games WHERE status IN ('lobby','active')")
-        ]
+        if bot_id is not None:
+            rows = await conn.fetch(
+                "SELECT id, bot_id FROM bluff_games WHERE bot_id = $1 AND status IN ('lobby','active')",
+                bot_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, bot_id FROM bluff_games WHERE status IN ('lobby','active')"
+            )
     count = 0
-    for gid in ids:
-        if await refund_game(pool, gid):
+    for r in rows:
+        if await refund_game(pool, r["id"], bot_id=r["bot_id"]):
             count += 1
     return count
 
 
-async def mark_active(pool: asyncpg.Pool, game_id: str) -> None:
+async def mark_active(pool: asyncpg.Pool, game_id: str, bot_id: int | None = None) -> None:
+    bid = bot_context.resolve_bot_id(bot_id)
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE bluff_games SET status = 'active' WHERE id = $1 AND status = 'lobby'",
+            "UPDATE bluff_games SET status = 'active' WHERE bot_id = $1 AND id = $2 AND status = 'lobby'",
+            bid,
             game_id,
         )

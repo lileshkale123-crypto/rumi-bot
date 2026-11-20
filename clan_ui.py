@@ -1,27 +1,32 @@
-"""Clan messages: dark-fantasy HTML cards."""
+"""Clan messages: dark-fantasy HTML cards (brand aware)."""
 import html
 
 import config
+from bot_context import get_brand
 
 S = config.CURRENCY_SYMBOL
-ERR = {
-    "bad_name": f"Name must be {config.CLAN_NAME_MIN}-{config.CLAN_NAME_MAX} letters, numbers or _ (one word).",
-    "name_taken": "That clan name is already taken.",
-    "already_in_clan": "You are already in a clan.",
-    "their_clan": "They already belong to a clan.",
-    "poor": "You don't have enough cash for that.",
-    "no_clan": "You are not in a clan. Use /clan create Name",
-    "not_leader": "Only the clan leader can do that.",
-    "leader_cannot_leave": "Leaders can't leave. Use /clan leader @user or /clan disband confirm.",
-    "not_in_clan": "That person isn't in your clan.",
-    "self": "You can't target yourself.",
-    "bad_amount": "Enter a positive whole amount.",
-    "full": "The clan is full.",
-    "retry": "The clan changed while working. Please try again.",
-    "gone": "That clan no longer exists.",
-    "no_target": "Reply to their message or use @username.",
-    "not_user": "That user hasn't used Rumi yet.",
-}
+
+
+def _err_map(bot_id: int | None = None) -> dict[str, str]:
+    bname = get_brand(bot_id).name
+    return {
+        "bad_name": f"Name must be {config.CLAN_NAME_MIN}-{config.CLAN_NAME_MAX} letters, numbers or _ (one word).",
+        "name_taken": "That clan name is already taken.",
+        "already_in_clan": "You are already in a clan.",
+        "their_clan": "They already belong to a clan.",
+        "poor": "You don't have enough cash for that.",
+        "no_clan": "You are not in a clan. Use /clan create Name",
+        "not_leader": "Only the clan leader can do that.",
+        "leader_cannot_leave": "Leaders can't leave. Use /clan leader @user or /clan disband confirm.",
+        "not_in_clan": "That person isn't in your clan.",
+        "self": "You can't target yourself.",
+        "bad_amount": "Enter a positive whole amount.",
+        "full": "The clan is full.",
+        "retry": "The clan changed while working. Please try again.",
+        "gone": "That clan no longer exists.",
+        "no_target": "Reply to their message or use @username.",
+        "not_user": f"That user hasn't used {bname} yet.",
+    }
 
 
 def e(x) -> str:
@@ -32,8 +37,8 @@ def n(x) -> str:
     return f"{int(x):,}"
 
 
-def err(status: str) -> str:
-    return "⚠️ " + e(ERR.get(status, "Something went wrong. Please try again."))
+def err(status: str, bot_id: int | None = None) -> str:
+    return "⚠️ " + e(_err_map(bot_id).get(status, "Something went wrong. Please try again."))
 
 
 def simple(title: str, body: str) -> str:

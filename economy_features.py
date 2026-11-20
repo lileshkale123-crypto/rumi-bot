@@ -201,7 +201,7 @@ async def _do_work(pool: asyncpg.Pool, uid: int, bot_id: int | None = None) -> d
     bid = bot_context.resolve_bot_id(bot_id)
     import chat_events
 
-    mult = await chat_events.pact_multiplier(pool, uid)
+    mult = await chat_events.pact_multiplier(pool, uid, bot_id=bid)
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -398,11 +398,13 @@ async def record_mafia_result(pool: asyncpg.Pool, players, winners, bot_id: int 
                 )
                 won = 1 if p.user_id in win_ids else 0
                 await conn.execute(
-                    "INSERT INTO mafia_stats (user_id, wins, games, updated_at) "
-                    "VALUES ($1, $2, 1, now()) "
+                    "INSERT INTO mafia_stats (bot_id, user_id, wins, games, updated_at) "
+                    "VALUES ($1, $2, $3, 1, now()) "
                     "ON CONFLICT (user_id) DO UPDATE SET "
+                    "bot_id = EXCLUDED.bot_id, "
                     "wins = mafia_stats.wins + EXCLUDED.wins, "
                     "games = mafia_stats.games + 1, updated_at = now()",
+                    bid,
                     p.user_id,
                     won,
                 )
@@ -414,8 +416,8 @@ async def mafiatop_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotCon
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT COALESCE(u.first_name, u.username, 'Player') AS name, s.wins "
-            "FROM mafia_stats s JOIN users u ON u.id = s.user_id AND u.bot_id = $1 "
-            "WHERE s.wins > 0 ORDER BY s.wins DESC, s.games ASC LIMIT 10",
+            "FROM mafia_stats s JOIN users u ON u.id = s.user_id AND u.bot_id = s.bot_id "
+            "WHERE s.bot_id = $1 AND s.wins > 0 ORDER BY s.wins DESC, s.games ASC LIMIT 10",
             bid,
         )
     if not rows:

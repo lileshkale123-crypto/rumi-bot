@@ -1,4 +1,4 @@
-"""Mafia game handlers, DM role delivery, night/dawn/tribunal/kamikaze loops (aiogram 3.x)."""
+"""Mafia game handlers, DM role delivery, night/dawn/tribunal/kamikaze loops (aiogram 3.x, per-bot isolated)."""
 import asyncio
 import logging
 import uuid
@@ -13,19 +13,26 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import mafia_config as mc
 import mafia_text
 from ax_common import get_bot_username
+from bot_context import BotContext
 from mafia_engine import Game
 from ui import escape_html
 
 log = logging.getLogger(__name__)
 router = Router(name="mafia_handlers")
 
-GAMES: dict[int, Game] = {}   # chat_id -> Game
-BY_ID: dict[str, Game] = {}   # game_id -> Game
+# Keyed by (bot_id, chat_id) and (bot_id, game_id) so clones never collide
+GAMES: dict[tuple[int, int], Game] = {}
+BY_ID: dict[tuple[int, str], Game] = {}
+
+
+def _bot_id(g: Game) -> int:
+    return getattr(g, "bot_id", 0)
 
 
 def drop_game(g: Game) -> None:
-    GAMES.pop(g.chat_id, None)
-    BY_ID.pop(g.game_id, None)
+    bid = _bot_id(g)
+    GAMES.pop((bid, g.chat_id), None)
+    BY_ID.pop((bid, g.game_id), None)
 
 
 def lobby_caption(g: Game) -> str:
@@ -54,8 +61,41 @@ def lobby_keyboard(gid: str) -> InlineKeyboardMarkup:
     )
 
 
+async def _send_phase_media(bot: Bot, chat_id: int, key: str, caption: str, reply_markup=None) -> Message:
+    media = mc.MEDIA.get(key, "")
+    if media:
+        try:
+            return await bot.send_photo(
+                chat_id,
+                media,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            pass
+    return await bot.send_message(
+        chat_id,
+        caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup,
+    )
+
+
+async def _edit_phase_msg(msg: Message | None, caption: str) -> None:
+    if msg is None:
+        return
+    try:
+        if msg.photo:
+            await msg.edit_caption(caption=caption, parse_mode=ParseMode.HTML)
+        else:
+            await msg.edit_text(caption, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest:
+        pass
+
+
 @router.message(Command("mafia"))
-async def mafia_command(message: Message, bot: Bot) -> None:
+async def mafia_command(message: Message, bot: Bot, bot_ctx: BotContext) -> None:
     chat = message.chat
     user = message.from_user
     if user is None:
@@ -66,24 +106,26 @@ async def mafia_command(message: Message, bot: Bot) -> None:
             parse_mode=ParseMode.HTML,
         )
         return
-    if chat.id in GAMES:
+    bid = bot_ctx.bot_id
+    if (bid, chat.id) in GAMES:
         await message.reply(
             "⚠️ A Mafia game is already running in this chat.",
             parse_mode=ParseMode.HTML,
         )
         return
     g = Game(uuid.uuid4().hex[:8], chat.id, user.id)
+    g.bot_id = bid
     g.add_player(user.id, user.first_name or "Player")
     g.chat_title = chat.title or "the group"
     g.lock = asyncio.Lock()
-    GAMES[chat.id] = g
-    BY_ID[g.game_id] = g
+    GAMES[(bid, chat.id)] = g
+    BY_ID[(bid, g.game_id)] = g
     try:
-        msg = await bot.send_photo(
+        msg = await _send_phase_media(
+            bot,
             chat.id,
-            mc.MEDIA["lobby"],
-            caption=lobby_caption(g),
-            parse_mode=ParseMode.HTML,
+            "lobby",
+            lobby_caption(g),
             reply_markup=lobby_keyboard(g.game_id),
         )
     except Exception:
@@ -93,13 +135,19 @@ async def mafia_command(message: Message, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.regexp(r"^mafia:(join|start|cancel):"))
-async def lobby_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+async def lobby_callback(
+    query: CallbackQuery,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    bot_ctx: BotContext,
+) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3:
         await query.answer()
         return
     _, action, gid = parts
-    g = BY_ID.get(gid)
+    bid = bot_ctx.bot_id
+    g = BY_ID.get((bid, gid))
     if g is None or g.phase != "lobby":
         await query.answer("This lobby is closed.", show_alert=True)
         return
@@ -120,11 +168,18 @@ async def lobby_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> 
             await query.answer("Welcome to the table! 🎩")
             if query.message:
                 try:
-                    await query.message.edit_caption(
-                        caption=lobby_caption(g),
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=lobby_keyboard(gid),
-                    )
+                    if query.message.photo:
+                        await query.message.edit_caption(
+                            caption=lobby_caption(g),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=lobby_keyboard(gid),
+                        )
+                    else:
+                        await query.message.edit_text(
+                            lobby_caption(g),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=lobby_keyboard(gid),
+                        )
                 except TelegramBadRequest:
                     pass
 
@@ -134,14 +189,7 @@ async def lobby_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> 
                 return
             drop_game(g)
             await query.answer()
-            if query.message:
-                try:
-                    await query.message.edit_caption(
-                        caption="❌ <b>The host closed this lobby.</b>",
-                        parse_mode=ParseMode.HTML,
-                    )
-                except TelegramBadRequest:
-                    pass
+            await _edit_phase_msg(query.message, "❌ <b>The host closed this lobby.</b>")
 
         elif action == "start":
             if user.id != g.host_id:
@@ -151,14 +199,10 @@ async def lobby_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> 
                 await query.answer(f"You need at least {mc.MIN_PLAYERS} players.", show_alert=True)
                 return
             await query.answer()
-            if query.message:
-                try:
-                    await query.message.edit_caption(
-                        caption="🎬 <b>The table is set.</b>\n<i>Check the message below.</i>",
-                        parse_mode=ParseMode.HTML,
-                    )
-                except TelegramBadRequest:
-                    pass
+            await _edit_phase_msg(
+                query.message,
+                "🎬 <b>The table is set.</b>\n<i>Check the message below.</i>",
+            )
             await begin_dm_check(bot, pool, g)
 
 
@@ -183,14 +227,15 @@ async def begin_dm_check(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
 
 
 async def dm_check_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
+    bid = _bot_id(g)
     try:
         for _ in range(mc.DM_CHECK_SECONDS):
             await asyncio.sleep(1)
-            if g.game_id not in BY_ID:
+            if (bid, g.game_id) not in BY_ID:
                 return
             if all(p.dm_open for p in g.players.values()):
                 break
-        if g.game_id not in BY_ID:
+        if (bid, g.game_id) not in BY_ID:
             return
 
         missing = [p for p in g.players.values() if not p.dm_open]
@@ -229,7 +274,7 @@ async def dm_check_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
             parse_mode=ParseMode.HTML,
         )
         await asyncio.sleep(3)
-        if g.game_id in BY_ID:
+        if (bid, g.game_id) in BY_ID:
             await begin_night(bot, pool, g)
     except asyncio.CancelledError:
         raise
@@ -239,12 +284,12 @@ async def dm_check_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
 
 
 @router.message(F.chat.type == "private", F.text.regexp(r"^/start(?:@\w+)?\s+mafia_"))
-async def dm_start_handler(message: Message) -> None:
+async def dm_start_handler(message: Message, bot_ctx: BotContext) -> None:
     user = message.from_user
     if user is None or not message.text:
         return
     gid = message.text.split("mafia_", 1)[1].strip()
-    g = BY_ID.get(gid)
+    g = BY_ID.get((bot_ctx.bot_id, gid))
     if g is not None and user.id in g.players and g.phase not in ("lobby", "dmcheck"):
         p = g.players[user.id]
         p.dm_open = True
@@ -269,17 +314,17 @@ async def begin_night(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🌙 Go to bot", url=url)]]
     )
-    await bot.send_photo(
+    await _send_phase_media(
+        bot,
         g.chat_id,
-        mc.MEDIA["night"],
-        caption=(
+        "night",
+        (
             f"🌙 <b>NIGHT {g.day} FALLS</b>\n"
             "<blockquote><i>The streets empty out. Only the bold or the guilty "
             "walk them now. We will count what is left at sunrise.</i>\n\n"
             f"👥 <b>Alive:</b>\n{alive}</blockquote>\n"
             f"⏳ <i>{mc.NIGHT_SECONDS} seconds. Check your DM.</i>"
         ),
-        parse_mode=ParseMode.HTML,
         reply_markup=kb,
     )
     await send_night_menus(bot, g)
@@ -287,9 +332,10 @@ async def begin_night(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
 
 
 async def night_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
+    bid = _bot_id(g)
     try:
         await asyncio.sleep(mc.NIGHT_SECONDS)
-        if g.game_id not in BY_ID:
+        if (bid, g.game_id) not in BY_ID:
             return
         res = g.resolve_night()
         await send_dawn(bot, pool, g, res)
@@ -346,13 +392,13 @@ async def send_night_menus(bot: Bot, g: Game) -> None:
 
 
 @router.callback_query(F.data.startswith("mn:"))
-async def night_callback(query: CallbackQuery) -> None:
+async def night_callback(query: CallbackQuery, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) < 5:
         await query.answer()
         return
     _, gid, day, kind = parts[:4]
-    g = BY_ID.get(gid)
+    g = BY_ID.get((bot_ctx.bot_id, gid))
     user = query.from_user
     if g is None or g.phase != "night" or not day.isdigit() or int(day) != g.day or user.id not in g.players:
         await query.answer("This night is over.", show_alert=True)
@@ -420,10 +466,11 @@ async def send_dawn(bot: Bot, pool: asyncpg.Pool, g: Game, res: dict) -> None:
     else:
         casualties = "No one died tonight."
 
-    await bot.send_photo(
+    await _send_phase_media(
+        bot,
         g.chat_id,
-        mc.MEDIA["dawn"],
-        caption=(
+        "dawn",
+        (
             "☀️ <b>DAWN BREAKS</b>\n"
             "<blockquote><i>Light creeps over the rooftops and shows what the dark left behind...</i>\n\n"
             f"💀 <b>Casualties:</b>\n{casualties}\n\n"
@@ -431,10 +478,8 @@ async def send_dawn(bot: Bot, pool: asyncpg.Pool, g: Game, res: dict) -> None:
             f"🎭 <b>Some of them are:</b> {g.dawn_hint()}</blockquote>\n"
             "<i>Time to talk it over...</i>"
         ),
-        parse_mode=ParseMode.HTML,
     )
 
-    # Private results
     for p in res["blocked"]:
         await dm(bot, p.user_id, "💋 <b>Someone kept you busy tonight.</b>\n<i>Your action did not happen.</i>")
     if res["journalist"]:
@@ -463,6 +508,7 @@ async def send_dawn(bot: Bot, pool: asyncpg.Pool, g: Game, res: dict) -> None:
 
 # ---- tribunal ---------------------------------------------------------
 async def discussion_then_tribunal(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
+    bid = _bot_id(g)
     try:
         await bot.send_message(
             g.chat_id,
@@ -470,7 +516,7 @@ async def discussion_then_tribunal(bot: Bot, pool: asyncpg.Pool, g: Game) -> Non
             parse_mode=ParseMode.HTML,
         )
         await asyncio.sleep(mc.DISCUSSION_SECONDS)
-        if g.game_id in BY_ID:
+        if (bid, g.game_id) in BY_ID:
             await begin_tribunal(bot, pool, g)
     except asyncio.CancelledError:
         raise
@@ -506,13 +552,13 @@ async def begin_tribunal(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
 
 
 @router.callback_query(F.data.startswith("mv:"))
-async def vote_callback(query: CallbackQuery, bot: Bot) -> None:
+async def vote_callback(query: CallbackQuery, bot: Bot, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 4:
         await query.answer()
         return
     _, gid, day, target = parts
-    g = BY_ID.get(gid)
+    g = BY_ID.get((bot_ctx.bot_id, gid))
     user = query.from_user
     if g is None or g.phase != "tribunal" or not day.isdigit() or int(day) != g.day:
         await query.answer("This vote is over.", show_alert=True)
@@ -534,14 +580,15 @@ async def vote_callback(query: CallbackQuery, bot: Bot) -> None:
 
 
 async def tribunal_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
+    bid = _bot_id(g)
     try:
         for _ in range(mc.TRIBUNAL_SECONDS):
             await asyncio.sleep(1)
-            if g.game_id not in BY_ID:
+            if (bid, g.game_id) not in BY_ID:
                 return
             if len(g.votes) >= len(g.alive_players()):
                 break
-        if g.game_id not in BY_ID:
+        if (bid, g.game_id) not in BY_ID:
             return
 
         res = g.resolve_tribunal()
@@ -567,7 +614,7 @@ async def tribunal_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
             await send_game_over(bot, pool, g, w)
             return
         await asyncio.sleep(3)
-        if g.game_id in BY_ID:
+        if (bid, g.game_id) in BY_ID:
             await begin_night(bot, pool, g)
     except asyncio.CancelledError:
         raise
@@ -578,6 +625,7 @@ async def tribunal_timer(bot: Bot, pool: asyncpg.Pool, g: Game) -> None:
 
 # ---- kamikaze ---------------------------------------------------------
 async def kamikaze_pick(bot: Bot, g: Game, kami) -> None:
+    bid = _bot_id(g)
     g.phase = "kamikaze"
     g.kami_pick = None
     g.kami_id = kami.user_id
@@ -597,9 +645,9 @@ async def kamikaze_pick(bot: Bot, g: Game, kami) -> None:
         pass
     for _ in range(mc.KAMIKAZE_PICK_SECONDS):
         await asyncio.sleep(1)
-        if g.kami_pick is not None or g.game_id not in BY_ID:
+        if g.kami_pick is not None or (bid, g.game_id) not in BY_ID:
             break
-    if g.game_id not in BY_ID:
+    if (bid, g.game_id) not in BY_ID:
         return
     if g.kami_pick is None:
         g.phase = "between"
@@ -621,13 +669,13 @@ async def kamikaze_pick(bot: Bot, g: Game, kami) -> None:
 
 
 @router.callback_query(F.data.startswith("mk:"))
-async def kamikaze_callback(query: CallbackQuery) -> None:
+async def kamikaze_callback(query: CallbackQuery, bot_ctx: BotContext) -> None:
     parts = (query.data or "").split(":")
     if len(parts) != 3:
         await query.answer()
         return
     _, gid, target = parts
-    g = BY_ID.get(gid)
+    g = BY_ID.get((bot_ctx.bot_id, gid))
     if g is None or g.phase != "kamikaze" or query.from_user.id != getattr(g, "kami_id", None):
         await query.answer("Too late.", show_alert=True)
         return
@@ -656,6 +704,7 @@ WIN_NAMES = {
 
 
 async def send_game_over(bot: Bot, pool: asyncpg.Pool, g: Game, winner: str) -> None:
+    bid = _bot_id(g)
     g.phase = "over"
     if winner in ("maniac", "suicide"):
         winners = [p for p in g.players.values() if p.role == winner]
@@ -664,7 +713,12 @@ async def send_game_over(bot: Bot, pool: asyncpg.Pool, g: Game, winner: str) -> 
     try:
         import economy_features
 
-        await economy_features.record_mafia_result(pool, list(g.players.values()), winners)
+        await economy_features.record_mafia_result(
+            pool,
+            list(g.players.values()),
+            winners,
+            bot_id=bid,
+        )
     except Exception as e:
         log.warning("mafia stats failed: %s", e)
 
@@ -673,10 +727,11 @@ async def send_game_over(bot: Bot, pool: asyncpg.Pool, g: Game, winner: str) -> 
         f"{'💀' if not p.alive else '•'} {escape_html(p.name)} — {p.label}"
         for p in g.players.values()
     )
-    await bot.send_photo(
+    await _send_phase_media(
+        bot,
         g.chat_id,
-        mc.MEDIA["victory"],
-        caption=(
+        "victory",
+        (
             "🎩 <b>THE GAME IS OVER!</b>\n"
             "<blockquote>"
             f"👑 <b>Winner:</b> {WIN_NAMES.get(winner, winner)} won!\n"
@@ -684,19 +739,18 @@ async def send_game_over(bot: Bot, pool: asyncpg.Pool, g: Game, winner: str) -> 
             f"<b>Final roles:</b>\n{roster}"
             "</blockquote>"
         ),
-        parse_mode=ParseMode.HTML,
     )
     drop_game(g)
 
 
 # ---- /stopmafia -------------------------------------------------------
 @router.message(Command("stopmafia"))
-async def stop_command(message: Message, bot: Bot) -> None:
+async def stop_command(message: Message, bot: Bot, bot_ctx: BotContext) -> None:
     chat = message.chat
     user = message.from_user
     if user is None:
         return
-    g = GAMES.get(chat.id)
+    g = GAMES.get((bot_ctx.bot_id, chat.id))
     if g is None:
         await message.reply("🎩 No Mafia game is running here.", parse_mode=ParseMode.HTML)
         return
