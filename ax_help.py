@@ -148,7 +148,7 @@ PAGES = {
                "<b>Options</b>\n"
                "/disabledel on: also delete the blocked command message\n"
                "/disableadmin on: block admins too (off by default)\n\n"
-               "Example: /disable spin"),
+               "Example: /disable bluff"),
     "logs": ("📋", "Log Channel",
                "<b>What it does</b>\n"
                "Sends a record of every ban, mute, kick and warn to a "

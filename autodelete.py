@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 DELETE_AFTER_SECONDS = 15 * 60
 DELETE_COMMANDS = {
     "wallet", "claim", "pay", "guard", "rob", "rankings",
-    "vault", "deposit", "withdraw", "work", "spin", "mafiatop",
+    "vault", "deposit", "withdraw", "mafiatop",
 }
 
 # Holds (target_chat_id, scheduler) for the active auto-delete command execution

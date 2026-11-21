@@ -35,24 +35,12 @@ async def _do_promote(message: Message, bot: Bot, pool: asyncpg.Pool, raw_args: 
     invalidate(message.chat.id, target.id, bot_id=bot.id)
     await message.reply(f"⬆️ Promoted <b>{esc(target.first_name or 'User')}</b> (Tier <code>{tier}</code>).", parse_mode=H)
 
-@router.message(Command("promote"))
-async def slash_prom(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
-    await _do_promote(message, bot, pool, cmd_args(message))
-
-@router.message(Command("admin", "admins"))
+@router.message(Command("admin"))
 async def admin_cmd(message: Message, bot: Bot) -> None:
     if message.chat.type not in ("group", "supergroup"):
         return
     admins = [f'• <a href="tg://user?id={a.user.id}">{esc(a.user.first_name or "Admin")}</a>' for a in await bot.get_chat_administrators(message.chat.id) if not a.user.is_bot]
     await message.reply("👮 <b>ADMINS</b>\n<blockquote>" + ("\n".join(admins) or "None") + "</blockquote>", parse_mode=H)
-
-@router.message(Command("report"))
-async def report_cmd(message: Message, bot: Bot) -> None:
-    if message.chat.type not in ("group", "supergroup"):
-        return
-    admins = [a.user for a in await bot.get_chat_administrators(message.chat.id) if not a.user.is_bot and a.status != ChatMemberStatus.CREATOR]
-    tags = " ".join(f'<a href="tg://user?id={u.id}">\u200b</a>' for u in admins)
-    await message.reply(f"🚨 <b>Reported silently to admins</b>{tags}", parse_mode=H)
 
 @router.message(F.chat.type.in_({"group", "supergroup"}), F.text.startswith("."))
 async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
