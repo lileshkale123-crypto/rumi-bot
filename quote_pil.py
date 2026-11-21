@@ -449,19 +449,26 @@ def draw_bubble(color_one: str, color_two: str, w: int, h: int, r: dict | float,
 
     if glass_lw > 0:
         pts_closed = poly + [poly[0]]
-        border_ss = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-        ImageDraw.Draw(border_ss).line(pts_closed, fill=(255, 255, 255, int(round(0.09 * 255))), width=max(1, int(round(glass_lw * 2 * ss))))
-        top_ss = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-        ImageDraw.Draw(top_ss).line(pts_closed, fill=(255, 255, 255, int(round(0.22 * 255))), width=max(1, int(round(glass_lw * 2.6 * ss))))
+        border_a = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(border_a).line(pts_closed, fill=int(round(0.09 * 255)), width=max(1, int(round(glass_lw * 2 * ss))))
+        top_a = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(top_a).line(pts_closed, fill=int(round(0.22 * 255)), width=max(1, int(round(glass_lw * 2.6 * ss))))
         fade_h = max(1, int(round(sh * 0.4)))
         grad_l = Image.new("L", (1, sh), 0)
         for y in range(fade_h):
             grad_l.putpixel((0, y), int(round(255 * (1.0 - y / fade_h))))
         grad_l = grad_l.resize((sw, sh), Image.NEAREST)
-        top_ss.putalpha(ImageChops.multiply(top_ss.split()[3], grad_l))
-        glass_ss = Image.alpha_composite(border_ss, top_ss)
-        glass_ss.putalpha(ImageChops.multiply(glass_ss.split()[3], mask_ss))
-        out = Image.alpha_composite(out, glass_ss.resize((total_w, h), Image.LANCZOS))
+        top_a = ImageChops.multiply(top_a, grad_l)
+        del grad_l
+        glass_a = ImageChops.add(top_a, ImageChops.multiply(border_a, ImageChops.invert(top_a)))
+        del top_a, border_a
+        glass_a = ImageChops.multiply(glass_a, mask_ss)
+        glass_small = glass_a.resize((total_w, h), Image.LANCZOS)
+        del glass_a
+        glass_rgba = Image.new("RGBA", (total_w, h), (255, 255, 255, 0))
+        glass_rgba.putalpha(glass_small)
+        out = Image.alpha_composite(out, glass_rgba)
+        del glass_small, glass_rgba
 
     qc = QCanvas(out, 0, 0)
     qc._tail_offset = extra_left
@@ -1007,6 +1014,9 @@ def split_by_blockquotes(text: str, entities: list[dict] | None) -> list[dict] |
     return parts if parts else None
 
 
+_TOKEN_RE = re.compile(r"\r\n|\r|\n|[^\S\r\n]+|\w+|[^\w\s]")
+
+
 def prepare_text(text: str, entities: list[dict] | str | None, font_size: int, custom_emojis: dict | None = None) -> dict:
     font_size = int(round(font_size))
     asc, desc = font_metrics(font_size)
@@ -1067,9 +1077,20 @@ def prepare_text(text: str, entities: list[dict] | str | None, font_size: int, c
         if cid and emoji_at[i] is None:
             emoji_at[i] = (10000 + i, clean_text[i], cid)
 
+    # An emoji (flag, skin tone, keycap, family ...) is ONE token. Splitting it into
+    # pieces drew the same picture several times (double hearts).
+    token_spans = []
+    _pos = 0
+    for _me in qe.EMOJI_RE.finditer(clean_text):
+        for _m in _TOKEN_RE.finditer(clean_text, _pos, _me.start()):
+            token_spans.append((_m.start(), _m.end()))
+        token_spans.append((_me.start(), _me.end()))
+        _pos = _me.end()
+    for _m in _TOKEN_RE.finditer(clean_text, _pos):
+        token_spans.append((_m.start(), _m.end()))
+
     segments = []
-    for m in re.finditer(r"\r\n|\r|\n|[^\S\r\n]+|\w+|[^\w\s]", clean_text):
-        start, end = m.start(), m.end()
+    for start, end in token_spans:
         sub_start = start
         for i in range(start, end):
             ch = clean_text[i]
@@ -1158,6 +1179,8 @@ def _push_segment(out: list, text: str, char_styles: list, emoji_at: list, start
                     em_img = None
         if em_img is None:
             em_img = qe.fetch(em[1])
+        if em_img is None:
+            kind = "text"  # no picture available: draw it as a normal character
 
     w = emoji_size if kind == "emoji" else (0.0 if kind == "break" else _measure_text_width(sub, f))
 
@@ -1802,7 +1825,10 @@ def _render_stage4_unlocked(
         max_media_size = max(media_img.width, media_img.height)
     elif media_bytes:
         try:
-            media_img = Image.open(io.BytesIO(media_bytes)).convert("RGBA")
+            with Image.open(io.BytesIO(media_bytes)) as _im0:
+                media_img = _im0.convert("RGBA")
+            if max(media_img.size) > 1400:
+                media_img.thumbnail((1400, 1400), Image.LANCZOS)
             if media_spoiler:
                 media_img = apply_spoiler(media_img, scale)
             media_type = media_type or "photo"
@@ -2202,6 +2228,9 @@ def _render_messages_unlocked(messages: list[dict], bg: str | None = None) -> Im
         target_w = max(w, min_virtual_w) if h > w else w
         padded = Image.new("RGBA", (target_w, h + pad_bottom), (0, 0, 0, 0))
         padded.paste(combined, (0, 0))
+        for _im, _same in rendered:  # free per-message canvases early (RAM)
+            if _im is not padded:
+                _im.close()
         combined = padded
 
         w, h = combined.size
@@ -2213,8 +2242,12 @@ def _render_messages_unlocked(messages: list[dict], bg: str | None = None) -> Im
                 nw = 512
             else:
                 nh = 512
-        return combined.resize((nw, nh), Image.LANCZOS)
+        result = combined.resize((nw, nh), Image.LANCZOS)
+        combined.close()
+        return result
 
     except Exception:
         log.exception("quote_pil error")
         return Image.new("RGBA", (512, 128), (0, 0, 0, 0))
+
+# --- quote patch v2 applied ---
