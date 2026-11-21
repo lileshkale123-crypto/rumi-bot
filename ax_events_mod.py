@@ -1,0 +1,123 @@
+"""Random group events (min 25 users, 1/day/group: /catch $2k, /guess 100-500) & Dot/Slash Mod (.promote 1/2/3, .warn, .mute, .ban, .kick, .pin, /admin, /report)."""
+import asyncio, html, logging, random
+from datetime import datetime, timedelta, timezone
+import aiohttp, asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ChatMemberStatus, ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+import ax_mod, config
+from ax_common import cmd_args, esc, invalidate, is_admin, resolve_target
+from bot_context import BotContext
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_events_mod")
+H = ParseMode.HTML
+IST = timezone(timedelta(hours=5, minutes=30))
+_CATCH: dict[tuple[int, int], dict] = {}
+_DOT_SEEN: dict[tuple[int, int, int], float] = {}
+
+def _tier_rights(tier: int) -> dict[str, bool]:
+    if tier == 3:
+        return {"can_manage_chat": True, "can_change_info": False, "can_delete_messages": False, "can_invite_users": False, "can_restrict_members": False, "can_pin_messages": False, "can_promote_members": False}
+    if tier == 2:
+        return {"can_manage_chat": True, "can_change_info": False, "can_delete_messages": True, "can_invite_users": False, "can_restrict_members": True, "can_pin_messages": True, "can_promote_members": False}
+    return {"can_manage_chat": True, "can_change_info": True, "can_delete_messages": True, "can_invite_users": True, "can_restrict_members": True, "can_pin_messages": True, "can_promote_members": False}
+
+async def _do_promote(message: Message, bot: Bot, pool: asyncpg.Pool, raw_args: list[str]) -> None:
+    target = await ax_mod.gate(message, bot, pool, False, "can_promote_members")
+    if not target or not message.from_user or target.id == bot.id:
+        return
+    parts = list(raw_args) if message.reply_to_message else list(raw_args)[1:]
+    tier = int(parts[0]) if (parts and parts[0] in ("1", "2", "3")) else 1
+    rights = _tier_rights(tier)
+    await bot.promote_chat_member(chat_id=message.chat.id, user_id=target.id, **rights)
+    invalidate(message.chat.id, target.id, bot_id=bot.id)
+    await message.reply(f"⬆️ Promoted <b>{esc(target.first_name or 'User')}</b> (Tier <code>{tier}</code>).", parse_mode=H)
+
+@router.message(Command("promote"))
+async def slash_prom(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await _do_promote(message, bot, pool, cmd_args(message))
+
+@router.message(Command("admin", "admins"))
+async def admin_cmd(message: Message, bot: Bot) -> None:
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    admins = [f'• <a href="tg://user?id={a.user.id}">{esc(a.user.first_name or "Admin")}</a>' for a in await bot.get_chat_administrators(message.chat.id) if not a.user.is_bot]
+    await message.reply("👮 <b>ADMINS</b>\n<blockquote>" + ("\n".join(admins) or "None") + "</blockquote>", parse_mode=H)
+
+@router.message(Command("report"))
+async def report_cmd(message: Message, bot: Bot) -> None:
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    admins = [a.user for a in await bot.get_chat_administrators(message.chat.id) if not a.user.is_bot and a.status != ChatMemberStatus.CREATOR]
+    tags = " ".join(f'<a href="tg://user?id={u.id}">\u200b</a>' for u in admins)
+    await message.reply(f"🚨 <b>Reported silently to admins</b>{tags}", parse_mode=H)
+
+@router.message(F.chat.type.in_({"group", "supergroup"}), F.text.startswith("."))
+async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not message.from_user or not message.text:
+        return
+    parts = message.text.strip()[1:].split()
+    if not parts:
+        return
+    cmd = parts[0].split("@")[0].lower()
+    args = parts[1:]
+    dk = (bot.id, message.chat.id, message.message_id)
+    now_l = asyncio.get_running_loop().time()
+    if now_l - _DOT_SEEN.get(dk, -10.0) < 1.0:
+        return
+    _DOT_SEEN[dk] = now_l
+    if cmd == "promote":
+        await _do_promote(message, bot, pool, args)
+    elif cmd == "pin" and message.reply_to_message and await is_admin(bot, message.chat.id, message.from_user.id, "can_pin_messages"):
+        await bot.pin_chat_message(chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
+        await message.reply("📌 Pinned!")
+    elif cmd in ("warn", "mute", "ban", "kick") and await is_admin(bot, message.chat.id, message.from_user.id, "can_restrict_members"):
+        t = await resolve_target(message, bot, pool, args=args, bot_id=bot.id)
+        if t and not getattr(t, "is_bot", False):
+            if cmd != "warn":
+                await ax_mod.perform(cmd, bot, pool, message.chat.id, t.id)
+            await message.reply(f"✅ .{cmd} applied to <b>{esc(t.first_name or 'User')}</b>.", parse_mode=H)
+
+@router.message(Command("catch"))
+async def catch_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    drop = _CATCH.get((bot_ctx.bot_id, message.chat.id))
+    guess = " ".join(cmd_args(message)).strip().lower()
+    if drop and guess and guess in drop["name"].lower():
+        _CATCH.pop((bot_ctx.bot_id, message.chat.id), None)
+        async with pool.acquire() as c:
+            await c.execute("UPDATE wallets SET cash = cash + $1, updated_at=now() WHERE bot_id=$2 AND user_id=$3", 2000, bot_ctx.bot_id, message.from_user.id)
+        await message.reply(f"🎉 Caught <b>{esc(drop['name'])}</b>! Earned <code>+$2,000</code>.", parse_mode=H)
+    else:
+        await message.reply("Use: <code>/catch &lt;character name&gt;</code>", parse_mode=H)
+
+@router.message(Command("guess"))
+async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    args = cmd_args(message)
+    if not args or not args[0].isdigit():
+        await message.reply("Use: <code>/guess 250</code> (100–500)", parse_mode=H)
+        return
+    val = int(args[0])
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT * FROM ax_guess_rounds WHERE bot_id=$1 AND chat_id=$2 AND active=TRUE", bot_ctx.bot_id, message.chat.id)
+        if not r:
+            await message.reply("No active number guess round.")
+            return
+        if val == int(r["secret_num"]):
+            await c.execute("UPDATE ax_guess_rounds SET active=FALSE WHERE bot_id=$1 AND chat_id=$2", bot_ctx.bot_id, message.chat.id)
+            await c.execute("UPDATE wallets SET cash = cash + $1, updated_at=now() WHERE bot_id=$2 AND user_id=$3", int(r["reward_coins"]), bot_ctx.bot_id, message.from_user.id)
+            await message.reply(f"🎯 Correct! <b>{esc(message.from_user.first_name or 'Player')}</b> won <code>+${int(r['reward_coins']):,}</code>!", parse_mode=H)
+        else:
+            lo = max(int(r["low_bound"]), val) if val < int(r["secret_num"]) else int(r["low_bound"])
+            hi = min(int(r["high_bound"]), val) if val > int(r["secret_num"]) else int(r["high_bound"])
+            await c.execute("UPDATE ax_guess_rounds SET low_bound=$3, high_bound=$4, tries_used=tries_used+1 WHERE bot_id=$1 AND chat_id=$2", bot_ctx.bot_id, message.chat.id, lo, hi)
+            await message.reply(f"🔍 Narrowed range: <code>{lo} – {hi}</code>", parse_mode=H)
+
+def register(dp):
+    if router.parent_router is None:
+        dp.include_router(router)

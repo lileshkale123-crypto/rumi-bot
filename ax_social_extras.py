@@ -1,0 +1,153 @@
+"""Friends & tagging (/addf, /tag, /t, /ctag, /delf, /allf, /friend, /friends, /all, @all), /setintro, /intro & /detail (aiogram 3.x)."""
+import asyncio, html, json, logging, time
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+from ax_adminpanel import OWNER_IDS
+from ax_common import cmd_arg_text, cmd_args, fire, resolve_target
+from bot_context import BotContext
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_social_extras")
+H = ParseMode.HTML
+_all_cd: dict[tuple[int, int], float] = {}
+
+async def _ensure_tables(conn):
+    await conn.execute("CREATE TABLE IF NOT EXISTS ax_user_friends (bot_id BIGINT NOT NULL DEFAULT 0, owner_id BIGINT NOT NULL, friend_id BIGINT NOT NULL, tag_name TEXT NOT NULL, added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (bot_id, owner_id, friend_id))")
+    await conn.execute("CREATE TABLE IF NOT EXISTS ax_user_intros (bot_id BIGINT NOT NULL DEFAULT 0, user_id BIGINT NOT NULL, intro_text TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (bot_id, user_id))")
+    await conn.execute("CREATE TABLE IF NOT EXISTS ax_name_history (bot_id BIGINT NOT NULL DEFAULT 0, user_id BIGINT NOT NULL, names_json TEXT NOT NULL DEFAULT '[]', usernames_json TEXT NOT NULL DEFAULT '[]', updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (bot_id, user_id))")
+
+def _push_last4(items: list[str], value: str | None) -> list[str]:
+    clean = (value or "").strip()
+    if not clean:
+        return items[-4:]
+    out = [x for x in items if x != clean]
+    out.append(clean)
+    return out[-4:]
+
+@router.message(Command("addf"))
+async def addf_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    args = cmd_args(message)
+    t = await resolve_target(message, bot, pool, args=args, bot_id=bot_ctx.bot_id)
+    tag = (args[1] if (not message.reply_to_message and len(args) > 1) else (args[0] if args else "")).lower()[:32]
+    if not t or not tag:
+        await message.reply("Use: <code>/addf &lt;tag&gt;</code> (reply) or <code>/addf @user &lt;tag&gt;</code>", parse_mode=H)
+        return
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        await c.execute("INSERT INTO ax_user_friends (bot_id, owner_id, friend_id, tag_name) VALUES ($1,$2,$3,$4) ON CONFLICT (bot_id, owner_id, friend_id) DO UPDATE SET tag_name=EXCLUDED.tag_name", bot_ctx.bot_id, message.from_user.id, t.id, tag)
+    await message.reply(f"💖 Saved <b>{html.escape(t.first_name or 'Friend')}</b> as <code>{html.escape(tag)}</code>.", parse_mode=H)
+
+@router.message(Command("tag", "t"))
+async def tag_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    tags = [a.lower() for a in cmd_args(message)]
+    if not tags:
+        await message.reply("Use: <code>/tag name1 name2</code> or <code>/t name1</code>", parse_mode=H)
+        return
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        rows = await c.fetch("SELECT f.friend_id, f.tag_name, COALESCE(u.first_name,'Friend') AS name FROM ax_user_friends f LEFT JOIN users u ON u.id=f.friend_id WHERE f.bot_id=$1 AND f.owner_id=$2 AND LOWER(f.tag_name)=ANY($3::text[]) LIMIT 30", bot_ctx.bot_id, message.from_user.id, tags)
+    if not rows:
+        await message.reply("No matching friends.")
+        return
+    mentions = " ".join(f'<a href="tg://user?id={r["friend_id"]}">{html.escape(r["name"])}</a>' for r in rows)
+    await message.reply(f"📣 {mentions}", parse_mode=H)
+
+@router.message(Command("ctag", "delf", "allf", "friend", "friends"))
+async def friend_misc_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    cmd = (message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        if cmd == "allf":
+            rows = await c.fetch("SELECT friend_id, tag_name FROM ax_user_friends WHERE bot_id=$1 AND owner_id=$2 LIMIT 50", bot_ctx.bot_id, message.from_user.id)
+            await message.reply("👥 " + (", ".join(f"<code>{r['friend_id']}</code>:<code>{html.escape(r['tag_name'])}</code>" for r in rows) or "No friends yet."), parse_mode=H)
+        elif cmd == "friend":
+            cnt = await c.fetchval("SELECT COUNT(*)::int FROM ax_user_friends WHERE bot_id=$1 AND owner_id=$2", bot_ctx.bot_id, message.from_user.id)
+            await message.reply(f"👥 Friends count: <b>{cnt}</b>", parse_mode=H)
+        else:
+            await message.reply("👥 Commands: <code>/addf</code>, <code>/tag</code>, <code>/t</code>, <code>/ctag</code>, <code>/delf</code>, <code>/allf</code>, <code>/friend</code>, <code>/all</code>, <code>@all</code>", parse_mode=H)
+
+async def _group_all(message: Message, bot: Bot, pool: asyncpg.Pool, bot_id: int) -> None:
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    k = (bot_id, message.chat.id)
+    now = time.monotonic()
+    if now - _all_cd.get(k, -1e9) < 300:
+        await message.reply("⏳ Cooldown active for <code>/all</code> &amp; <code>@all</code>.", parse_mode=H)
+        return
+    _all_cd[k] = now
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT u.id, COALESCE(u.first_name,'Member') AS name FROM ax_chat_members m JOIN users u ON u.id=m.user_id WHERE m.bot_id=$1 AND m.chat_id=$2 LIMIT 100", bot_id, message.chat.id)
+    async def _go():
+        for i in range(0, len(rows), 5):
+            line = " ".join(f'<a href="tg://user?id={r["id"]}">{html.escape(r["name"])}</a>' for r in rows[i:i+5])
+            try:
+                await bot.send_message(message.chat.id, line, parse_mode=H)
+                await asyncio.sleep(1.5)
+            except Exception:
+                break
+    fire(_go())
+
+@router.message(Command("all"))
+async def slash_all(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _group_all(message, bot, pool, bot_ctx.bot_id)
+
+@router.message(F.chat.type.in_({"group", "supergroup"}), F.text.regexp(r"(?i)(?:^|\s)@all(?:\s|$)"))
+async def at_all(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    await _group_all(message, bot, pool, bot_ctx.bot_id)
+
+@router.message(Command("setintro"))
+async def setintro_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    txt = cmd_arg_text(message)[:400]
+    if not txt:
+        await message.reply("Use: <code>/setintro Your bio here</code>", parse_mode=H)
+        return
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        await c.execute("INSERT INTO ax_user_intros (bot_id, user_id, intro_text) VALUES ($1,$2,$3) ON CONFLICT (bot_id, user_id) DO UPDATE SET intro_text=EXCLUDED.intro_text, updated_at=now()", bot_ctx.bot_id, message.from_user.id, txt)
+    await message.reply("✅ Intro saved!", parse_mode=H)
+
+@router.message(Command("intro"))
+async def intro_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    uid = message.reply_to_message.from_user.id if (message.reply_to_message and message.reply_to_message.from_user) else message.from_user.id
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        row = await c.fetchrow("SELECT intro_text FROM ax_user_intros WHERE bot_id=$1 AND user_id=$2", bot_ctx.bot_id, uid)
+    await message.reply(f"🪪 <b>INTRO</b>\n<blockquote>{html.escape(row['intro_text']) if row else 'No intro set.'}</blockquote>", parse_mode=H)
+
+@router.message(Command("detail"))
+async def detail_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    if not message.from_user:
+        return
+    import ax_premium
+    is_prem = (message.from_user.id in OWNER_IDS) or (await ax_premium.get_premium(pool, message.from_user.id, bot_id=bot_ctx.bot_id) is not None)
+    args = cmd_args(message)
+    if message.reply_to_message and message.reply_to_message.from_user:
+        uid = message.reply_to_message.from_user.id
+    elif args and is_prem and args[0].lstrip("-").isdigit():
+        uid = int(args[0])
+    else:
+        await message.reply("Reply with <code>/detail</code> (or Premium: <code>/detail &lt;user_id&gt;</code>).", parse_mode=H)
+        return
+    async with pool.acquire() as c:
+        await _ensure_tables(c)
+        h = await c.fetchrow("SELECT names_json, usernames_json FROM ax_name_history WHERE bot_id=$1 AND user_id=$2", bot_ctx.bot_id, uid)
+    names = json.loads(h["names_json"])[-4:] if h else []
+    unames = json.loads(h["usernames_json"])[-4:] if h else []
+    await message.reply(f"🔎 <b>DETAIL</b>\n<blockquote>ID: <code>{uid}</code>\nLast 4 Names: {names}\nLast 4 Usernames: {unames}</blockquote>", parse_mode=H)
+
+def register(dp):
+    if router.parent_router is None:
+        dp.include_router(router)
