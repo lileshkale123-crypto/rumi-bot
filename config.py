@@ -3,8 +3,14 @@
 
 CURRENCY_SYMBOL = "$"
 
-# /tribute (daily reward) — resets at UTC midnight, not a rolling timer.
-DAILY_BASE_REWARD = 2500
+# Premium & Normal UI / Emoji configuration (safe fallback when custom emoji is unavailable)
+NORMAL_DEFAULT_EMOJI = "👤"
+PREMIUM_DEFAULT_EMOJI = "💓"
+PREMIUM_CUSTOM_EMOJI_ENABLED = True
+
+# /tribute & /claim daily reward rules
+DAILY_BASE_REWARD = 2000
+PREMIUM_DAILY_REWARD = 5000
 DAILY_WEEKLY_BONUS_CASH = 5000       # replaces the base reward every Nth streak day
 DAILY_WEEKLY_BONUS_INTERVAL = 7      # every 7th consecutive day (7, 14, 21, ...)
 
@@ -17,31 +23,64 @@ DAILY_GEM_AMOUNT = 1
 STREAK_MILESTONES = [3, 7, 14, 30, 60, 100]
 STREAK_MILESTONE_GEM_REWARD = 5
 
-# /pay
+# /pay & /give transfer rules
 MIN_TRANSFER = 10
 MAX_TRANSFER = 50_000
-TRANSFER_TAX_PERCENT = 0.10   # taken from what the receiver gets
+NORMAL_TRANSFER_TAX_PERCENT = 0.10
+PREMIUM_TRANSFER_TAX_PERCENT = 0.05
+TRANSFER_TAX_PERCENT = 0.10
 DAILY_TRANSFER_LIMIT = 100_000
 
-# /ward (shield)
+# /protect & /guard (shield)
 SHIELD_COST = 400
 SHIELD_DURATION_HOURS = 24
+PREMIUM_SHIELD_MAX_DAYS = 2
 
-# /rob
+# /kill & /revive rules
+NORMAL_KILL_MIN = 100
+NORMAL_KILL_MAX = 200
+NORMAL_KILL_XP_MIN = 0
+NORMAL_KILL_XP_MAX = 10
+NORMAL_DAILY_KILL_LIMIT = 200
+
+PREMIUM_KILL_MIN = 200
+PREMIUM_KILL_MAX = 400
+PREMIUM_KILL_XP_MIN = 10
+PREMIUM_KILL_XP_MAX = 20
+PREMIUM_DAILY_KILL_LIMIT = 400
+
+# /rob & 30% wallet save rules
 ROB_COOLDOWN_MINUTES = 0
 ROB_MIN_VICTIM_BALANCE = 2          # victim must have at least this to be robbable
-ROB_MIN_AMOUNT = 1              # smallest amount you can try to rob
+ROB_MIN_AMOUNT = 1                  # smallest amount you can try to rob
 ROB_SUCCESS_CHANCE = 6 / 7
 ROB_STEAL_PERCENT_MIN = 0.10
 ROB_STEAL_PERCENT_MAX = 0.30
-ROB_TAX_PERCENT = 0.10        # taken from the robber's loot
-ROB_FAIL_PENALTY_PERCENT_MIN = 0.05   # on a failed rob, robber pays this to the victim
+NORMAL_ROB_TAX_PERCENT = 0.10
+PREMIUM_ROB_TAX_PERCENT = 0.05
+ROB_TAX_PERCENT = 0.10
+PREMIUM_WALLET_SAVE_PERCENT = 0.30  # 30% of wallet balance protected from robbery for Premium
+ROB_FAIL_PENALTY_PERCENT_MIN = 0.05
 ROB_FAIL_PENALTY_PERCENT_MAX = 0.15
 
-# /empire (leaderboard)
+ROB_MAX_AMOUNT = 10_000             # normal single-rob cap
+PREMIUM_ROB_BASE_MAX_AMOUNT = 30_000
+POWER_ROB_MAX_AMOUNT = 100_000      # up to 1 lakh with Premium + active power
+NORMAL_DAILY_ROB_LIMIT = 200
+PREMIUM_DAILY_ROB_LIMIT = 400
+ROB_XP_PER_HOUR = 3
+ROB_ONCE_PER_MSG_BELOW = 3000
+
+# Gems, /convert & Powers
+GEM_COIN_RATE = 10_000              # 10,000 Coins = 1 Gem
+GEM_CONVERT_MAX_GEMS = 20           # up to 200,000 Coins -> 20 Gems per season
+DAILY_GEM_USE_LIMIT = 50            # max Gems a user can spend/use per day
+GAME_WIN_TAX_NORMAL = 0.10
+GAME_WIN_TAX_PREMIUM = 0.05
+
+# Leaderboards & Bluff
 LEADERBOARD_PAGE_SIZE = 10
 
-# Shadow Bluff (card game)
 BLUFF_MIN_WAGER = 100
 BLUFF_MAX_WAGER = 50_000
 BLUFF_TAX_PERCENT = 0.10
@@ -65,10 +104,6 @@ XP_LEVEL_BASE = 100
 LEVEL_UP_CASH_PER_LEVEL = 200     # reward = new_level * this
 LEVEL_UP_GEM_EVERY = 5            # +1 gem on every 5th level
 
-ROB_MAX_AMOUNT = 10_000   # most one rob can take
-
-ROB_XP_PER_HOUR = 3   # only this many robs per hour give XP
-
 # ---- AI chat ----
 AI_MODEL = "gemini-3.8-flash"
 AI_DAILY_LIMIT = 300              # messages per user per day (IST midnight reset)
@@ -85,19 +120,23 @@ AI_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lit
 
 AI_GREETINGS = ["hi+", "hey+", "hello+", "hlo+", "hola", "yo+", "sup", "namaste"]
 
-
-# Vault, /work, /spin & Season Gems
+# Vault & Tasks (/task replaces /work; /spin removed)
 VAULT_MAX_CAPACITY = 20_000
 VAULT_BASE_CAPACITY = 20_000
 VAULT_CAPACITY_PER_LEVEL = 0
-GEM_COIN_RATE = 10_000          # 10,000 Coins = 1 Gem
-GEM_CONVERT_MAX_GEMS = 20       # up to 200,000 Coins -> 20 Gems per season
-WORK_COOLDOWN = 3600
-WORK_MIN = 100
-WORK_MAX = 500
-SPIN_COOLDOWN = 86400
+TASK_BOTH_COMPLETE_REWARD = 9_000
+TASK_ACTION_TARGET_MIN = 20
+TASK_ACTION_TARGET_MAX = 25
 
-ROB_ONCE_PER_MSG_BELOW = 3000
+# Random Events & Anime Catch
+EVENT_MIN_GROUP_MEMBERS = 25
+EVENT_MAX_PER_GROUP_PER_DAY = 1
+CATCH_REWARD_COINS = 2_000
+EVENT_REWARD_MIN = 500
+EVENT_REWARD_MAX = 1_000
+GUESS_MIN_NUMBER = 100
+GUESS_MAX_NUMBER = 500
+GUESS_MAX_TRIES = 12
 
 # Clans
 CLAN_CREATE_FEE = 10_000

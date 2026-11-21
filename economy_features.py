@@ -51,7 +51,10 @@ def _left(target: datetime) -> str:
 
 def vault_cap(level: int) -> int:
     """New Season Vault rule: maximum Vault storage limit is 20,000 Coins."""
-    return min(config.VAULT_MAX_CAPACITY, config.VAULT_BASE_CAPACITY + level * config.VAULT_CAPACITY_PER_LEVEL)
+    return min(
+        getattr(config, "VAULT_MAX_CAPACITY", 20_000),
+        config.VAULT_BASE_CAPACITY + level * config.VAULT_CAPACITY_PER_LEVEL,
+    )
 
 
 async def _prep(message: Message, pool: asyncpg.Pool, bot_id: int | None = None):
@@ -100,7 +103,7 @@ async def vault_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotContex
         f"💰 <b>Liquid Cash:</b> <code>{CUR}{_n(w['cash'])}</code>\n"
         f"🔐 <b>Secured Assets:</b> <code>{CUR}{_n(w['vault'])} / {CUR}{_n(cap)}</code>"
         "</blockquote>\n"
-        "<i>Season limit: <b>20,000</b> max • Use /deposit [amount] or /withdraw [amount].</i>"
+        "<i>Max limit: <b>20,000</b> Coins • Use /deposit [amount] or /withdraw [amount].</i>"
     )
     await message.reply(text, parse_mode=ParseMode.HTML)
 
@@ -222,10 +225,6 @@ async def withdraw_command(message: Message, pool: asyncpg.Pool, bot_ctx: BotCon
     await _vault_move(message, pool, False, bot_ctx.bot_id)
 
 
-# ---------------------------------------------------------------------------
-# /convert — Coins <-> Gems (10,000 Coins = 1 Gem, max 20 Gems / 200,000 Coins)
-# ---------------------------------------------------------------------------
-
 def _convert_card(
     brand_name: str,
     cash: int,
@@ -233,8 +232,8 @@ def _convert_card(
     used_gems: int,
     uid: int,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    max_gems = config.GEM_CONVERT_MAX_GEMS
-    rate = config.GEM_COIN_RATE
+    max_gems = getattr(config, "GEM_CONVERT_MAX_GEMS", 20)
+    rate = getattr(config, "GEM_COIN_RATE", 10_000)
     left_quota = max(0, max_gems - used_gems)
     max_buy_by_cash = cash // rate
     can_buy = min(left_quota, max_buy_by_cash)
@@ -283,8 +282,8 @@ async def _do_convert_coins_to_gems(
     requested_gems: int | None,
     bot_id: int,
 ) -> dict:
-    rate = config.GEM_COIN_RATE
-    cap_gems = config.GEM_CONVERT_MAX_GEMS
+    rate = getattr(config, "GEM_COIN_RATE", 10_000)
+    cap_gems = getattr(config, "GEM_CONVERT_MAX_GEMS", 20)
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _ensure_season_tables(conn)
@@ -373,7 +372,7 @@ async def _do_convert_gems_to_coins(
     requested_gems: int | None,
     bot_id: int,
 ) -> dict:
-    rate = config.GEM_COIN_RATE
+    rate = getattr(config, "GEM_COIN_RATE", 10_000)
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _ensure_season_tables(conn)
@@ -435,7 +434,7 @@ async def _do_convert_gems_to_coins(
                 "cash": after_cash,
                 "gems": after_gems,
                 "used": used,
-                "cap": config.GEM_CONVERT_MAX_GEMS,
+                "cap": getattr(config, "GEM_CONVERT_MAX_GEMS", 20),
             }
 
 
@@ -573,10 +572,6 @@ async def convert_cb(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotConte
         except Exception:
             pass
 
-
-# ---------------------------------------------------------------------------
-# /toplegends — Season Legends recorded across resets
-# ---------------------------------------------------------------------------
 
 @router.message(Command("toplegends"))
 async def toplegends_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
