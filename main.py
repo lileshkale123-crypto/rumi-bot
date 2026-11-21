@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 import bot_context
 import db
 import keepalive
+import migrate_season1
 import migrate_step1
 import migrate_step2a
 import migrate_step2b
@@ -278,6 +279,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
     await migrate_step2b.run_step2b_migration(pool, me.id)
     await migrate_step2c.run_step2c_migration(pool, me.id)
     await migrate_step2d1.run_step2d1_migration(pool, me.id)
+    await migrate_season1.run_season1_migration(pool, me.id)
 
     scheduler: AsyncIOScheduler = dispatcher["scheduler"]
     if not scheduler.running:

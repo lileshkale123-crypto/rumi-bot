@@ -86,9 +86,12 @@ AI_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lit
 AI_GREETINGS = ["hi+", "hey+", "hello+", "hlo+", "hola", "yo+", "sup", "namaste"]
 
 
-# Vault, /work, /spin
-VAULT_BASE_CAPACITY = 10_000
-VAULT_CAPACITY_PER_LEVEL = 2_500
+# Vault, /work, /spin & Season Gems
+VAULT_MAX_CAPACITY = 20_000
+VAULT_BASE_CAPACITY = 20_000
+VAULT_CAPACITY_PER_LEVEL = 0
+GEM_COIN_RATE = 10_000          # 10,000 Coins = 1 Gem
+GEM_CONVERT_MAX_GEMS = 20       # up to 200,000 Coins -> 20 Gems per season
 WORK_COOLDOWN = 3600
 WORK_MIN = 100
 WORK_MAX = 500

@@ -7,6 +7,7 @@ import os
 import resource
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 import asyncpg
@@ -195,6 +196,7 @@ def home_view() -> tuple[str, InlineKeyboardMarkup]:
             ],
             [
                 btn("📜 Audit Log", "axop:audit:1"),
+                btn("🪙 Reset Coins", "axop:resetask", style="danger"),
                 btn(
                     "🛠 Maint: ON" if _maintenance_on else "🛠 Maint: OFF",
                     "axop:maint",
@@ -703,6 +705,89 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None
     elif sec == "audit":
         page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
         text, kb = await audit_view(pool, page)
+    elif sec == "resetask":
+        async with pool.acquire() as c:
+            stats = await c.fetchrow(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(cash),0)::bigint AS tot_cash FROM wallets"
+            )
+        text = (
+            "🪙 <b>MANUAL COIN RESET (SAFE 2-STEP)</b>\n\n"
+            "<blockquote>"
+            f"👥 <b>Wallets affected:</b> <code>{int(stats['n']):,}</code>\n"
+            f"💰 <b>Current total cash:</b> <code>{SYMBOL}{_fmt(stats['tot_cash'])}</code>\n"
+            "✨ <b>EXP &amp; Level:</b> <code>UNTOUCHED</code>\n"
+            "💎 <b>Gems:</b> <code>UNTOUCHED</code>\n"
+            "🏆 <b>Season Legends:</b> Top 25 saved automatically before reset"
+            "</blockquote>\n\n"
+            "<i>Tap <b>Confirm Reset Coins</b> only when you are sure. Accidental taps can be cancelled safely.</i>"
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    btn("💥 Confirm Reset Coins", "axop:resetgo", style="danger"),
+                    btn("🛡 Cancel (Safe)", "axop:home", style="success"),
+                ]
+            ]
+        )
+    elif sec == "resetgo":
+        season_tag = f"Season-{datetime.now(timezone.utc):%Y-%m-%d}"
+        async with pool.acquire() as c:
+            async with c.transaction():
+                await c.execute(
+                    "CREATE TABLE IF NOT EXISTS ax_season_legends ("
+                    "id BIGSERIAL PRIMARY KEY, "
+                    "bot_id BIGINT NOT NULL DEFAULT 0, "
+                    "season_tag TEXT NOT NULL, "
+                    "user_id BIGINT NOT NULL, "
+                    "display_name TEXT NOT NULL, "
+                    "cash_snapshot BIGINT NOT NULL DEFAULT 0, "
+                    "gems_snapshot BIGINT NOT NULL DEFAULT 0, "
+                    "xp_snapshot BIGINT NOT NULL DEFAULT 0, "
+                    "level_snapshot INT NOT NULL DEFAULT 1, "
+                    "recorded_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+                )
+                top_rows = await c.fetch(
+                    "SELECT w.bot_id, w.user_id, COALESCE(u.first_name, u.username, 'Player') AS name, "
+                    "w.cash, w.gems, w.xp, w.level "
+                    "FROM wallets w LEFT JOIN users u ON u.id = w.user_id AND u.bot_id = w.bot_id "
+                    "ORDER BY w.cash DESC, w.xp DESC LIMIT 25"
+                )
+                for tr in top_rows:
+                    await c.execute(
+                        "INSERT INTO ax_season_legends "
+                        "(bot_id, season_tag, user_id, display_name, cash_snapshot, gems_snapshot, xp_snapshot, level_snapshot) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                        tr["bot_id"] or 0,
+                        season_tag,
+                        tr["user_id"],
+                        tr["name"],
+                        int(tr["cash"]),
+                        int(tr["gems"]),
+                        int(tr["xp"]),
+                        int(tr["level"]),
+                    )
+                reset_status = await c.execute(
+                    "UPDATE wallets SET cash = 0, vault = 0, daily_transferred = 0, updated_at = now()"
+                )
+        reset_cnt = int(reset_status.split()[-1]) if reset_status.split() and reset_status.split()[-1].isdigit() else 0
+        await log_audit(
+            pool,
+            owner_id,
+            "season_coin_reset",
+            target=season_tag,
+            details=f"reset={reset_cnt} wallets, legends={len(top_rows)}",
+        )
+        alert_text = f"🪙 Reset coins for {reset_cnt} wallets"
+        text = (
+            "✅ <b>SEASON COINS RESET COMPLETE</b>\n\n"
+            "<blockquote>"
+            f"🏷 <b>Season Tag:</b> <code>{html.escape(season_tag)}</code>\n"
+            f"🪙 <b>Wallets Reset:</b> <code>{reset_cnt:,}</code> (Cash &amp; Vault → 0)\n"
+            f"🏆 <b>Legends Saved:</b> <code>{len(top_rows)}</code> (view via <code>/toplegends</code>)\n"
+            "✨ <b>EXP &amp; Gems:</b> <code>UNTOUCHED</code>"
+            "</blockquote>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[btn("🏠 Owner Home", "axop:home")]])
     elif sec == "clones":
         page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
         text, kb = await clones_view(page)
