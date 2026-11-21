@@ -103,6 +103,7 @@ MODULE_ORDER = [
     "ax_help",
     "ax_claimcheck",
     # Core economy, games & clans
+    "ax_gamesmenu",
     "handlers",
     "economy_features",
     "bluff_handlers",

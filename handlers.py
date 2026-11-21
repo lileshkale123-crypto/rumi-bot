@@ -75,13 +75,6 @@ async def start_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx:
         await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
-@router.callback_query(F.data == "games")
-async def games_callback(query: CallbackQuery) -> None:
-    await query.answer()
-    if query.message:
-        await query.message.answer(ui.games_card(), parse_mode=ParseMode.HTML)
-
-
 @router.callback_query(F.data == "noop")
 async def noop_callback(query: CallbackQuery) -> None:
     await query.answer()
