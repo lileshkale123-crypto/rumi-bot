@@ -1,38 +1,218 @@
+"""
+Message templates and inline keyboards (aiogram 3.x, dynamic branding via get_brand).
+
+Style: bold + blockquote HTML, cute-premium tone. All dynamic text (names)
+must go through escape_html() before being embedded in a template.
+"""
+
 import html
 from datetime import datetime, timezone
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import bot_context, config
+
+import bot_context
+import config
 from ax_common import btn
+
 
 def escape_html(text: str) -> str:
     return html.escape(str(text))
 
+
 def format_number(n: int) -> str:
-    return f"{n:,}"
+    if abs(n) >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if abs(n) >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
 
 def _time_remaining(target: datetime) -> str:
-    return "24h 0m"
+    now = datetime.now(timezone.utc)
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    remaining = target - now
+    total_seconds = max(0, int(remaining.total_seconds()))
+    hours, rem = divmod(total_seconds, 3600)
+    minutes = rem // 60
+    return f"{hours}h {minutes}m"
 
-def start_card(first_name: str, wallet, command_list, bot_id=None) -> str:
-    return f"<b>{escape_html(first_name)}</b>"
 
-def start_keyboard(bot_username: str, bot_id=None):
-    return InlineKeyboardMarkup(inline_keyboard=[])
+# ---------------------------------------------------------------------------
+# /start
+# ---------------------------------------------------------------------------
 
-def wallet_card(name: str, wallet, full: bool = False, bot_id=None) -> str:
-    return f"<b>{escape_html(name)}</b>"
+def start_card(
+    first_name: str,
+    wallet,
+    command_list: list[tuple[str, str]],
+    bot_id: int | None = None,
+) -> str:
+    brand = bot_context.get_brand(bot_id)
+    bname = escape_html(brand.name)
+    name = escape_html(first_name)
+    cash = wallet["cash"] if wallet else 0
+    gems = wallet["gems"] if wallet else 0
+    level = wallet["level"] if wallet else 1
+    xp = wallet["xp"] if wallet else 0
 
-def wallet_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[])
+    return (
+        f"<b>ᴡᴇʟᴄᴏᴍᴇ, {name}</b> {brand.emoji}\n"
+        f"<i>{bname}</i>\n\n"
+        f"<blockquote>🌙 <b>ʏᴏᴜʀ sɴᴀᴘsʜᴏᴛ</b>\n"
+        f"💰 Cash: <b>{config.CURRENCY_SYMBOL}{format_number(cash)}</b>\n"
+        f"💎 Gems: <b>{gems}</b>\n"
+        f"⭐ Level: <b>{level}</b>\n"
+        f"✨ XP: <b>{xp}</b></blockquote>\n\n"
+        f"🎮 <b>ᴄᴏᴍᴍᴀɴᴅs</b>\n"
+        f"<blockquote>/wallet ✦ /claim ✦ /guard ✦ /pay ✦ /rob\n"
+        f"/help — open the full guide</blockquote>\n\n"
+        f"<blockquote>🛡 <b>Own a channel?</b>\n"
+        f"Add {bname} and protect your channel from reports ✨</blockquote>"
+    )
 
-def reward_claimed_card(cash_reward: int, gem_reward: int, lucky_bonus: int, new_streak: int, milestone_hit: int | None, is_weekly_bonus: bool, xp_info=None) -> str:
-    return f"+{cash_reward}"
+
+def start_keyboard(bot_username: str, bot_id: int | None = None) -> InlineKeyboardMarkup:
+    brand = bot_context.get_brand(bot_id)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [btn(f"\u2795 Add {brand.name} to your group", url=f"https://t.me/{bot_username}?startgroup=true", style="success")],
+            [
+                btn("\U0001F4D6 Features", data="startmenu", style="primary"),
+                btn("\U0001F3AE Games", data="games", style="success"),
+            ],
+            [
+                btn("\U0001F465 Community", url="https://t.me/YPTLEGENDS", style="primary"),
+                btn("\U0001F4E3 Updates", url="https://t.me/ZENITHREIGNS", style="primary"),
+            ],
+            [
+                btn(
+                    "\U0001F6E1 Add to your channel",
+                    url=f"https://t.me/{bot_username}?startchannel=true&admin=post_messages+edit_messages+delete_messages+invite_users",
+                    style="success",
+                )
+            ],
+            [btn("\U0001F451 Owner", url="https://t.me/lordzenithx", style="danger")],
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# /wallet (balance)
+# ---------------------------------------------------------------------------
+
+def wallet_card(name: str, wallet, full: bool = False, bot_id: int | None = None) -> str:
+    brand = bot_context.get_brand(bot_id)
+    n = escape_html(name)
+    shield_line = ""
+    if False:  # shield status is hidden from the wallet card
+        shield_line = f"\n🛡️ <i>Shield active — {_time_remaining(wallet['shield_until'])} remaining</i>"
+
+    return (
+        f"💳 <b>{escape_html(brand.upper_name)} WALLET</b>\n"
+        f"👤 <b>{n}</b> <code>LVL {wallet['level']}</code>\n\n"
+        f"<blockquote>"
+        f"💰 <b>Cash:</b> <code>{config.CURRENCY_SYMBOL}{(wallet['cash'] if full else format_number(wallet['cash']))}</code>\n"
+        f"💎 <b>Gems:</b> <code>{wallet['gems']}</code>\n"
+        f"✨ <b>XP:</b> <code>{wallet['xp']}</code>"
+        f"</blockquote>"
+        f"{shield_line}"
+    )
+
+
+def wallet_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎁 Claim", callback_data="claim"),
+                InlineKeyboardButton(text="🏆 Rankings", callback_data="rankings:cash:1"),
+            ],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="wallet:refresh")],
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# /claim (daily reward)
+# ---------------------------------------------------------------------------
+
+def reward_claimed_card(
+    cash_reward: int,
+    gem_reward: int,
+    lucky_bonus: int,
+    new_streak: int,
+    milestone_hit: int | None,
+    is_weekly_bonus: bool,
+    xp_info: dict | None = None,
+) -> str:
+    lines = ["🎁 <b>REWARD CLAIMED</b>", ""]
+    reward_line = f"✨ <b>Reward:</b> <code>+{config.CURRENCY_SYMBOL}{format_number(cash_reward)} Coins</code>"
+    if gem_reward > 0:
+        reward_line += f" • <code>+{gem_reward} Gems</code>"
+    lines.append(f"<blockquote>{reward_line}")
+    lines.append(f"🔥 <b>Streak:</b> <code>Day {new_streak}</code></blockquote>")
+
+    if is_weekly_bonus:
+        lines.append("")
+        lines.append(
+            f"<i>🎉 7-day streak bonus! Next bonus at Day {new_streak + config.DAILY_WEEKLY_BONUS_INTERVAL}.</i>"
+        )
+    elif lucky_bonus > 0:
+        lines.append("")
+        lines.append(f"<i>✨ Lucky bonus included: +{config.CURRENCY_SYMBOL}{format_number(lucky_bonus)}</i>")
+
+    if milestone_hit:
+        lines.append("")
+        lines.append(f"<i>🏅 Milestone reached: Day {milestone_hit}!</i>")
+
+    if xp_info and xp_info.get("xp_gained"):
+        lines.append("")
+        lines.append(f"⭐ <i>+{xp_info['xp_gained']} XP</i>")
+        if xp_info.get("leveled_up"):
+            bonus = f"+{config.CURRENCY_SYMBOL}{format_number(xp_info['cash_bonus'])}"
+            if xp_info["gem_bonus"]:
+                bonus += f" • +{xp_info['gem_bonus']} Gem"
+            lines.append(f"🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})")
+
+    return "\n".join(lines)
+
 
 def reward_cooldown_card(next_claim_at: datetime) -> str:
-    return "Cooldown"
+    return (
+        f"⏳ <b>Reward already claimed today</b>\n"
+        f"Come back in {_time_remaining(next_claim_at)}."
+    )
 
-def payment_success_card(amount: int, to_name: str, new_balance: int, tax: int = 0, received=None) -> str:
-    return f"{amount}"
+
+# ---------------------------------------------------------------------------
+# /pay
+# ---------------------------------------------------------------------------
+
+def payment_success_card(
+    amount: int,
+    to_name: str,
+    new_balance: int,
+    tax: int = 0,
+    received: int | None = None,
+) -> str:
+    name = escape_html(to_name)
+    tax_line = ""
+    if tax > 0:
+        tax_line = (
+            f"\n🧾 <i>Tax {config.CURRENCY_SYMBOL}{format_number(tax)} • "
+            f"{name} received {config.CURRENCY_SYMBOL}{format_number(received)}</i>"
+        )
+    return (
+        f"🌙 <b>Payment Sent!</b>\n\n"
+        f"💸 <b>{config.CURRENCY_SYMBOL}{format_number(amount)}</b> → {name}\n\n"
+        f"<blockquote>💳 New balance: {config.CURRENCY_SYMBOL}{format_number(new_balance)}</blockquote>"
+        f"{tax_line}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# /guard (shield)
+# ---------------------------------------------------------------------------
 
 def guard_success_card(shield_until: datetime) -> str:
     return (
@@ -44,27 +224,75 @@ def guard_success_card(shield_until: datetime) -> str:
         f"<i>Your Wallet is safe from robbery attempts until then.</i>"
     )
 
-def guard_fail_card(required: int, available: int) -> str:
-    return f"{required}/{available}"
 
-def rob_success_card(amount: int, victim_name: str, tax: int = 0, net=None) -> str:
-    return f"{amount}"
+def guard_fail_card(required: int, available: int) -> str:
+    return (
+        f"⚠️ <b>GUARD FAILED</b>\n\n"
+        f"<blockquote>"
+        f"❌ <b>Required:</b> <code>{config.CURRENCY_SYMBOL}{required}</code>\n"
+        f"💼 <b>Available:</b> <code>{config.CURRENCY_SYMBOL}{available}</code>"
+        f"</blockquote>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# /rob
+# ---------------------------------------------------------------------------
+
+def rob_success_card(amount: int, victim_name: str, tax: int = 0, net: int | None = None) -> str:
+    tax_line = ""
+    if tax > 0:
+        tax_line = (
+            f"\n🧾 <b>Tax:</b> <code>-{config.CURRENCY_SYMBOL}{format_number(tax)}</code> • "
+            f"<b>You keep:</b> <code>{config.CURRENCY_SYMBOL}{format_number(net)}</code>"
+        )
+    name = escape_html(victim_name)
+    return (
+        f"🎭 <b>HEIST SUCCESSFUL</b>\n\n"
+        f"<blockquote>💰 <b>Snatched:</b> <code>{config.CURRENCY_SYMBOL}{format_number(amount)}</code> from {name}"
+        f"{tax_line}</blockquote>"
+    )
+
 
 def rob_fail_card(penalty: int, victim_name: str) -> str:
-    return f"{penalty}"
+    name = escape_html(victim_name)
+    if penalty > 0:
+        return (
+            f"😼 <b>HEIST FAILED</b>\n\n"
+            f"<blockquote>💸 You were caught and paid <code>{config.CURRENCY_SYMBOL}{format_number(penalty)}</code> to {name}</blockquote>"
+        )
+    return "😼 <b>HEIST FAILED</b>\n\nBetter luck next time."
+
 
 def rob_cooldown_card(retry_at: datetime) -> str:
-    return "Cooldown"
+    return f"⏳ <b>Still recovering from your last heist</b>\nTry again in {_time_remaining(retry_at)}."
+
 
 def rob_victim_shielded_card() -> str:
-    return "Shielded"
+    return "🛡️ <b>Target is protected by a Guard</b> — heist blocked."
+
 
 def rob_victim_too_poor_card() -> str:
-    return "Poor"
+    return (
+        f"💼 <b>Target doesn't have enough to make it worth it</b> "
+        f"(needs at least {config.CURRENCY_SYMBOL}{config.ROB_MIN_VICTIM_BALANCE})."
+    )
 
-def leaderboard_card(title: str, emoji: str, entries: list, page: int, total_pages: int, is_currency: bool) -> str:
-    lines = [f"🏆 <b>RANKINGS</b> • {emoji} {title}", ""]
+
+# ---------------------------------------------------------------------------
+# /rankings (leaderboard)
+# ---------------------------------------------------------------------------
+
+def leaderboard_card(
+    title: str,
+    emoji: str,
+    entries: list,
+    page: int,
+    total_pages: int,
+    is_currency: bool,
+) -> str:
     medals = ["🥇", "🥈", "🥉"]
+    lines = [f"🏆 <b>RANKINGS</b> • {emoji} {title}", ""]
     body_lines = []
     for i, entry in enumerate(entries):
         rank = (page - 1) * config.LEADERBOARD_PAGE_SIZE + i + 1
@@ -72,25 +300,98 @@ def leaderboard_card(title: str, emoji: str, entries: list, page: int, total_pag
         value = f"{config.CURRENCY_SYMBOL}{format_number(entry['value'])}" if is_currency else format_number(entry["value"])
         title_suffix = f" · {escape_html(entry['title'])}" if entry.get("title") else ""
         body_lines.append(f"{medal} <b>{escape_html(entry['name'])}</b>{title_suffix} <code>{value}</code>")
-    lines.append("\n".join(body_lines))
+
+    if body_lines:
+        lines.append(f"<blockquote>{chr(10).join(body_lines)}</blockquote>")
+    else:
+        lines.append("Nobody here yet — be the first!")
+
+    lines.append("")
+    lines.append(f"<i>Page {page} of {total_pages}</i>")
     return "\n".join(lines)
 
-def leaderboard_keyboard(category: str, page: int, total_pages: int):
-    return InlineKeyboardMarkup(inline_keyboard=[])
+
+def leaderboard_keyboard(category: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="💵 Richest", callback_data="rankings:cash:1"),
+            InlineKeyboardButton(text="⭐ XP", callback_data="rankings:xp:1"),
+            InlineKeyboardButton(text="💎 Gems", callback_data="rankings:gems:1"),
+        ]
+    ]
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"rankings:{category}:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"rankings:{category}:{page + 1}"))
+    rows.append(nav_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------------------------------------------------------------------------
+# Generic error
+# ---------------------------------------------------------------------------
 
 def error_card(message: str) -> str:
-    return escape_html(message)
+    return f"⚠️ {escape_html(message)}"
+
+
+# ---------------------------------------------------------------------------
+# /guard when a shield is already active
+# ---------------------------------------------------------------------------
 
 def guard_already_active_card(shield_until: datetime) -> str:
-    return "Active"
+    return (
+        f"🛡️ <b>ALREADY PROTECTED</b>\n\n"
+        f"<blockquote>"
+        f"⏳ <b>Time left:</b> <code>{_time_remaining(shield_until)}</code>"
+        f"</blockquote>\n\n"
+        f"<i>No charge. You can raise a new Guard once this one ends.</i>"
+    )
+
 
 def games_card() -> str:
-    return "Games"
+    pct = int(config.BLUFF_TAX_PERCENT * 100)
+    return (
+        "\U0001F0CF <b>SHADOW BLUFF</b>\n"
+        "<i>A duel of nerve in the dark.</i>\n\n"
+        "<blockquote>"
+        "\U0001F3B4 Everyone is dealt 4 hidden cards. Every hand adds up to the same total, so luck never decides.\n"
+        "\u2694\uFE0F 4 rounds: play one card each round. The highest card takes all the points on the board.\n"
+        f"\U0001F451 Most points wins the pot ({pct}% fee)."
+        "</blockquote>\n\n"
+        "<b>Play in a group:</b> <code>/bluff 500 4</code>\n"
+        f"<i>amount, then players ({config.BLUFF_MIN_PLAYERS}-{config.BLUFF_MAX_PLAYERS})</i>\n\n"
+        "\U0001F575 <b>MAFIA</b>\n"
+        "<i>Free party game, no coins needed.</i>\n\n"
+        "<blockquote>"
+        "Secret roles, night moves and day votes. Find the Mafia before they find you."
+        "</blockquote>\n\n"
+        "<b>Play in a group:</b> <code>/mafia</code>\n"
+        "<i>4-15 players. /stopmafia ends a stuck game.</i>"
+    )
+
 
 def xp_line(xp_info) -> str:
-    return ""
+    if not xp_info or not xp_info.get("xp_gained"):
+        return ""
+    text = f"\n\n⭐ <i>+{xp_info['xp_gained']} XP</i>"
+    if xp_info.get("leveled_up"):
+        bonus = f"+{config.CURRENCY_SYMBOL}{format_number(xp_info['cash_bonus'])}"
+        if xp_info["gem_bonus"]:
+            bonus += f" • +{xp_info['gem_bonus']} Gem"
+        text += f"\n🎉 <b>LEVEL UP!</b> You reached <code>Level {xp_info['new_level']}</code> ({bonus})"
+    return text
 
-def wallet_card_premium(name: str, wallet, emoji: str = "", full: bool = False, bot_id=None) -> str:
+
+def wallet_card_premium(
+    name: str,
+    wallet,
+    emoji: str = "",
+    full: bool = False,
+    bot_id: int | None = None,
+) -> str:
     brand = bot_context.get_brand(bot_id)
     n = escape_html(name)
     return (
