@@ -12,7 +12,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 import ax_fill
-from ax_common import register_sender_chat
+from ax_common import ANON_ID, CHANNEL_BOT_ID, register_sender_chat
 from ax_common import ANON_ID, cmd_args, esc, get_bot_username, is_admin, right_label
 
 log = logging.getLogger(__name__)
@@ -469,7 +469,7 @@ class NotesFiltersMiddleware(BaseMiddleware):
             and event.chat.type in ("group", "supergroup")
             and event.text
             and event.from_user is not None
-            and not event.from_user.is_bot
+            and (not event.from_user.is_bot or event.from_user.id in (ANON_ID, CHANNEL_BOT_ID))
         ):
             bot: Bot | None = data.get("bot")
             pool: asyncpg.Pool | None = data.get("pool")
@@ -508,3 +508,5 @@ def register(dp) -> None:
         dp.include_router(router)
 
 # --- notes admin patch applied ---
+
+# --- filter anon patch applied ---
