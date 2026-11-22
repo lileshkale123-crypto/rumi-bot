@@ -165,7 +165,9 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int, right: str | None = Non
     """True if the user is an admin. If `right` is given (e.g. 'can_restrict_members'),
     the admin must also hold that permission. The group creator holds every permission."""
     if user_id == ANON_ID:
-        return (bot.id, chat_id) in ANON_ON or chat_id in ANON_ON
+        # Telegram only lets a group's admins post as the anonymous bot, so this is an admin.
+        # Which admin (and which rights) is hidden by Telegram, so every right check passes.
+        return chat_id < 0
     member = await get_member(bot, chat_id, user_id)
     if member is None or member.status not in ADMIN_STATES:
         return False
@@ -267,3 +269,5 @@ async def track_user(pool, user, chat, bot_id: int | None = None) -> None:
                 chat.id,
                 user.id,
             )
+
+# --- anon admin patch applied ---
