@@ -71,44 +71,6 @@ async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotCo
                 await ax_mod.perform(cmd, bot, pool, message.chat.id, t.id)
             await message.reply(f"✅ .{cmd} applied to <b>{esc(t.first_name or 'User')}</b>.", parse_mode=H)
 
-@router.message(Command("catch"))
-async def catch_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
-    if not message.from_user:
-        return
-    drop = _CATCH.get((bot_ctx.bot_id, message.chat.id))
-    guess = " ".join(cmd_args(message)).strip().lower()
-    if drop and guess and guess in drop["name"].lower():
-        _CATCH.pop((bot_ctx.bot_id, message.chat.id), None)
-        async with pool.acquire() as c:
-            await c.execute("UPDATE wallets SET cash = cash + $1, updated_at=now() WHERE bot_id=$2 AND user_id=$3", 2000, bot_ctx.bot_id, message.from_user.id)
-        await message.reply(f"🎉 Caught <b>{esc(drop['name'])}</b>! Earned <code>+$2,000</code>.", parse_mode=H)
-    else:
-        await message.reply("Use: <code>/catch &lt;character name&gt;</code>", parse_mode=H)
-
-@router.message(Command("guess"))
-async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
-    if not message.from_user:
-        return
-    args = cmd_args(message)
-    if not args or not args[0].isdigit():
-        await message.reply("Use: <code>/guess 250</code> (100–500)", parse_mode=H)
-        return
-    val = int(args[0])
-    async with pool.acquire() as c:
-        r = await c.fetchrow("SELECT * FROM ax_guess_rounds WHERE bot_id=$1 AND chat_id=$2 AND active=TRUE", bot_ctx.bot_id, message.chat.id)
-        if not r:
-            await message.reply("No active number guess round.")
-            return
-        if val == int(r["secret_num"]):
-            await c.execute("UPDATE ax_guess_rounds SET active=FALSE WHERE bot_id=$1 AND chat_id=$2", bot_ctx.bot_id, message.chat.id)
-            await c.execute("UPDATE wallets SET cash = cash + $1, updated_at=now() WHERE bot_id=$2 AND user_id=$3", int(r["reward_coins"]), bot_ctx.bot_id, message.from_user.id)
-            await message.reply(f"🎯 Correct! <b>{esc(message.from_user.first_name or 'Player')}</b> won <code>+${int(r['reward_coins']):,}</code>!", parse_mode=H)
-        else:
-            lo = max(int(r["low_bound"]), val) if val < int(r["secret_num"]) else int(r["low_bound"])
-            hi = min(int(r["high_bound"]), val) if val > int(r["secret_num"]) else int(r["high_bound"])
-            await c.execute("UPDATE ax_guess_rounds SET low_bound=$3, high_bound=$4, tries_used=tries_used+1 WHERE bot_id=$1 AND chat_id=$2", bot_ctx.bot_id, message.chat.id, lo, hi)
-            await message.reply(f"🔍 Narrowed range: <code>{lo} – {hi}</code>", parse_mode=H)
-
 def register(dp):
     if router.parent_router is None:
         dp.include_router(router)

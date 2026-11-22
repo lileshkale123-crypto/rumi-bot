@@ -163,6 +163,7 @@ MODULE_ORDER = [
     "ax_tasks",
     "ax_social_extras",
     "ax_arcade",
+    "ax_eventspawn",
     "ax_events_mod",
     # Non-command text/media fallbacks
     "media_helper",

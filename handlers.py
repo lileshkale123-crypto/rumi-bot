@@ -272,6 +272,12 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: B
     st = r["status"]
     vname = victim.first_name or victim.username or "User"
     if st == "success":
+        try:
+            import ax_tasks
+            await ax_tasks.record_task_action(pool, robber.id, "robs", bot_id=bid)
+        except Exception:
+            pass
+    if st == "success":
         text = ui.rob_success_card(r["amount"], vname, r["tax"], r["net"])
         if r.get("xp"):
             text += ui.xp_line(r["xp"])

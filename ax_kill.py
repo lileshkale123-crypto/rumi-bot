@@ -62,6 +62,11 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) ->
             await c.execute("UPDATE wallets SET cash = cash + $1, updated_at=now() WHERE bot_id=$2 AND user_id=$3", amt, bid, user.id)
             if xp_g > 0:
                 await services.award_xp(c, user.id, xp_g, bot_id=bid)
+    try:
+        import ax_tasks
+        await ax_tasks.record_task_action(pool, user.id, "kills", bot_id=bid)
+    except Exception:
+        pass
     await message.reply(f"{badge} <b>{esc(user.first_name or 'Player')}</b> killed <b>{esc(target.first_name or 'Target')}</b>!\n<blockquote>💰 Earned: <code>+${amt:,}</code> • ✨ <code>+{xp_g} XP</code></blockquote>", parse_mode=H)
 
 @router.message(Command("revive"))

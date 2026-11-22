@@ -97,8 +97,19 @@ NEW["safety"] = ("🔐", "Account Recovery",
     "/merge only works if the old Telegram account is really deleted and had a password. "
     "XP, level and stats stay separate.")
 
+NEW["events"] = ("🎁", "Events and Daily Tasks",
+    "<b>Group events</b>\n"
+    "Once a day, in groups with 25+ members, an event can pop up while people are chatting.\n"
+    "🎴 <b>/catch name</b>: a character appears, be the first to type its name and win $2,000.\n"
+    "🎯 <b>/g 250</b>: guess the secret number (100 to 500). I tell you higher or lower. Win $500 to $1,000. The group shares 12 tries.\n\n"
+    "<b>Daily tasks</b> (/task)\n"
+    "Two tasks a day. Finish both to win $9,000.\n"
+    "1. Word: your letters have one wrong letter. Use /word to see them and reply to a friend with /exch WANT GIVE to swap.\n"
+    "2. Action: do 20 to 25 /kill, 20 to 25 /rob, or win 2 games.\n"
+    "It resets at midnight IST.")
+
 ORDER = [
-    "set", "notes", "chat", "powers", "kill", "gifts", "shop", "fun", "react",
+    "set", "notes", "chat", "events", "powers", "kill", "gifts", "shop", "fun", "react",
     "friends", "you", "safety", "invite", "premium", "channel", "more", "broadcast",
 ]
 

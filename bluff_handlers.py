@@ -338,6 +338,12 @@ async def finish_match(bot: Bot, g: dict) -> None:
     if res["status"] != "ok":
         log.error("bluff payout refused: %s", res)
         return
+    try:
+        import ax_tasks
+        for u in res["winners"]:
+            await ax_tasks.record_task_action(g["pool"], u, "game_wins", bot_id=g["bot_id"])
+    except Exception:
+        pass
     order = sorted(g["players"], key=lambda u: -g["scores"][u])
     ranking = [(nm(g, u), g["scores"][u]) for u in order]
     extra = res["prize"] - res["share"] * len(res["winners"])
