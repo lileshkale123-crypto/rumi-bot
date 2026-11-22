@@ -18,6 +18,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, Telegram
 
 import config
 from ax_common import btn, cmd_args
+from bot_context import BotContext
 from services import ensure_user_and_wallet
 
 log = logging.getLogger(__name__)
@@ -396,6 +397,9 @@ async def user_view(pool: asyncpg.Pool, uid: int) -> tuple[str, InlineKeyboardMa
         w = await c.fetchrow("SELECT cash, gems, level, xp, vault FROM wallets WHERE user_id=$1", uid)
         banned = bool(await c.fetchval("SELECT 1 FROM ax_bot_bans WHERE user_id=$1", uid))
         prem = bool(await c.fetchval("SELECT 1 FROM ax_premium WHERE user_id=$1", uid))
+        grows = await c.fetch(
+            "SELECT item_id, qty FROM ax_gift_recv WHERE user_id=$1 AND qty>0 ORDER BY item_id", uid
+        )
 
     if u is None and w is None:
         return None, None
@@ -406,6 +410,11 @@ async def user_view(pool: asyncpg.Pool, uid: int) -> tuple[str, InlineKeyboardMa
     vault = w["vault"] if w else 0
     gems = w["gems"] if w else 0
     lvl = w["level"] if w else 1
+    import ax_gift
+
+    gifts_txt = ", ".join(
+        f"{ax_gift.ITEMS[r['item_id']][0]}×{r['qty']}" for r in grows if r["item_id"] in ax_gift.ITEMS
+    ) or "none"
 
     text = (
         f"👤 <b>USER MANAGER</b>\n"
@@ -415,7 +424,8 @@ async def user_view(pool: asyncpg.Pool, uid: int) -> tuple[str, InlineKeyboardMa
         f"💰 <b>Cash:</b> <code>{SYMBOL}{cash:,}</code> (Vault: <code>{SYMBOL}{vault:,}</code>)\n"
         f"💎 <b>Gems:</b> <code>{gems:,}</code> • ⭐ <b>LVL:</b> <code>{lvl}</code>\n"
         f"🌟 <b>Premium:</b> {'✅ Yes' if prem else '❌ No'}\n"
-        f"🚫 <b>Bot-Banned:</b> {'🔴 Yes' if banned else '🟢 No'}"
+        f"🚫 <b>Bot-Banned:</b> {'🔴 Yes' if banned else '🟢 No'}\n"
+        f"🎁 <b>Gifts:</b> {gifts_txt}"
         f"</blockquote>"
     )
     kb = InlineKeyboardMarkup(
@@ -436,6 +446,10 @@ async def user_view(pool: asyncpg.Pool, uid: int) -> tuple[str, InlineKeyboardMa
                     f"axop:ub:{uid}:{'0' if banned else '1'}",
                     style="success" if banned else "danger",
                 ),
+            ],
+            [
+                btn("🎁 Give Gift", f"axop:gl:{uid}:g", style="success"),
+                btn("🗑 Remove Gift", f"axop:gl:{uid}:r", style="danger"),
             ],
             [btn("🔄 Refresh", f"axop:uv:{uid}"), btn("🏠 Owner Home", "axop:home")],
         ]
@@ -661,7 +675,7 @@ async def owneruser_cmd(message: Message, pool: asyncpg.Pool) -> None:
 
 
 @router.callback_query(F.data.startswith("axop:"))
-async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None:
+async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     global _maintenance_on
     owner_id = query.from_user.id
     if owner_id not in OWNER_IDS:
@@ -693,7 +707,7 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None
             "• <code>/owneruser 123456789</code>\n"
             "• <code>/owneruser @username</code>\n"
             "• Or reply to their message with <code>/owneruser</code>\n\n"
-            "From there you can add/remove coins, toggle Premium, or ban/unban bot-wide.</blockquote>"
+            "From there you can add/remove coins, toggle Premium, give/remove gifts, or ban/unban bot-wide.</blockquote>"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[[btn("🏠 Owner Home", "axop:home")]])
     elif sec == "bans":
@@ -840,6 +854,90 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool) -> None
             pool, owner_id, "premium_grant" if grant else "premium_remove", target=str(uid)
         )
         alert_text = "💎 Premium granted" if grant else "❌ Premium removed"
+        text, kb = await user_view(pool, uid)
+    elif sec == "gl" and len(parts) >= 4 and parts[2].isdigit() and parts[3] in ("g", "r"):
+        import ax_gift
+
+        uid = int(parts[2])
+        mode = parts[3]
+        items = list(ax_gift.ITEMS.items())
+        rows = []
+        for i in range(0, len(items), 2):
+            rows.append(
+                [btn(f"{e} {n}", f"axop:gp:{uid}:{mode}:{iid}") for iid, (e, n, *_r) in items[i : i + 2]]
+            )
+        rows.append([btn("⬅ Back", f"axop:uv:{uid}")])
+        title = "🎁 <b>GIVE GIFT</b>" if mode == "g" else "🗑 <b>REMOVE GIFT</b>"
+        text = f"{title}\n<blockquote>User: <code>{uid}</code>\nPick a gift:</blockquote>"
+        kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    elif sec == "gp" and len(parts) >= 5 and parts[2].isdigit() and parts[3] in ("g", "r"):
+        import ax_gift
+
+        uid = int(parts[2])
+        mode = parts[3]
+        iid = parts[4]
+        if iid not in ax_gift.ITEMS:
+            await query.answer()
+            return
+        e, n = ax_gift.ITEMS[iid][0], ax_gift.ITEMS[iid][1]
+        qrow = [btn(str(q), f"axop:gq:{uid}:{mode}:{iid}:{q}") for q in range(1, 7)]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[qrow[:3], qrow[3:], [btn("⬅ Back", f"axop:gl:{uid}:{mode}")]]
+        )
+        verb = "Give" if mode == "g" else "Remove"
+        text = f"{e} <b>{verb} {n}</b>\n<blockquote>User: <code>{uid}</code>\nHow many?</blockquote>"
+    elif (
+        sec == "gq"
+        and len(parts) >= 6
+        and parts[2].isdigit()
+        and parts[3] in ("g", "r")
+        and parts[5].isdigit()
+    ):
+        import ax_gift
+
+        uid = int(parts[2])
+        mode = parts[3]
+        iid = parts[4]
+        qty = int(parts[5])
+        if iid not in ax_gift.ITEMS or not 1 <= qty <= 6:
+            await query.answer()
+            return
+        e, n = ax_gift.ITEMS[iid][0], ax_gift.ITEMS[iid][1]
+        bid = bot_ctx.bot_id
+        async with pool.acquire() as c:
+            if mode == "g":
+                await c.execute(
+                    "INSERT INTO ax_gift_recv (bot_id,user_id,item_id,qty) VALUES ($1,$2,$3,$4) "
+                    "ON CONFLICT (user_id,item_id) DO UPDATE SET bot_id=$1, qty=ax_gift_recv.qty+$4",
+                    bid,
+                    uid,
+                    iid,
+                    qty,
+                )
+            else:
+                await c.execute(
+                    "UPDATE ax_gift_recv SET qty=GREATEST(qty-$1,0) WHERE user_id=$2 AND item_id=$3",
+                    qty,
+                    uid,
+                    iid,
+                )
+        await log_audit(
+            pool,
+            owner_id,
+            "gift_give" if mode == "g" else "gift_remove",
+            target=str(uid),
+            details=f"{iid} x{qty}",
+        )
+        if mode == "g":
+            try:
+                await query.bot.send_message(
+                    uid,
+                    f"🎁 You received {e} <b>{n}</b> × <b>{qty}</b>!\nSee your gifts: /items",
+                    parse_mode=H,
+                )
+            except Exception:
+                pass
+        alert_text = f"{'Gave' if mode == 'g' else 'Removed'} {e} {n} ×{qty}"
         text, kb = await user_view(pool, uid)
     elif sec == "ub" and len(parts) >= 4 and parts[2].isdigit():
         import ax_ban

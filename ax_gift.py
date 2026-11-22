@@ -1,4 +1,4 @@
-"""Gifts: /giftshop (buy), /mygifts (inventory), /sendgift <name> (reply to someone) (aiogram 3.x, bot_id aware)."""
+"""Gifts: /giftshop (buy), /items (inventory), /sendgift <name> (reply to someone) (aiogram 3.x, bot_id aware)."""
 import logging
 import os
 import random
@@ -214,7 +214,7 @@ async def _shop_view(
         f"<blockquote>{chr(10).join(lines)}</blockquote>\n"
         f"You have <code>{money(cash)}</code>\n"
         f"Send one: reply to someone with <code>/sendgift rose</code>\n"
-        f"See what you own: /mygifts"
+        f"See what you own: /items"
     )
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -277,8 +277,8 @@ async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext)
             pass
 
 
-@router.message(Command("mygifts"))
-async def mygifts_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+@router.message(Command("items"))
+async def items_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     u = message.from_user
     if u is None:
         return
@@ -317,7 +317,7 @@ async def sendgift_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext
     if not args or not r or not r.from_user:
         await message.reply(
             "🎁 <b>Reply to someone</b> with <code>/sendgift rose</code>\n"
-            "See all gifts: /giftshop   Your gifts: /mygifts",
+            "See all gifts: /giftshop   Your gifts: /items",
             parse_mode=H,
         )
         return

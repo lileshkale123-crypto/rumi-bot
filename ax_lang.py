@@ -143,7 +143,7 @@ _MENU = [
     ("titles", "Your titles"),
     ("giftshop", "Buy & send animated gifts"),
     ("sendgift", "Send a gift to someone (reply)"),
-    ("mygifts", "See your gifts"),
+    ("items", "See your gifts"),
     ("clan", "Create or manage your clan"),
     ("referral", "Invite friends and earn rewards"),
     ("premium", "Get {b} Premium"),
