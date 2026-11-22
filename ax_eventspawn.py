@@ -39,7 +39,7 @@ CATCH_REWARD = int(getattr(config, "CATCH_REWARD_COINS", 2000))
 GUESS_REWARD = (int(getattr(config, "EVENT_REWARD_MIN", 500)), int(getattr(config, "EVENT_REWARD_MAX", 1000)))
 GUESS_RANGE = (int(getattr(config, "GUESS_MIN_NUMBER", 100)), int(getattr(config, "GUESS_MAX_NUMBER", 500)))
 GUESS_TRIES = int(getattr(config, "GUESS_MAX_TRIES", 12))
-EVENT_LIFETIME = 10 * 60          # seconds an event stays open
+EVENT_LIFETIME = 24 * 60 * 60     # an event stays until someone wins it (or 24 hours pass)
 ACTIVE_WINDOW = 10 * 60           # chat must have talked this recently
 MIN_RECENT_MSGS = 6               # ...and sent this many messages in that window
 CHANCE_PER_MIN = 0.06             # per minute of activity (random drop time)
@@ -192,7 +192,7 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
             "🎴 <b>A WILD CHARACTER APPEARED!</b>\n"
             f"<blockquote>Who is this? <code>{esc(_mask(name))}</code>\n"
             f"Be the first to type <code>/catch name</code> and win <b>${CATCH_REWARD:,}</b>!</blockquote>\n"
-            "<i>It runs away in 10 minutes.</i>"
+            "<i>It stays until someone catches it (24 hours at most).</i>"
         )
         ACTIVE[key] = ev
         sent = await _send(bot, chat_id, text, img)
@@ -206,7 +206,7 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
             f"<blockquote>I'm thinking of a number from <b>{GUESS_RANGE[0]}</b> to <b>{GUESS_RANGE[1]}</b>.\n"
             f"Type <code>/g 250</code> to guess. First to get it wins <b>${reward:,}</b>!\n"
             f"The whole group shares <b>{GUESS_TRIES}</b> tries.</blockquote>\n"
-            "<i>The round ends in 10 minutes.</i>"
+            "<i>It stays open until someone wins (24 hours at most).</i>"
         )
         ACTIVE[key] = ev
         sent = await _send(bot, chat_id, text, _guess_image())
