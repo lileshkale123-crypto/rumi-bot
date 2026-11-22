@@ -12,6 +12,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 import ax_fill
+from ax_common import register_sender_chat
 from ax_common import ANON_ID, cmd_args, esc, get_bot_username, is_admin, right_label
 
 log = logging.getLogger(__name__)
@@ -499,6 +500,7 @@ router.message(Command("clearfilters"))(make_clear("ax_filters", "filter"))
 
 def register(dp) -> None:
     global _middleware_registered
+    register_sender_chat(dp)
     if not _middleware_registered:
         _middleware_registered = True
         dp.message.outer_middleware(NotesFiltersMiddleware())

@@ -1,12 +1,15 @@
 """Shared helpers for group & utility features (aiogram 3.x, per-bot isolated)."""
 import asyncio
+import contextvars
 import html
 import logging
 import time as _time
+import weakref
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Any
 
-from aiogram import Bot
+from aiogram import BaseMiddleware, Bot
 from aiogram.enums import ChatMemberStatus
 from aiogram.types import InlineKeyboardButton, Message
 
@@ -168,6 +171,12 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int, right: str | None = Non
         # Telegram only lets a group's admins post as the anonymous bot, so this is an admin.
         # Which admin (and which rights) is hidden by Telegram, so every right check passes.
         return chat_id < 0
+    if user_id == CHANNEL_BOT_ID:
+        # A channel posting in the group. Trusted only when it is the group's own linked channel.
+        sc = _SENDER_CHAT.get()
+        if sc is None or chat_id >= 0:
+            return False
+        return sc == chat_id or sc == await _linked_chat_id(bot, chat_id)
     member = await get_member(bot, chat_id, user_id)
     if member is None or member.status not in ADMIN_STATES:
         return False
@@ -271,3 +280,52 @@ async def track_user(pool, user, chat, bot_id: int | None = None) -> None:
             )
 
 # --- anon admin patch applied ---
+
+CHANNEL_BOT_ID = 136817688  # Telegram's Channel_Bot: the "user" behind messages a channel sends in a group
+_SENDER_CHAT: "contextvars.ContextVar[int | None]" = contextvars.ContextVar("ax_sender_chat", default=None)
+_LINKED: "OrderedDict[tuple[int, int], tuple[int | None, float]]" = OrderedDict()
+_LINKED_MAX = 500
+_LINKED_TTL = 600
+
+
+async def _linked_chat_id(bot: Bot, chat_id: int) -> int | None:
+    key = (bot.id, chat_id)
+    now = _time.time()
+    hit = _LINKED.get(key)
+    if hit and now - hit[1] < _LINKED_TTL:
+        _LINKED.move_to_end(key)
+        return hit[0]
+    try:
+        linked = (await bot.get_chat(chat_id)).linked_chat_id
+    except Exception:
+        return None
+    _LINKED[key] = (linked, now)
+    _LINKED.move_to_end(key)
+    while len(_LINKED) > _LINKED_MAX:
+        _LINKED.popitem(last=False)
+    return linked
+
+
+class _SenderChatMiddleware(BaseMiddleware):
+    """Remembers which chat sent the current message, so is_admin can judge channel posts."""
+
+    async def __call__(self, handler, event, data):
+        sc = getattr(event, "sender_chat", None)
+        token = _SENDER_CHAT.set(sc.id if sc is not None else None)
+        try:
+            return await handler(event, data)
+        finally:
+            _SENDER_CHAT.reset(token)
+
+
+_SC_DISPATCHERS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def register_sender_chat(dp) -> None:
+    if dp in _SC_DISPATCHERS:
+        return
+    _SC_DISPATCHERS.add(dp)
+    dp.message.outer_middleware(_SenderChatMiddleware())
+
+
+# --- channel admin patch applied ---
