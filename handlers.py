@@ -2,13 +2,15 @@
 Rebuilt to match the current services.py / ui.py signatures."""
 import html
 import logging
+import os
+from collections import OrderedDict
 
 import asyncpg
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, Message
 
 import ax_common
 import bot_context
@@ -54,6 +56,42 @@ def _parse_amount(args) -> int | None:
 
 
 # ---------------------------------------------------------------- /start
+_START_IMG_PATH = "assets/rumi-start-v2.png"
+_START_FILE_IDS: "OrderedDict[int, str]" = OrderedDict()  # bot_id -> Telegram file_id (ids differ per bot)
+_START_FILE_IDS_MAX = 50
+
+
+async def _send_start_card(message: Message, bot_id: int, text: str, keyboard) -> None:
+    """Picture first (cached file_id, then the local file, then the web link), plain text last."""
+    cached = _START_FILE_IDS.get(bot_id)
+    sources: list = []
+    if cached:
+        sources.append(cached)
+    if os.path.isfile(_START_IMG_PATH):
+        sources.append(FSInputFile(_START_IMG_PATH))
+    sources.append(PLACEHOLDER_PHOTO_URL)
+    for source in sources:
+        try:
+            sent = await message.reply_photo(
+                photo=source,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+        except TelegramBadRequest as e:
+            logger.warning("start photo failed (%s): %s", type(source).__name__, str(e)[:120])
+            if cached and source is cached:
+                _START_FILE_IDS.pop(bot_id, None)
+            continue
+        if sent.photo:
+            _START_FILE_IDS[bot_id] = sent.photo[-1].file_id
+            _START_FILE_IDS.move_to_end(bot_id)
+            while len(_START_FILE_IDS) > _START_FILE_IDS_MAX:
+                _START_FILE_IDS.popitem(last=False)
+        return
+    await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+
 @router.message(CommandStart())
 async def start_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     user = message.from_user
@@ -69,10 +107,7 @@ async def start_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx:
     if message.chat.type in ("group", "supergroup"):
         await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=kb)
         return
-    try:
-        await message.reply_photo(photo=PLACEHOLDER_PHOTO_URL, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
-    except TelegramBadRequest:
-        await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    await _send_start_card(message, bid, text, kb)
 
 
 @router.callback_query(F.data == "noop")
@@ -305,3 +340,5 @@ async def rankings_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: B
 def register(dp) -> None:
     if router.parent_router is None:
         dp.include_router(router)
+
+# --- start photo patch 2 applied ---
