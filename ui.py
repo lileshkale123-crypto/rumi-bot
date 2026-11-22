@@ -214,11 +214,20 @@ def payment_success_card(
 # /guard (shield)
 # ---------------------------------------------------------------------------
 
+def _guard_hours(shield_until) -> int:
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        return max(1, int(round((shield_until - _dt.now(_tz.utc)).total_seconds() / 3600)))
+    except Exception:
+        return config.SHIELD_DURATION_HOURS
+
+
 def guard_success_card(shield_until: datetime) -> str:
     return (
         f"🛡️ <b>GUARD RAISED</b>\n\n"
         f"<blockquote>"
-        f"🔒 <b>Protection:</b> <code>{config.SHIELD_DURATION_HOURS} Hours</code>\n"
+        f"🔒 <b>Protection:</b> <code>{_guard_hours(shield_until)} Hours</code>\n"
         f"💸 <b>Fee Paid:</b> <code>{config.CURRENCY_SYMBOL}{config.SHIELD_COST}</code>"
         f"</blockquote>\n\n"
         f"<i>Your Wallet is safe from robbery attempts until then.</i>"

@@ -191,7 +191,7 @@ async def premium_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext)
         f"<blockquote>"
         f"Normal users keep the clean standard UI (👤).\n"
         f"Premium unlocks 💓 / custom emoji, higher rob/kill limits, "
-        f"30% wallet protection, 5% tax &amp; private <code>/check</code>."
+        f"30% wallet protection, a 2-day /guard for the same price, 5% tax &amp; private <code>/check</code>."
         f"</blockquote>",
         parse_mode=H,
         reply_markup=kb,

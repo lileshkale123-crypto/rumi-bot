@@ -509,6 +509,9 @@ async def pay_to_id(
 
 async def apply_ward(pool: asyncpg.Pool, user_id: int, bot_id: int | None = None) -> dict:
     bid = bot_context.resolve_bot_id(bot_id)
+    shield_hours = config.SHIELD_DURATION_HOURS
+    if await _is_premium(pool, user_id, bid):
+        shield_hours = int(getattr(config, "PREMIUM_SHIELD_MAX_DAYS", 2)) * 24
     async with pool.acquire() as conn:
         async with conn.transaction():
             wallet = await conn.fetchrow(
@@ -525,7 +528,7 @@ async def apply_ward(pool: asyncpg.Pool, user_id: int, bot_id: int | None = None
             if wallet["cash"] < config.SHIELD_COST:
                 return {"status": "insufficient_funds", "required": config.SHIELD_COST, "available": wallet["cash"]}
 
-            shield_until = now + timedelta(hours=config.SHIELD_DURATION_HOURS)
+            shield_until = now + timedelta(hours=shield_hours)
             await conn.execute(
                 "UPDATE wallets SET cash = cash - $1, shield_until = $2, updated_at = now() "
                 "WHERE bot_id = $3 AND user_id = $4",
