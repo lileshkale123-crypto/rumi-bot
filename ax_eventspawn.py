@@ -60,7 +60,9 @@ SEEN: dict[tuple[int, int], dict] = {}
 _TODAY: dict[tuple[int, int, str], int] = {}
 _MEMBERS: dict[tuple[int, int], tuple[float, int]] = {}
 _LOOP: asyncio.Task | None = None
-_GUESS_FILE_ID: list[str] = []
+_IMG: dict[int, str] = {}      # bot_id -> guess image (file_id or URL)
+_POOL: list = []
+IMG_ADMINS = {8920362130}     # may use /setguessimg besides the bot owners
 _TABLE_READY = False
 _MW = False
 
@@ -151,10 +153,10 @@ def _mask(name: str) -> str:
 
 
 # ---------------------------------------------------------------- spawning
-def _guess_image():
+def _guess_image(bid: int):
+    if bid in _IMG:
+        return _IMG[bid]
     env = os.getenv("GUESS_EVENT_IMAGE") or getattr(config, "GUESS_EVENT_IMAGE", "")
-    if _GUESS_FILE_ID:
-        return _GUESS_FILE_ID[0]
     if env:
         return env
     for ext in ("jpg", "jpeg", "png", "webp"):
@@ -163,6 +165,25 @@ def _guess_image():
             from aiogram.types import FSInputFile
             return FSInputFile(p)
     return None
+
+
+async def _ensure_settings(pool) -> None:
+    async with pool.acquire() as c:
+        await c.execute("CREATE TABLE IF NOT EXISTS ax_event_settings (bot_id BIGINT NOT NULL, key TEXT NOT NULL, "
+                        "value TEXT NOT NULL, PRIMARY KEY (bot_id, key))")
+
+
+async def _load_img(bid: int) -> None:
+    if bid in _IMG or not _POOL:
+        return
+    try:
+        await _ensure_settings(_POOL[0])
+        async with _POOL[0].acquire() as c:
+            v = await c.fetchval("SELECT value FROM ax_event_settings WHERE bot_id=$1 AND key='guess_image'", bid)
+        if v:
+            _IMG[bid] = v
+    except Exception:
+        log.exception("could not load the guess image")
 
 
 async def _send(bot: Bot, chat_id: int, text: str, photo=None) -> Message | None:
@@ -209,9 +230,10 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
             "<i>It stays open until someone wins (24 hours at most).</i>"
         )
         ACTIVE[key] = ev
-        sent = await _send(bot, chat_id, text, _guess_image())
-        if sent is not None and sent.photo and not _GUESS_FILE_ID:
-            _GUESS_FILE_ID.append(sent.photo[-1].file_id)
+        await _load_img(bid)
+        sent = await _send(bot, chat_id, text, _guess_image(bid))
+        if sent is not None and sent.photo and bid not in _IMG:
+            _IMG[bid] = sent.photo[-1].file_id
     if sent is None:
         ACTIVE.pop(key, None)
         return False
@@ -306,6 +328,7 @@ class ActivityMiddleware(BaseMiddleware):
                 pool = data.get("pool")
                 bid = data.get("bot_id") or (data.get("bot_ctx").bot_id if data.get("bot_ctx") else event.bot.id)
                 if pool is not None:
+                    _POOL[:] = [pool]
                     info = SEEN.setdefault((bid, event.chat.id), {"msgs": deque(maxlen=40)})
                     info.update(pool=pool, bot=event.bot)
                     info["msgs"].append(time.time())
@@ -411,6 +434,44 @@ async def spawn_cmd(message: Message, bot: Bot, bot_ctx: BotContext) -> None:
     ok = await spawn(bot, bot_ctx.bot_id, message.chat.id, kind)
     if not ok:
         await message.reply("An event is already running here (or it could not be sent).")
+
+
+def _can_manage(uid: int) -> bool:
+    if uid in IMG_ADMINS:
+        return True
+    try:
+        from ax_adminpanel import OWNER_IDS
+        return uid in OWNER_IDS
+    except Exception:
+        return False
+
+
+@router.message(Command("setguessimg"))
+async def setimg_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    """Reply to a photo with /setguessimg to use it for the guess event. /setguessimg clear removes it."""
+    u = message.from_user
+    if not u or not _can_manage(u.id):
+        return
+    _POOL[:] = [pool]
+    bid = bot_ctx.bot_id
+    await _ensure_settings(pool)
+    args = cmd_args(message)
+    if args and args[0].lower() == "clear":
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM ax_event_settings WHERE bot_id=$1 AND key='guess_image'", bid)
+        _IMG.pop(bid, None)
+        await message.reply("🗑 Guess event image removed.")
+        return
+    rep = message.reply_to_message
+    if not rep or not rep.photo:
+        await message.reply("Send the image here, then reply to it with <code>/setguessimg</code>.", parse_mode=H)
+        return
+    fid = rep.photo[-1].file_id
+    async with pool.acquire() as c:
+        await c.execute("INSERT INTO ax_event_settings (bot_id, key, value) VALUES ($1,'guess_image',$2) "
+                        "ON CONFLICT (bot_id, key) DO UPDATE SET value=EXCLUDED.value", bid, fid)
+    _IMG[bid] = fid
+    await message.reply("✅ Saved! The guess event will use this image.\nCode: <code>" + esc(fid) + "</code>", parse_mode=H)
 
 
 def register(dp) -> None:
