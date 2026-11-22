@@ -87,35 +87,104 @@ def _txt(code: str, bot_id: int | None = None) -> dict[str, str]:
     }
 
 
+# One list drives the menu: the order here is the order users see after typing "/".
+# Moderation and owner commands are left out on purpose (they are in /modhelp and /settings).
+_MENU = [
+    # --- Economy ---
+    ("wallet", "Check your cash, gems & level"),
+    ("claim", "Claim your daily reward"),
+    ("work", "Complete a contract for coins"),
+    ("spin", "Spin the daily Wheel of Fate"),
+    ("pay", "Send coins to someone (reply)"),
+    ("rob", "Attempt a heist on someone (reply)"),
+    ("guard", "Raise a protective guard shield"),
+    ("vault", "Open your secure coin vault"),
+    ("deposit", "Put coins into your vault"),
+    ("withdraw", "Take coins out of your vault"),
+    ("rankings", "View top richest, XP & gems"),
+    ("toprich", "Richest players leaderboard"),
+    ("topgroups", "Top groups leaderboard"),
+    ("bounty", "Put a bounty on someone (reply)"),
+    ("pact", "Offer someone a Blood Pact (reply)"),
+    ("betray", "Break your Blood Pact"),
+    # --- Games & fun ---
+    ("kill", "Attack someone (reply)"),
+    ("revive", "Come back after being killed"),
+    ("bluff", "Play Shadow Bluff in groups"),
+    ("mafia", "Start a Mafia game in groups"),
+    ("stopmafia", "Stop the running Mafia game"),
+    ("mafiatop", "Mafia leaderboard"),
+    ("td", "Play Truth or Dare"),
+    ("truth", "Get a random truth question"),
+    ("dare", "Get a random dare"),
+    ("ship", "Ship two people together"),
+    ("match", "Find your match in the group"),
+    ("couple", "Couple of the day"),
+    ("couples", "Today's couples in the group"),
+    ("love", "Love meter"),
+    ("crush", "Crush meter"),
+    ("look", "Look meter"),
+    ("brain", "Brain meter"),
+    ("stupid_meter", "Stupid meter"),
+    ("hug", "Give someone a hug (reply)"),
+    ("kiss", "Give someone a kiss (reply)"),
+    ("pat", "Pat someone (reply)"),
+    ("slap", "Slap someone (reply)"),
+    ("punch", "Punch someone (reply)"),
+    ("bite", "Bite someone (reply)"),
+    ("poke", "Poke someone (reply)"),
+    ("wink", "Wink at someone (reply)"),
+    ("cuddle", "Cuddle someone (reply)"),
+    ("bonk", "Bonk someone (reply)"),
+    ("murder", "Dramatic murder (reply)"),
+    # --- Profile, shop & community ---
+    ("profile", "View your visual profile card"),
+    ("shop", "Buy custom titles"),
+    ("titles", "Your titles"),
+    ("giftshop", "Buy & send animated gifts"),
+    ("sendgift", "Send a gift to someone (reply)"),
+    ("mygifts", "See your gifts"),
+    ("clan", "Create or manage your clan"),
+    ("referral", "Invite friends and earn rewards"),
+    ("premium", "Get {b} Premium"),
+    ("donate", "Support {b}"),
+    # --- Tools ---
+    ("q", "Turn a reply into a quote sticker"),
+    ("qcolors", "Quote sticker colour names"),
+    ("mypacks", "Your sticker packs"),
+    ("kang", "Add a sticker or photo to your pack"),
+    ("speak", "Convert text to voice"),
+    ("afk", "Mark yourself away"),
+    ("info", "Info about a user"),
+    ("id", "Show user and chat IDs"),
+    ("report", "Report a message to the admins (reply)"),
+    ("rules", "Show the group rules"),
+    ("get", "Get a saved note"),
+    ("notes", "List the saved notes"),
+    # --- Bot ---
+    ("help", "Full guide & features menu"),
+    ("features", "Browse all features"),
+    ("start", "Open {b} welcome card & snapshot"),
+    ("setlang", "Choose language (personal or group)"),
+    ("ping", "Check if the bot is fast"),
+    ("privacy", "Privacy information"),
+]
+
+
 def _commands_en(brand_name: str) -> list[BotCommand]:
-    return [
-        BotCommand(command="start", description=f"Open {brand_name} welcome card & snapshot"),
-        BotCommand(command="help", description="Full guide & features menu"),
-        BotCommand(command="setlang", description="Choose language (personal or group)"),
-        BotCommand(command="wallet", description="Check your cash, gems & level"),
-        BotCommand(command="claim", description="Claim your daily reward"),
-        BotCommand(command="pay", description="Send coins to someone (reply)"),
-        BotCommand(command="rob", description="Attempt a heist on someone (reply)"),
-        BotCommand(command="guard", description="Raise a protective guard shield"),
-        BotCommand(command="vault", description="Open your secure coin vault"),
-        BotCommand(command="rankings", description="View top richest, XP & gems"),
-        BotCommand(command="profile", description="View your visual profile card"),
-        BotCommand(command="shop", description="Buy custom titles"),
-        BotCommand(command="giftshop", description="Buy & send animated gifts"),
-        BotCommand(command="clan", description="Create or manage your clan"),
-        BotCommand(command="bluff", description="Play Shadow Bluff in groups"),
-        BotCommand(command="mafia", description="Start a Mafia game in groups"),
-        BotCommand(command="td", description="Play Truth or Dare"),
-        BotCommand(command="q", description="Turn a reply into a quote sticker"),
-        BotCommand(command="kang", description="Add a sticker or photo to your pack"),
-        BotCommand(command="speak", description="Convert text to voice"),
-        BotCommand(command="settings", description="Group moderation & welcome settings"),
-        BotCommand(command="modhelp", description="Full moderation commands guide"),
-        BotCommand(command="premium", description=f"Get {brand_name} Premium"),
-    ]
+    return [BotCommand(command=c, description=d.replace("{b}", brand_name)) for c, d in _MENU]
 
 
 def _commands_hi(brand_name: str) -> list[BotCommand]:
+    """Hindi text where it exists; the English line for commands that have no Hindi text yet."""
+    hindi = {c.command: c.description for c in _commands_hi_old(brand_name)}
+    return [
+        BotCommand(command=c, description=hindi.get(c) or d.replace("{b}", brand_name))
+        for c, d in _MENU
+    ]
+
+
+def _commands_hi_old(brand_name: str) -> list[BotCommand]:
     hi_name = "रूमी" if brand_name.lower() == "rumi" else brand_name
     return [
         BotCommand(command="start", description=f"{hi_name} का मुख्य पृष्ठ और आपका सारांश"),
@@ -316,3 +385,5 @@ async def on_startup(bot: Bot, dispatcher) -> None:
 def register(dp) -> None:
     if router.parent_router is None:
         dp.include_router(router)
+
+# --- command menu patch applied ---
