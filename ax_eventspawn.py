@@ -423,11 +423,7 @@ async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
 
 @router.message(Command("spawnevent"))
 async def spawn_cmd(message: Message, bot: Bot, bot_ctx: BotContext) -> None:
-    try:
-        from ax_adminpanel import OWNER_IDS
-    except Exception:
-        return
-    if not message.from_user or message.from_user.id not in OWNER_IDS or not _in_group(message):
+    if not message.from_user or not _can_manage(message.from_user.id) or not _in_group(message):
         return
     args = cmd_args(message)
     kind = args[0].lower() if args and args[0].lower() in ("catch", "guess") else random.choice(("catch", "guess"))
