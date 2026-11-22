@@ -12,7 +12,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 import ax_fill
-from ax_common import cmd_args, esc, get_bot_username, is_admin
+from ax_common import ANON_ID, cmd_args, esc, get_bot_username, is_admin, right_label
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_notes")
@@ -84,13 +84,19 @@ async def admin_only(message: Message, bot: Bot) -> bool:
     user = message.from_user
     if user is None:
         return False
-    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
-        await say(
-            message,
-            "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
-        )
+    if chat.type == "private":
+        await say(message, "\U0001F6E1\U0000FE0F <b>Groups only</b>\n<blockquote>Use this in your group as an admin \U00002728</blockquote>")
         return False
-    return True
+    if await is_admin(bot, chat.id, user.id, "can_change_info"):
+        return True
+    if user.id == ANON_ID:
+        why = "I can't tell who an anonymous admin is. Send it from your own account, or an admin can turn on /anonadmin for this group \U00002728"
+    elif await is_admin(bot, chat.id, user.id):
+        why = "You are an admin, but you need the <b>%s</b> permission for this \U00002728" % right_label("can_change_info")
+    else:
+        why = "Use this in your group as an admin \U00002728"
+    await say(message, "\U0001F6E1\U0000FE0F <b>Admins only</b>\n<blockquote>%s</blockquote>" % why)
+    return False
 
 
 def extract(reply: Message | None, rest: str) -> tuple[str, str | None, str | None]:
@@ -498,3 +504,5 @@ def register(dp) -> None:
         dp.message.outer_middleware(NotesFiltersMiddleware())
     if router.parent_router is None:
         dp.include_router(router)
+
+# --- notes admin patch applied ---
