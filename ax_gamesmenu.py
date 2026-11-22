@@ -24,10 +24,10 @@ H = ParseMode.HTML
 _ARCADE_RULES = (
     "<b>How it works</b>\n"
     "1. In a group, type the command with your bet.\n"
-    "2. Others tap <b>Join</b> (2+ players needed).\n"
-    "3. The host taps <b>Start</b>.\n"
+    "2. Others tap <b>Join</b> and pay the same bet (2 to 8 players).\n"
+    "3. The host taps <b>Start</b>. The lobby closes after 90 seconds.\n"
     "4. The winner takes the pot (10% fee, 5% for Premium) and is pinned in the chat.\n\n"
-    "<i>Bet: $100 to $50,000. Admins can use /close and /open to switch these games off or on in a group.</i>"
+    "<i>Bet: $100 to $50,000. Cancelled or stuck games refund everyone. Admins can use /close and /open.</i>"
 )
 
 # key: (button label, page text)
@@ -72,31 +72,37 @@ GAMES: dict[str, tuple[str, str]] = {
     "dice": (
         "🎲 Dice Duel",
         "🎲 <b>DICE DUEL</b>\n<i>Roll against the group for the pot.</i>\n\n"
+        "<blockquote>Everyone rolls two dice. The highest total wins. A tie rolls again.</blockquote>\n\n"
         "<b>Play:</b> <code>/dice 500</code>\n\n" + _ARCADE_RULES,
     ),
     "bomb": (
         "💣 Bomb Pass",
         "💣 <b>BOMB PASS</b>\n<i>Don't be holding it when it blows.</i>\n\n"
+        "<blockquote>The bomb goes to a random player. Tap <b>Pass it</b> within 15 seconds or it blows up in your hands. Every blast removes one player. The last one standing wins. Max 6 players.</blockquote>\n\n"
         "<b>Play:</b> <code>/bomb 500</code>\n\n" + _ARCADE_RULES,
     ),
     "flip": (
         "🪙 Coin Flip Clash",
-        "🪙 <b>COIN FLIP CLASH</b>\n<i>Heads or tails, winner takes it all.</i>\n\n"
+        "🪙 <b>COIN FLIP CLASH</b>\n<i>Heads or tails, one side takes it all.</i>\n\n"
+        "<blockquote>Join with <b>Heads</b> or <b>Tails</b> (you can switch before Start). Everyone on the side the coin lands on splits the pot. The game needs at least one player on each side.</blockquote>\n\n"
         "<b>Play:</b> <code>/flip 500</code>\n\n" + _ARCADE_RULES,
     ),
     "card": (
         "🎴 21 Card Rush",
         "🎴 <b>21 CARD RUSH</b>\n<i>Get as close to 21 as you can.</i>\n\n"
+        "<blockquote>You get a secret hand of 2 cards (1 to 11 each). Tap <b>Hit</b> for another card or <b>Stand</b>. Tap <b>My hand</b> to peek. Closest to 21 without going over wins. If everyone goes over, bets are refunded.</blockquote>\n\n"
         "<b>Play:</b> <code>/card 500</code>\n\n" + _ARCADE_RULES,
     ),
     "roulette": (
         "🎡 Syndicate Roulette",
-        "🎡 <b>SYNDICATE ROULETTE</b>\n<i>Spin the wheel, one name comes up.</i>\n\n"
+        "🎡 <b>SYNDICATE ROULETTE</b>\n<i>Spin the wheel, one name goes out at a time.</i>\n\n"
+        "<blockquote>Every few seconds the wheel removes one player. The last one left wins.</blockquote>\n\n"
         "<b>Play:</b> <code>/roulette 500</code>\n\n" + _ARCADE_RULES,
     ),
     "hack": (
         "⚡ Vault Wire Hack",
         "⚡ <b>VAULT WIRE HACK</b>\n<i>Cut the right wire, crack the vault.</i>\n\n"
+        "<blockquote>Three wires: 🔴 🔵 🟢. One of them cracks the vault. Pick yours within 25 seconds, you can't change it. Everyone who cut the right wire splits the pot. If nobody did, bets are refunded.</blockquote>\n\n"
         "<b>Play:</b> <code>/hack 500</code>\n\n" + _ARCADE_RULES,
     ),
 }

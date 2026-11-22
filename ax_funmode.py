@@ -10,7 +10,7 @@ from ax_common import cmd_args, is_admin
 router = Router(name="ax_funmode")
 
 FUN_CMDS = [
-    "rob", "pay", "guard", "bluff",
+    "rob", "pay", "guard", "bluff", "dice", "bomb", "flip", "card", "roulette", "hack",
     "mafia", "stopmafia", "ship", "match", "couple", "kill",
     "hug", "kiss", "pat", "slap", "punch", "bite",
     "poke", "wink", "cuddle", "bonk", "murder",

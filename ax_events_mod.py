@@ -43,7 +43,7 @@ async def admin_cmd(message: Message, bot: Bot) -> None:
     await message.reply("👮 <b>ADMINS</b>\n<blockquote>" + ("\n".join(admins) or "None") + "</blockquote>", parse_mode=H)
 
 @router.message(F.chat.type.in_({"group", "supergroup"}), F.text.startswith("."))
-async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not message.from_user or not message.text:
         return
     parts = message.text.strip()[1:].split()
@@ -61,7 +61,10 @@ async def dot_mod(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     elif cmd == "pin" and message.reply_to_message and await is_admin(bot, message.chat.id, message.from_user.id, "can_pin_messages"):
         await bot.pin_chat_message(chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
         await message.reply("📌 Pinned!")
-    elif cmd in ("warn", "mute", "ban", "kick") and await is_admin(bot, message.chat.id, message.from_user.id, "can_restrict_members"):
+    elif cmd == "warn":
+        import ax_warn  # same warn system as /warn: counts warnings, punishes at the limit
+        await ax_warn.make_warn("n")(message, bot, pool, bot_ctx)
+    elif cmd in ("mute", "ban", "kick") and await is_admin(bot, message.chat.id, message.from_user.id, "can_restrict_members"):
         t = await resolve_target(message, bot, pool, args=args, bot_id=bot.id)
         if t and not getattr(t, "is_bot", False):
             if cmd != "warn":
