@@ -1,0 +1,5063 @@
+=== ax_flood.py ===
+"""Flood extras: /flood /setfloodtimer /floodmode /clearflood + punishment used by flood watcher (aiogram 3.x)."""
+import time
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.filters import Command
+from aiogram.types import Message, TelegramObject
+
+import ax_actions
+import ax_mod
+from ax_common import cmd_args, is_admin
+from ax_warn2 import fmt_time, parse_time
+
+router = Router(name="ax_flood")
+
+MODES = ("ban", "mute", "kick", "tban", "tmute")
+_recent: dict[tuple[int, int], list[tuple[float, int]]] = {}  # (chat_id, user_id) -> [(time, message_id)]
+_RECENT_MAX = 10_000
+_middleware_registered = False
+
+
+def _prune_recent(now: float) -> None:
+    if len(_recent) <= _RECENT_MAX:
+        return
+    stale = [k for k, lst in _recent.items() if not lst or now - lst[-1][0] >= 120.0]
+    for k in stale:
+        _recent.pop(k, None)
+    if len(_recent) > _RECENT_MAX:
+        oldest = sorted(_recent.items(), key=lambda kv: kv[1][-1][0] if kv[1] else 0.0)[: _RECENT_MAX // 5]
+        for k, _ in oldest:
+            _recent.pop(k, None)
+
+
+def record_message(msg: Message) -> None:
+    chat = msg.chat
+    user = msg.from_user
+    if chat.type == "private" or user is None or user.is_bot:
+        return
+    k = (chat.id, user.id)
+    now = time.time()
+    _prune_recent(now)
+    lst = [x for x in _recent.get(k, []) if now - x[0] < 120.0][-49:]
+    lst.append((now, msg.message_id))
+    _recent[k] = lst
+
+
+class FloodRecordMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message):
+            record_message(event)
+        return await handler(event, data)
+
+
+async def get(pool: asyncpg.Pool, chat_id: int) -> dict:
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT flood_limit, flood_window, flood_mute, flood_mode, flood_mode_secs, flood_clear "
+            "FROM ax_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    if r:
+        return dict(r)
+    return {
+        "flood_limit": 0,
+        "flood_window": 5,
+        "flood_mute": 300,
+        "flood_mode": "tmute",
+        "flood_mode_secs": 0,
+        "flood_clear": False,
+    }
+
+
+async def punish(bot: Bot, pool: asyncpg.Pool, chat, user, msg: Message, mute_secs: int) -> None:
+    s = await get(pool, chat.id)
+    if s["flood_clear"]:
+        raw_ids = [m for _, m in _recent.pop((chat.id, user.id), [])]
+        if msg.message_id not in raw_ids:
+            raw_ids.append(msg.message_id)
+        # Deduplicate while preserving order and delete in Telegram's max 100-ID batches
+        ids = list(dict.fromkeys(raw_ids))
+        for i in range(0, len(ids), 100):
+            try:
+                await bot.delete_messages(chat.id, ids[i : i + 100])
+            except Exception:
+                pass
+    mode, secs = s["flood_mode"], s["flood_mode_secs"]
+    if mode in ("tban", "tmute"):
+        action = f"{mode} {secs or (mute_secs if mode == 'tmute' else 3600)}s"
+    else:
+        action = mode
+    await ax_actions.run(bot, pool, chat.id, user, action, "Flooding the chat")
+
+
+async def _gate(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private":
+        await ax_mod.say(
+            message,
+            "⚠️ <b>Groups only</b>\n<blockquote>Use this inside your group 💫</blockquote>",
+            bot=bot,
+        )
+        return False
+    if not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>Admins only</b>\n<blockquote>You need admin rights for this ✨</blockquote>",
+            bot=bot,
+        )
+        return False
+    return True
+
+
+def _invalidate_settings_cache(chat_id: int) -> None:
+    try:
+        import ax_settings
+
+        ax_settings._cache.pop(chat_id, None)
+    except Exception:
+        pass
+
+
+@router.message(Command("flood"))
+async def flood_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    s = await get(pool, message.chat.id)
+    if s["flood_limit"] == 0:
+        await ax_mod.say(
+            message,
+            "🌊 <b>Antiflood is off</b>\n<blockquote>Turn on: /setflood 6 (messages) or /setfloodtimer 10 30s</blockquote>",
+            bot=bot,
+        )
+        return
+    mode = s["flood_mode"]
+    if mode in ("tban", "tmute"):
+        mode += f" {fmt_time(s['flood_mode_secs'] or s['flood_mute'])}"
+    await ax_mod.say(
+        message,
+        (
+            "🌊 <b>Antiflood</b>\n<blockquote>"
+            f"📊 <b>Trigger:</b> {s['flood_limit']} messages in {s['flood_window']}s\n"
+            f"🔨 <b>Action:</b> {mode}\n"
+            f"🧹 <b>Delete flood:</b> {'on' if s['flood_clear'] else 'off'}</blockquote>"
+        ),
+        bot=bot,
+    )
+
+
+@router.message(Command("setfloodtimer"))
+async def setfloodtimer_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    chat_id = message.chat.id
+    args = cmd_args(message)
+    if args and args[0].lower() in ("off", "no"):
+        import ax_settings
+
+        await ax_settings.set_limit(pool, chat_id, 0)
+        await ax_mod.say(
+            message,
+            "🌊 <b>Antiflood off</b>\n<blockquote>No flood checks now</blockquote>",
+            bot=bot,
+        )
+        return
+    secs = parse_time(args[1]) if len(args) > 1 else None
+    if len(args) < 2 or not args[0].isdigit() or int(args[0]) < 3 or not secs or secs > 600:
+        await ax_mod.say(
+            message,
+            "💫 <b>Usage</b>\n<blockquote>/setfloodtimer 10 30s: 10 messages within 30 seconds\n/setfloodtimer off</blockquote>",
+            bot=bot,
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_settings (chat_id, flood_limit, flood_window) VALUES ($1,$2,$3) "
+            "ON CONFLICT (chat_id) DO UPDATE SET flood_limit=$2, flood_window=$3",
+            chat_id,
+            int(args[0]),
+            secs,
+        )
+    _invalidate_settings_cache(chat_id)
+    await ax_mod.say(
+        message,
+        f"✅ <b>Timed antiflood set</b>\n<blockquote>{args[0]} messages within {fmt_time(secs)} triggers it 🌊</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("floodmode"))
+async def floodmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    chat_id = message.chat.id
+    args = [a.lower() for a in cmd_args(message)]
+    if not args or args[0] not in MODES:
+        s = await get(pool, chat_id)
+        await ax_mod.say(
+            message,
+            f"⚙️ <b>Flood action</b>\n<blockquote>Currently <b>{s['flood_mode']}</b>\n"
+            "Set: /floodmode ban, mute, kick, tban or tmute (example: /floodmode tmute 3h)</blockquote>",
+            bot=bot,
+        )
+        return
+    secs = 0
+    if args[0] in ("tban", "tmute") and len(args) > 1:
+        secs = parse_time(args[1])
+        if not secs:
+            await ax_mod.say(
+                message,
+                "⏳ <b>Bad time</b>\n<blockquote>Example: /floodmode tmute 3h</blockquote>",
+                bot=bot,
+            )
+            return
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_settings (chat_id, flood_mode, flood_mode_secs) VALUES ($1,$2,$3) "
+            "ON CONFLICT (chat_id) DO UPDATE SET flood_mode=$2, flood_mode_secs=$3",
+            chat_id,
+            args[0],
+            secs,
+        )
+    _invalidate_settings_cache(chat_id)
+    await ax_mod.say(
+        message,
+        f"✅ <b>Flood action set</b>\n<blockquote>Flooders get <b>{args[0]}</b></blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("clearflood"))
+async def clearflood_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    chat_id = message.chat.id
+    args = cmd_args(message)
+    arg = args[0].lower() if args else ""
+    if arg not in ("on", "off", "yes", "no"):
+        s = await get(pool, chat_id)
+        await ax_mod.say(
+            message,
+            f"⚙️ <b>Delete flood</b>\n<blockquote>Currently <b>{'on' if s['flood_clear'] else 'off'}</b>\n"
+            "Use /clearflood on or off</blockquote>",
+            bot=bot,
+        )
+        return
+    val = arg in ("on", "yes")
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_settings (chat_id, flood_clear) VALUES ($1,$2) "
+            "ON CONFLICT (chat_id) DO UPDATE SET flood_clear=$2",
+            chat_id,
+            val,
+        )
+    _invalidate_settings_cache(chat_id)
+    await ax_mod.say(
+        message,
+        f"✅ <b>Delete flood {'on' if val else 'off'}</b>\n<blockquote>Flood messages are {'deleted' if val else 'kept'}</blockquote>",
+        bot=bot,
+    )
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(FloodRecordMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_settings.py ===
+"""Flood protection and the settings menu (aiogram 3.x)."""
+import time
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, TelegramObject
+
+import ax_welcome
+from ax_common import btn, cmd_args, fire, is_admin
+
+router = Router(name="ax_settings")
+H = ParseMode.HTML
+
+_cache: dict[int, tuple[float, tuple[int, int, int]]] = {}
+_CACHE_MAX = 5000
+_hits: dict[tuple[int, int], list[float]] = {}
+_HITS_MAX = 10_000
+_middleware_registered = False
+
+
+def _prune_cache(now: float) -> None:
+    if len(_cache) <= _CACHE_MAX:
+        return
+    stale = [cid for cid, (ts, _) in _cache.items() if now - ts >= 120.0]
+    for cid in stale:
+        _cache.pop(cid, None)
+    if len(_cache) > _CACHE_MAX:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            _cache.pop(cid, None)
+
+
+def _prune_hits(now: float) -> None:
+    if len(_hits) <= _HITS_MAX:
+        return
+    stale = [k for k, lst in _hits.items() if not lst or now - lst[-1] >= 60.0]
+    for k in stale:
+        _hits.pop(k, None)
+    if len(_hits) > _HITS_MAX:
+        _hits.clear()
+
+
+async def _cfg_load(pool: asyncpg.Pool, chat_id: int) -> tuple[int, int, int]:
+    async with pool.acquire() as conn:
+        r = await conn.fetchrow(
+            "SELECT flood_limit, flood_window, flood_mute FROM ax_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    v = (int(r["flood_limit"]), int(r["flood_window"]), int(r["flood_mute"])) if r else (0, 5, 300)
+    now = time.time()
+    _prune_cache(now)
+    _cache[chat_id] = (now, v)
+    return v
+
+
+async def cfg(pool: asyncpg.Pool, chat_id: int) -> tuple[int, int, int]:
+    c = _cache.get(chat_id)
+    if c:
+        now = time.time()
+        if now - c[0] >= 30.0:
+            _cache[chat_id] = (now, c[1])  # only one refresh at a time
+            fire(_cfg_load(pool, chat_id))
+        return c[1]
+    return await _cfg_load(pool, chat_id)
+
+
+async def set_limit(pool: asyncpg.Pool, chat_id: int, n: int) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO ax_settings (chat_id, flood_limit) VALUES ($1,$2) "
+            "ON CONFLICT (chat_id) DO UPDATE SET flood_limit=$2",
+            chat_id,
+            n,
+        )
+    _cache.pop(chat_id, None)
+
+
+async def _check_flood(msg: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = msg.chat
+    user = msg.from_user
+    if chat.type == "private" or user is None or user.is_bot:
+        return
+    limit, window, mute = await cfg(pool, chat.id)
+    if limit == 0:
+        return
+    now = time.time()
+    _prune_hits(now)
+    key = (chat.id, user.id)
+    hits = [t for t in _hits.get(key, []) if now - t < window] + [now]
+    _hits[key] = hits
+    if len(hits) < limit:
+        return
+    _hits[key] = []
+
+    if await is_admin(bot, chat.id, user.id):
+        return
+    import ax_approve
+
+    if await ax_approve.is_approved(pool, chat.id, user.id):
+        return
+    try:
+        import ax_flood
+
+        await ax_flood.punish(bot, pool, chat, user, msg, mute)
+    except Exception:
+        pass
+
+
+class FloodWatcherMiddleware(BaseMiddleware):
+    """Non-blocking antiflood observer on group messages."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message) and event.chat.type != "private":
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            if bot is not None and pool is not None:
+                await _check_flood(event, bot, pool)
+        return await handler(event, data)
+
+
+def nav(*rows) -> InlineKeyboardMarkup:
+    home = [btn("⬅ Back", "axs:main"), btn("🏠 Home", "axs:main")]
+    return InlineKeyboardMarkup(inline_keyboard=[*rows, home])
+
+
+def main_view() -> tuple[str, InlineKeyboardMarkup]:
+    text = "⚙️ <b>Rumi Settings</b>\n<blockquote>Pick a category to customize your group 💫</blockquote>"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [btn("🌊 Flood Protection", "axs:flood", style="primary")],
+            [
+                btn("👋 Welcome", "axs:welcome", style="primary"),
+                btn("😢 Goodbye", "axs:goodbye", style="primary"),
+            ],
+            [btn("✖ Close", "axs:close", style="danger")],
+        ]
+    )
+    return text, kb
+
+
+async def flood_view(pool: asyncpg.Pool, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    limit, window, mute = await cfg(pool, chat_id)
+    status = "🔴 Off" if limit == 0 else f"🟢 On: {limit} msgs / {window}s, mute {mute // 60}m"
+    text = f"🌊 <b>Flood Protection</b>\n<blockquote>Status: <b>{status}</b>\nCustom value: /setflood 8</blockquote>"
+    return text, nav(
+        [
+            btn("🟢 On (6)", "axs:flood:on:6", style="success"),
+            btn("🟢 On (10)", "axs:flood:on:10", style="success"),
+        ],
+        [btn("🔴 Turn off", "axs:flood:off", style="danger")],
+    )
+
+
+async def msg_view(pool: asyncpg.Pool, chat_id: int, kind: str) -> tuple[str, InlineKeyboardMarkup]:
+    t, e, p = await ax_welcome.get(pool, chat_id, kind)
+    icon = "👋" if kind == "welcome" else "😢"
+    text = (
+        f"{icon} <b>{kind.title()} Message</b>\n<blockquote>Status: <b>{'🟢 On' if e else '🔴 Off'}</b>\n"
+        f"Text: <b>{'custom' if t else 'default'}</b>\nPhoto: <b>{'custom' if p else 'default'}</b>\n"
+        f"Customize: /set{kind}</blockquote>"
+    )
+    return text, nav(
+        [
+            btn("🟢 Enable", f"axs:{kind}:on", style="success"),
+            btn("🔴 Disable", f"axs:{kind}:off", style="danger"),
+        ],
+        [btn("🔄 Reset to default", f"axs:{kind}:reset", style="primary")],
+    )
+
+
+@router.message(Command("settings"))
+async def settings_cmd(message: Message, bot: Bot) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡️ <b>Admins only</b>\n<blockquote>Open this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    text, kb = main_view()
+    await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+@router.message(Command("setflood"))
+async def setflood_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    args = cmd_args(message)
+    a = args[0].lower() if args else ""
+    if a == "off":
+        await set_limit(pool, chat.id, 0)
+        await message.reply("🔴 <b>Flood protection off</b>", parse_mode=H)
+    elif a.isdigit() and int(a) >= 3:
+        await set_limit(pool, chat.id, int(a))
+        limit, window, _ = await cfg(pool, chat.id)
+        await message.reply(
+            f"🟢 <b>Flood protection on</b>\n<blockquote>{limit} messages in {window}s triggers a mute 💫</blockquote>",
+            parse_mode=H,
+        )
+    else:
+        text, kb = await flood_view(pool, chat.id)
+        await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("axs:"))
+async def settings_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+    if query.message is None or not query.data:
+        await query.answer()
+        return
+    chat = query.message.chat
+    if not await is_admin(bot, chat.id, query.from_user.id, "can_change_info"):
+        await query.answer("Admins only 🛡️", show_alert=True)
+        return
+    p = query.data.split(":")
+    sec = p[1] if len(p) > 1 else "main"
+    act = p[2] if len(p) > 2 else None
+
+    if sec == "close":
+        await query.answer()
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+
+    if sec == "flood":
+        if act == "on" and len(p) > 3 and p[3].isdigit():
+            await set_limit(pool, chat.id, int(p[3]))
+        elif act == "off":
+            await set_limit(pool, chat.id, 0)
+        text, kb = await flood_view(pool, chat.id)
+    elif sec in ("welcome", "goodbye"):
+        if act in ("on", "off"):
+            await ax_welcome.put(pool, chat.id, sec, "enabled", act == "on")
+        elif act == "reset":
+            await ax_welcome.put(pool, chat.id, sec, "text", None)
+            await ax_welcome.put(pool, chat.id, sec, "photo", None)
+        text, kb = await msg_view(pool, chat.id, sec)
+    else:
+        text, kb = main_view()
+
+    await query.answer("Done ✨" if act else None)
+    try:
+        await query.message.edit_text(text, parse_mode=H, reply_markup=kb)
+    except Exception:
+        pass
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(FloodWatcherMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_welcome.py ===
+"""Welcome and goodbye messages (aiogram 3.x)."""
+import logging
+
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
+from aiogram.types import LinkPreviewOptions, Message
+
+import ax_fill
+import ax_rules
+from ax_common import fire, get_bot_username, is_admin
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_welcome")
+
+IMG = "assets/rumi-start-v2.png"
+DEFAULTS = {
+    "welcome": "✨ <b>Welcome, {first_name}!</b>\n<blockquote>Glad to have you in <b>{chat_name}</b> 💫\nBe kind and enjoy your stay 🌸</blockquote>",
+    "goodbye": "👋 <b>Goodbye, {first_name}</b>\n<blockquote>See you again in <b>{chat_name}</b> 💫</blockquote>",
+}
+_VALID_KINDS = ("welcome", "goodbye")
+_VALID_COLS = ("text", "enabled", "photo")
+
+
+async def get(pool: asyncpg.Pool, chat_id: int, kind: str):
+    assert kind in _VALID_KINDS
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            f"SELECT {kind}_text t, {kind}_enabled e, {kind}_photo p FROM ax_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    return (r["t"], r["e"], r["p"]) if r else (None, True, None)
+
+
+async def get_full(pool: asyncpg.Pool, chat_id: int, kind: str):
+    """Everything the welcome needs in a single query."""
+    assert kind in _VALID_KINDS
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            f"SELECT {kind}_text t, {kind}_enabled e, {kind}_photo p, "
+            f"clean_welcome cw, last_welcome_id lw FROM ax_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    if r:
+        return r["t"], r["e"], r["p"], r["cw"], r["lw"]
+    return None, True, None, None, None
+
+
+async def _quiet_delete(bot: Bot, chat_id: int, msg_id: int) -> None:
+    try:
+        await bot.delete_message(chat_id, msg_id)
+    except Exception:
+        pass
+
+
+async def put(pool: asyncpg.Pool, chat_id: int, kind: str, col: str, value) -> None:
+    assert kind in _VALID_KINDS and col in _VALID_COLS
+    async with pool.acquire() as c:
+        await c.execute(
+            f"INSERT INTO ax_settings (chat_id, {kind}_{col}) VALUES ($1,$2) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET {kind}_{col}=$2",
+            chat_id,
+            value,
+        )
+
+
+def make_set(kind: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        chat = message.chat
+        user = message.from_user
+        if user is None:
+            return
+
+        async def reply_html(t: str):
+            return await message.reply(t, parse_mode=ParseMode.HTML)
+
+        if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+            await reply_html(
+                "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>"
+            )
+            return
+
+        raw_msg = message.text or message.caption or ""
+        parts = raw_msg.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        rp = message.reply_to_message
+        photo = message.photo[-1] if message.photo else (rp.photo[-1] if rp and rp.photo else None)
+        if not arg and rp:
+            arg = (rp.text or rp.caption or "").strip()
+        low = arg.lower()
+
+        if low in ("on", "off") and not message.photo and not (rp and rp.photo):
+            await put(pool, chat.id, kind, "enabled", low == "on")
+            await reply_html(f"{'✅' if low == 'on' else '🚫'} <b>{kind.title()} {low}</b>")
+        elif low == "reset" and not message.photo and not (rp and rp.photo):
+            await put(pool, chat.id, kind, "text", None)
+            await put(pool, chat.id, kind, "photo", None)
+            await reply_html(f"🔄 <b>{kind.title()} reset</b>\n<blockquote>Back to the default ✨</blockquote>")
+        elif low in ("clearphoto", "nophoto", "rmphoto"):
+            await put(pool, chat.id, kind, "photo", None)
+            await reply_html(
+                f"🖼️ <b>{kind.title()} photo removed</b>\n<blockquote>Now using text only ✨</blockquote>"
+            )
+        elif not arg and not photo:
+            t, e, p = await get(pool, chat.id, kind)
+            await reply_html(
+                f"📖 <b>{kind.title()} settings</b>\n<blockquote>Status: <b>{'on' if e else 'off'}</b>\n"
+                f"Text: <b>{'custom' if t else 'default'}</b>\nPhoto: <b>{'custom' if p else 'default'}</b></blockquote>\n"
+                f"<b>Usage</b>\n<blockquote>• /set{kind} your text + buttons\n"
+                f"• Send a photo with /set{kind} caption\n"
+                f"• Reply to a long text or photo with /set{kind}\n"
+                f"• /set{kind} clearphoto | on | off | reset\n"
+                f"• Tags: {{first}} {{mention}} {{chatname}} {{rules}}</blockquote>"
+            )
+        else:
+            done = []
+            if arg:
+                await put(pool, chat.id, kind, "text", arg)
+                done.append("text")
+            if photo:
+                await put(pool, chat.id, kind, "photo", photo.file_id)
+                done.append("photo")
+            await put(pool, chat.id, kind, "enabled", True)
+            _, rows, _ = ax_fill.parse(arg) if arg else ("", [], {})
+            btn_count = sum(len(r) for r in rows)
+            btn_info = f" ({btn_count} button{'s' if btn_count != 1 else ''})" if btn_count else ""
+            await reply_html(
+                f"✅ <b>{kind.title()} updated</b>\n<blockquote>{' + '.join(done)}{btn_info} saved 💫</blockquote>"
+            )
+
+    return cmd
+
+
+async def announce(bot: Bot, pool: asyncpg.Pool, chat, kind: str, member) -> None:
+    if member.id == bot.id:
+        return
+    text, enabled, photo, cw, lw = await get_full(pool, chat.id, kind)
+    if not enabled:
+        return
+
+    raw = ax_fill.pick(text or DEFAULTS[kind])
+    want_rules = ax_fill.has_rules(raw)
+    rules_same = "{rules:same}" in raw
+    body, rows, flags = ax_fill.parse(raw)
+
+    rules_url = None
+    rules_label = None
+    un = await get_bot_username(bot)
+    if want_rules and un:
+        r_cfg = await ax_rules.get(pool, chat.id)
+        rules_url = f"https://t.me/{un}?start=rules_{chat.id}"
+        rules_label = r_cfg.get("button_text") or "📜 Rules"
+
+    body = ax_fill.fill(body, member, chat, rules_link=rules_url)
+    kb = ax_fill.keyboard(
+        rows,
+        rules_url=rules_url,
+        rules_same=rules_same,
+        note_url=(lambda n: f"https://t.me/{un}?start=note_{chat.id}_{n.lower()}") if un else None,
+        rules_label=rules_label,
+    )
+
+    kw = {
+        "disable_notification": flags["nonotif"],
+        "protect_content": flags["protect"],
+    }
+    if kb:
+        kw["reply_markup"] = kb
+
+    if kind == "welcome" and cw and lw:
+        fire(_quiet_delete(bot, chat.id, lw))  # deleted while the new welcome is being sent
+
+    async def _send(pm):
+        # Telegram caps photo captions at 1024 chars. If longer, send photo then full text+buttons.
+        if photo and len(body) <= 1024:
+            return await bot.send_photo(
+                chat.id,
+                photo,
+                caption=body or None,
+                parse_mode=pm,
+                has_spoiler=flags["mediaspoiler"],
+                **kw,
+            )
+        if photo and len(body) > 1024:
+            try:
+                await bot.send_photo(
+                    chat.id,
+                    photo,
+                    has_spoiler=flags["mediaspoiler"],
+                    disable_notification=flags["nonotif"],
+                    protect_content=flags["protect"],
+                )
+            except Exception:
+                pass
+            return await bot.send_message(
+                chat.id,
+                body[:4096],
+                parse_mode=pm,
+                link_preview_options=LinkPreviewOptions(is_disabled=not flags["preview"]),
+                **kw,
+            )
+        return await bot.send_message(
+            chat.id,
+            (body or "✨")[:4096],
+            parse_mode=pm,
+            link_preview_options=LinkPreviewOptions(is_disabled=not flags["preview"]),
+            **kw,
+        )
+
+    sent = None
+    try:
+        sent = await _send(ParseMode.HTML)
+    except TelegramBadRequest:
+        try:
+            sent = await _send(None)
+        except Exception:
+            sent = None
+    except Exception:
+        sent = None
+
+    if kind == "welcome" and sent:
+        try:
+            async with pool.acquire() as c:
+                await c.execute(
+                    "INSERT INTO ax_settings (chat_id, last_welcome_id) VALUES ($1,$2) "
+                    "ON CONFLICT (chat_id) DO UPDATE SET last_welcome_id=$2",
+                    chat.id,
+                    sent.message_id,
+                )
+        except Exception:
+            pass
+
+
+@router.message(F.new_chat_members)
+async def on_join(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    log.debug(
+        "WELCOME_JOIN msg=%s new=%s",
+        message.message_id,
+        [u.id for u in (message.new_chat_members or [])],
+    )
+    for m in message.new_chat_members or []:
+        await announce(bot, pool, message.chat, "welcome", m)
+
+
+@router.message(F.left_chat_member)
+async def on_leave(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    m = message.left_chat_member
+    if m:
+        await announce(bot, pool, message.chat, "goodbye", m)
+
+
+for _kind in ("welcome", "goodbye"):
+    router.message(Command(f"set{_kind}"))(make_set(_kind))
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_welcome2.py ===
+"""Rose-style welcome/goodbye extra commands (aiogram 3.x)."""
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+
+from ax_common import cmd_args, is_admin
+from ax_welcome import DEFAULTS, get, put
+
+router = Router(name="ax_welcome2")
+
+
+async def _admin(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+        return False
+    return True
+
+
+def _yn(arg: str) -> bool | None:
+    a = (arg or "").lower()
+    if a in ("on", "yes", "y", "true"):
+        return True
+    if a in ("off", "no", "n", "false"):
+        return False
+    return None
+
+
+def make_toggle(kind: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await _admin(message, bot):
+            return
+        chat = message.chat
+        args = cmd_args(message)
+        if args and args[0].lower() == "noformat":
+            t, _e, _p = await get(pool, chat.id, kind)
+            await message.reply(t or DEFAULTS[kind])
+            return
+        v = _yn(args[0] if args else "")
+        if v is None:
+            t, e, _p = await get(pool, chat.id, kind)
+            await message.reply(
+                f"📖 <b>{kind.title()}</b>\n<blockquote>Status: "
+                f"<b>{'on' if e else 'off'}</b>\nText: "
+                f"<b>{'custom' if t else 'default'}</b>\n"
+                f"Use /{kind} on or off</blockquote>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        await put(pool, chat.id, kind, "enabled", v)
+        await message.reply(
+            f"{'✅' if v else '🚫'} <b>{kind.title()} {'on' if v else 'off'}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    return cmd
+
+
+def make_reset(kind: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await _admin(message, bot):
+            return
+        chat = message.chat
+        await put(pool, chat.id, kind, "text", None)
+        await put(pool, chat.id, kind, "photo", None)
+        await message.reply(
+            f"🔄 <b>{kind.title()} reset</b>\n<blockquote>Back to the default ✨</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    return cmd
+
+
+@router.message(Command("cleanwelcome"))
+async def cleanwelcome(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _admin(message, bot):
+        return
+    chat = message.chat
+    args = cmd_args(message)
+    v = _yn(args[0] if args else "")
+    async with pool.acquire() as c:
+        if v is None:
+            r = await c.fetchrow(
+                "SELECT clean_welcome FROM ax_settings WHERE chat_id=$1",
+                chat.id,
+            )
+            on = bool(r and r["clean_welcome"])
+            await message.reply(
+                f"🧹 <b>Clean welcome</b>\n<blockquote>Status: "
+                f"<b>{'on' if on else 'off'}</b>\nUse /cleanwelcome on "
+                f"or off</blockquote>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        await c.execute(
+            "INSERT INTO ax_settings (chat_id, clean_welcome) VALUES "
+            "($1,$2) ON CONFLICT (chat_id) DO UPDATE SET "
+            "clean_welcome=$2",
+            chat.id,
+            v,
+        )
+    await message.reply(
+        f"🧹 <b>Clean welcome {'on' if v else 'off'}</b>\n<blockquote>"
+        f"{'Old welcome is deleted when a new one is sent' if v else 'Old welcomes stay'}"
+        f" ✨</blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(Command("welcomehelp"))
+async def welcomehelp(message: Message) -> None:
+    H = ParseMode.HTML
+    await message.reply(
+        "👋 <b>Welcome guide 1/3: the basics</b>\n"
+        "<blockquote>/setwelcome your text sets the message.\n"
+        "Send a photo with /setwelcome as caption to add a picture.\n"
+        "/welcome on or off turns it on or off.\n"
+        "/resetwelcome goes back to the default.\n"
+        "/cleanwelcome on deletes the old welcome when a new one comes.</blockquote>\n"
+        "<b>Fillings</b> are words in curly brackets that change per person:\n"
+        "<blockquote>{first} first name\n{last} last name\n"
+        "{fullname} both names\n{username} @username, or name if none\n"
+        "{mention} a tap-able name\n{id} their id\n{chatname} group name</blockquote>"
+        "Example: <code>/setwelcome Hi {first}, welcome to {chatname}!</code>\n"
+        "Shows: <i>Hi Asha, welcome to My Group!</i>",
+        parse_mode=H,
+    )
+    await message.reply(
+        "🎛 <b>Welcome guide 2/3: buttons</b>\n"
+        "<blockquote>Format: [Text](buttonurl://link)\n"
+        "Put it at the end of your welcome text.</blockquote>\n"
+        "<b>Same row:</b> add <code>:same</code> to put a button beside the "
+        "one before it.\n"
+        "<b>Colours:</b> telegram allows only three, plus normal:\n"
+        "<blockquote>:blue 🔵 main action\n:green 🟢 good or safe\n"
+        ":red 🔴 warning\nno word = normal grey-tinted button</blockquote>"
+        "Colours and :same can be combined in any order.\n"
+        "Other colours (brown, purple...) are not possible, telegram decides.",
+        parse_mode=H,
+    )
+    await message.reply(
+        "✨ <b>Welcome guide 3/3: examples</b>\n"
+        "<b>One blue button:</b>\n"
+        "<code>Welcome {first}!\n"
+        "[Our site](buttonurl://https://example.com:blue)</code>\n\n"
+        "<b>Two buttons on one row:</b>\n"
+        "<code>[Google](buttonurl://https://google.com:green)\n"
+        "[Bing](buttonurl://https://bing.com:same:red)</code>\n\n"
+        "<b>Random welcome</b> (bot picks one each time, split with %%%):\n"
+        "<code>Hello {first}! %%% Hey {first}, glad you came! "
+        "%%% Welcome {mention}!</code>\n\n"
+        "<b>Extras:</b> {preview} shows link previews, {nonotif} sends "
+        "silently, {protect} blocks forwarding, {mediaspoiler} hides the "
+        "photo until tapped.",
+        parse_mode=H,
+    )
+
+
+for _kind in ("welcome", "goodbye"):
+    router.message(Command(_kind))(make_toggle(_kind))
+    router.message(Command(f"reset{_kind}"))(make_reset(_kind))
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_captcha.py ===
+"""Captcha for new joiners: mute until solved, kick on timeout (aiogram 3.x + APScheduler)."""
+import logging
+import random
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.types import CallbackQuery, ChatPermissions, InlineKeyboardMarkup, Message, TelegramObject
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+import ax_approve
+import ax_rules
+from ax_common import btn, esc, fire, get_bot_username
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_captcha")
+
+SOLVED = ChatPermissions(
+    can_send_messages=True,
+    can_send_audios=True,
+    can_send_documents=True,
+    can_send_photos=True,
+    can_send_videos=True,
+    can_send_video_notes=True,
+    can_send_voice_notes=True,
+    can_send_polls=True,
+    can_send_other_messages=True,
+    can_add_web_page_previews=True,
+    can_invite_users=True,
+)
+MUTED = ChatPermissions(can_send_messages=False)
+
+_SC: dict[int, tuple[float, dict]] = {}
+_SC_MAX = 5000
+_SC_TTL = 20.0
+
+# Fast in-memory index of (chat_id, user_id) awaiting text/math captcha answers
+_pending_answers: set[tuple[int, int]] = set()
+_pending_loaded = False
+_middleware_registered = False
+
+NEED = [True]
+
+
+def _prune_sc(now: float) -> None:
+    if len(_SC) <= _SC_MAX:
+        return
+    expired = [cid for cid, (ts, _) in _SC.items() if now - ts >= _SC_TTL * 5]
+    for cid in expired:
+        _SC.pop(cid, None)
+    if len(_SC) > _SC_MAX:
+        oldest = sorted(_SC.items(), key=lambda kv: kv[1][0])[: _SC_MAX // 5]
+        for cid, _ in oldest:
+            _SC.pop(cid, None)
+
+
+async def _reload(pool: asyncpg.Pool, chat_id: int) -> dict:
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT * FROM ax_captcha_settings WHERE chat_id=$1", chat_id)
+    v = (
+        dict(r)
+        if r
+        else {
+            "enabled": False,
+            "mode": "button",
+            "mute_secs": 0,
+            "kick": True,
+            "kick_secs": 300,
+            "rules": False,
+            "btn_text": None,
+        }
+    )
+    now = time.time()
+    _prune_sc(now)
+    _SC[chat_id] = (now, v)
+    return dict(v)
+
+
+async def settings(pool: asyncpg.Pool, chat_id: int) -> dict:
+    hit = _SC.get(chat_id)
+    if hit:
+        now = time.time()
+        if now - hit[0] >= _SC_TTL:
+            _SC[chat_id] = (now, hit[1])  # one refresh at a time
+            fire(_reload(pool, chat_id))
+        return dict(hit[1])
+    return await _reload(pool, chat_id)
+
+
+def challenge(mode: str) -> tuple[str | None, str | None]:
+    if mode == "math":
+        a, b = random.randint(2, 9), random.randint(2, 9)
+        return f"{a} + {b} = ?", str(a + b)
+    if mode == "text":
+        w = "".join(random.choice("ABCDEFGHJKMNPQRSTUVWXYZ") for _ in range(4))
+        return f"Type this code: <code>{w}</code>", w
+    return None, None
+
+
+async def join(msg: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = msg.chat
+    if chat.type == "private" or not msg.new_chat_members:
+        return
+    s = await settings(pool, chat.id)
+    if not s["enabled"]:
+        return
+
+    bot_username = await get_bot_username(bot)
+
+    for m in msg.new_chat_members:
+        if m.is_bot or m.id == bot.id:
+            continue
+        if await ax_approve.is_approved(pool, chat.id, m.id):
+            continue
+        try:
+            await bot.restrict_chat_member(chat.id, m.id, permissions=MUTED)
+        except Exception as e:
+            log.warning("CAPTCHA mute failed for user %s in chat %s: %r", m.id, chat.id, e)
+            continue  # continue checking remaining new members instead of aborting the batch
+        try:
+            q, ans = challenge(s["mode"])
+            name = esc(m.first_name or "friend")
+            rows = []
+            if q:
+                body = (
+                    f"🔐 <b>Verify, {name}</b>\n<blockquote>{q}\n"
+                    f"Send the answer here ✨</blockquote>"
+                )
+            else:
+                body = (
+                    f"🔐 <b>Welcome, {name}</b>\n<blockquote>Tap the "
+                    f"button to prove you are human ✨</blockquote>"
+                )
+                label = s["btn_text"] or "✅ I am human"
+                rows.append([btn(label, f"axc:{m.id}")])
+            if s.get("rules") and bot_username:
+                r_cfg = await ax_rules.get(pool, chat.id)
+                r_label = r_cfg.get("button_text") or "📜 Rules"
+                rows.append([btn(r_label, url=f"https://t.me/{bot_username}?start=rules_{chat.id}")])
+
+            kb = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+            sent = await bot.send_message(
+                chat.id,
+                body,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+            exp = datetime.now(timezone.utc) + timedelta(seconds=s["kick_secs"])
+            async with pool.acquire() as c:
+                await c.execute(
+                    "INSERT INTO ax_captcha_pending VALUES ($1,$2,$3,$4,$5) "
+                    "ON CONFLICT (chat_id,user_id) DO UPDATE SET answer=$3, "
+                    "msg_id=$4, expires=$5",
+                    chat.id,
+                    m.id,
+                    ans,
+                    sent.message_id,
+                    exp,
+                )
+            if ans:
+                _pending_answers.add((chat.id, m.id))
+            NEED[0] = True
+        except Exception:
+            log.exception("CAPTCHA send failed")
+
+
+async def finish(bot: Bot, pool: asyncpg.Pool, chat_id: int, user_id: int, s: dict) -> bool:
+    _pending_answers.discard((chat_id, user_id))
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "DELETE FROM ax_captcha_pending WHERE chat_id=$1 AND "
+            "user_id=$2 RETURNING msg_id",
+            chat_id,
+            user_id,
+        )
+    if not r:
+        return False
+    try:
+        if s["mute_secs"] > 0:
+            until = datetime.now(timezone.utc) + timedelta(seconds=s["mute_secs"])
+            await bot.restrict_chat_member(chat_id, user_id, permissions=MUTED, until_date=until)
+        else:
+            await bot.restrict_chat_member(chat_id, user_id, permissions=SOLVED)
+        if r["msg_id"]:
+            await bot.delete_message(chat_id, r["msg_id"])
+    except Exception:
+        pass
+    return True
+
+
+@router.callback_query(F.data.regexp(r"^axc:\d+$"))
+async def press(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+    if query.message is None or not query.data:
+        await query.answer()
+        return
+    uid = int(query.data.split(":")[1])
+    if query.from_user.id != uid:
+        await query.answer("This button is not for you 🌸", show_alert=True)
+        return
+    s = await settings(pool, query.message.chat.id)
+    ok = await finish(bot, pool, query.message.chat.id, uid, s)
+    await query.answer("Verified, welcome ✨" if ok else "Already done")
+
+
+async def _handle_answer(msg: Message, bot: Bot, pool: asyncpg.Pool) -> bool:
+    """Returns True if message was a captcha attempt and consumed."""
+    chat = msg.chat
+    user = msg.from_user
+    if chat.type == "private" or user is None or not msg.text or msg.text.startswith("/"):
+        return False
+    key = (chat.id, user.id)
+    if _pending_loaded and key not in _pending_answers:
+        return False
+
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT answer FROM ax_captcha_pending WHERE chat_id=$1 AND user_id=$2",
+            chat.id,
+            user.id,
+        )
+    if not r or not r["answer"]:
+        _pending_answers.discard(key)
+        return False
+
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+    if msg.text.strip().upper() == r["answer"].upper():
+        s = await settings(pool, chat.id)
+        await finish(bot, pool, chat.id, user.id, s)
+    return True
+
+
+class CaptchaMiddleware(BaseMiddleware):
+    """Handles new-member captcha setup (while letting welcome run) and consumes text/math answers."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message) and event.chat.type != "private":
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            if bot is not None and pool is not None:
+                if event.new_chat_members:
+                    await join(event, bot, pool)
+                elif event.text and not event.text.startswith("/"):
+                    if await _handle_answer(event, bot, pool):
+                        return None
+        return await handler(event, data)
+
+
+async def expire_job(bot: Bot, pool: asyncpg.Pool) -> None:
+    if not NEED[0]:
+        return
+    try:
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "DELETE FROM ax_captcha_pending WHERE expires < NOW() "
+                "RETURNING chat_id, user_id, msg_id"
+            )
+        for r in rows:
+            _pending_answers.discard((r["chat_id"], r["user_id"]))
+            s = await settings(pool, r["chat_id"])
+            try:
+                if r["msg_id"]:
+                    await bot.delete_message(r["chat_id"], r["msg_id"])
+                if s["kick"]:
+                    await bot.ban_chat_member(r["chat_id"], r["user_id"])
+                    await bot.unban_chat_member(r["chat_id"], r["user_id"])
+            except Exception:
+                pass
+        async with pool.acquire() as c:
+            if not await c.fetchval("SELECT count(*) FROM ax_captcha_pending"):
+                NEED[0] = False
+                _pending_answers.clear()
+    except Exception:
+        log.exception("captcha expire_job failed")
+
+
+async def on_startup(bot: Bot, dispatcher) -> None:
+    global _pending_loaded
+    pool: asyncpg.Pool = dispatcher["pool"]
+    scheduler: AsyncIOScheduler = dispatcher["scheduler"]
+
+    try:
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT chat_id, user_id FROM ax_captcha_pending WHERE answer IS NOT NULL"
+            )
+        _pending_answers.clear()
+        _pending_answers.update((r["chat_id"], r["user_id"]) for r in rows)
+        _pending_loaded = True
+    except Exception:
+        log.exception("Failed loading pending captcha answers")
+
+    scheduler.add_job(
+        expire_job,
+        trigger="interval",
+        seconds=60,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=20),
+        args=[bot, pool],
+        id="ax_captcha:expire_job",
+        replace_existing=True,
+    )
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(CaptchaMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_captcha2.py ===
+"""Captcha settings commands (aiogram 3.x)."""
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+
+import ax_captcha
+from ax_captcha import settings
+from ax_common import cmd_args, esc, is_admin
+from ax_warn2 import fmt_time, parse_time
+
+router = Router(name="ax_captcha2")
+H = ParseMode.HTML
+_COLS = ("enabled", "mode", "mute_secs", "kick", "kick_secs", "rules", "btn_text")
+
+
+async def _ok(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return False
+    return True
+
+
+async def _set(pool: asyncpg.Pool, chat_id: int, col: str, val) -> None:
+    assert col in _COLS
+    ax_captcha._SC.pop(chat_id, None)
+    async with pool.acquire() as c:
+        await c.execute(
+            f"INSERT INTO ax_captcha_settings (chat_id, {col}) VALUES "
+            f"($1,$2) ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            chat_id,
+            val,
+        )
+
+
+def _yn(a: str) -> bool | None:
+    a = (a or "").lower()
+    if a in ("on", "yes", "y", "true"):
+        return True
+    if a in ("off", "no", "n", "false"):
+        return False
+    return None
+
+
+@router.message(Command("captcha"))
+async def captcha(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _ok(message, bot):
+        return
+    chat = message.chat
+    args = cmd_args(message)
+    v = _yn(args[0] if args else "")
+    s = await settings(pool, chat.id)
+    if v is None:
+        await message.reply(
+            f"🔐 <b>Captcha</b>\n<blockquote>Status: <b>"
+            f"{'on' if s['enabled'] else 'off'}</b>\nMode: "
+            f"<b>{s['mode']}</b>\nKick: <b>{'on' if s['kick'] else 'off'}"
+            f"</b> after <b>{fmt_time(s['kick_secs'])}</b>\nMute after "
+            f"solving: <b>{fmt_time(s['mute_secs']) if s['mute_secs'] else 'no'}"
+            f"</b>\nUse /captcha on or off</blockquote>",
+            parse_mode=H,
+        )
+        return
+    await _set(pool, chat.id, "enabled", v)
+    await message.reply(
+        f"{'✅' if v else '🚫'} <b>Captcha {'on' if v else 'off'}</b>",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("captchamode"))
+async def captchamode(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _ok(message, bot):
+        return
+    args = cmd_args(message)
+    a = args[0].lower() if args else ""
+    if a not in ("button", "math", "text"):
+        await message.reply(
+            "🔐 <b>Captcha mode</b>\n<blockquote>/captchamode button, math or text</blockquote>",
+            parse_mode=H,
+        )
+        return
+    await _set(pool, message.chat.id, "mode", a)
+    await message.reply(f"✅ <b>Mode: {a}</b>", parse_mode=H)
+
+
+def _flag(col: str, title: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await _ok(message, bot):
+            return
+        args = cmd_args(message)
+        v = _yn(args[0] if args else "")
+        if v is None:
+            await message.reply(f"<blockquote>Use /{title} on or off</blockquote>", parse_mode=H)
+            return
+        await _set(pool, message.chat.id, col, v)
+        await message.reply(
+            f"{'✅' if v else '🚫'} <b>{title} {'on' if v else 'off'}</b>",
+            parse_mode=H,
+        )
+
+    return cmd
+
+
+def _time(col: str, title: str, allow_zero: bool):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await _ok(message, bot):
+            return
+        args = cmd_args(message)
+        a = args[0] if args else ""
+        secs = 0 if (allow_zero and a == "0") else parse_time(a)
+        if secs is None or (secs == 0 and not allow_zero):
+            await message.reply(
+                f"<blockquote>Use /{title} 5m (s, m, h, d, w)"
+                f"{' or 0 for forever' if allow_zero else ''}</blockquote>",
+                parse_mode=H,
+            )
+            return
+        await _set(pool, message.chat.id, col, int(secs))
+        await message.reply(
+            f"✅ <b>{title}: {fmt_time(secs) if secs else 'off'}</b>",
+            parse_mode=H,
+        )
+
+    return cmd
+
+
+@router.message(Command("setcaptchatext"))
+async def setcaptchatext(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _ok(message, bot):
+        return
+    t = " ".join(cmd_args(message)).strip()
+    if not t:
+        await message.reply("<blockquote>/setcaptchatext your button text</blockquote>", parse_mode=H)
+        return
+    await _set(pool, message.chat.id, "btn_text", t[:60])
+    await message.reply(
+        f"✅ <b>Button text saved</b>\n<blockquote>{esc(t[:60])}</blockquote>",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("resetcaptchatext"))
+async def resetcaptchatext(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _ok(message, bot):
+        return
+    await _set(pool, message.chat.id, "btn_text", None)
+    await message.reply("🔄 <b>Button text reset</b>", parse_mode=H)
+
+
+router.message(Command("captcharules"))(_flag("rules", "captcharules"))
+router.message(Command("captchakick"))(_flag("kick", "captchakick"))
+router.message(Command("captchamutetime"))(_time("mute_secs", "captchamutetime", True))
+router.message(Command("captchakicktime"))(_time("kick_secs", "captchakicktime", False))
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_cleancmd.py ===
+"""Clean command messages after they run (aiogram 3.x + APScheduler)."""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, TelegramObject
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from ax_common import cmd_args, get_bot_username, is_admin
+
+router = Router(name="ax_cleancmd")
+H = ParseMode.HTML
+TYPES = ("admin", "user", "other")
+_cache: dict[int, set[str]] = {}
+_CACHE_MAX = 5000
+_middleware_registered = False
+
+
+async def kinds(pool: asyncpg.Pool, chat_id: int) -> set[str]:
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT kind FROM ax_cleancmd WHERE chat_id=$1", chat_id)
+    k = {r["kind"] for r in rows}
+    if len(_cache) >= _CACHE_MAX and chat_id not in _cache:
+        _cache.pop(next(iter(_cache)), None)
+    _cache[chat_id] = k
+    return k
+
+
+async def _gate(message: Message, bot: Bot, pool: asyncpg.Pool):
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return None
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return None
+    return pool, chat.id
+
+
+def _parse(args: list[str]) -> set[str]:
+    out: set[str] = set()
+    for a in args:
+        a = a.lower()
+        if a == "all":
+            out |= set(TYPES)
+        elif a in TYPES:
+            out.add(a)
+    return out
+
+
+@router.message(Command("cleancommand"))
+async def cleancommand(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    want = _parse(cmd_args(message))
+    if not want:
+        cur = await kinds(pool, cid)
+        await message.reply(
+            "🧹 <b>Clean commands</b>\n<blockquote>On for: <b>"
+            f"{', '.join(sorted(cur)) or 'nothing'}</b>\n"
+            "Use /cleancommand all, admin, user or other</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        for k in want:
+            await c.execute(
+                "INSERT INTO ax_cleancmd VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                cid,
+                k,
+            )
+    await kinds(pool, cid)
+    await message.reply(
+        f"🧹 <b>Cleaning</b> <b>{', '.join(sorted(want))}</b> commands ✨",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("keepcommand"))
+async def keepcommand(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    want = _parse(cmd_args(message))
+    if not want:
+        await message.reply(
+            "<blockquote>Use /keepcommand all, admin, user or other</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "DELETE FROM ax_cleancmd WHERE chat_id=$1 AND kind=ANY($2::text[])",
+            cid,
+            list(want),
+        )
+    await kinds(pool, cid)
+    await message.reply(
+        f"✅ <b>Keeping</b> <b>{', '.join(sorted(want))}</b> commands",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("cleancommandtypes"))
+async def types(message: Message) -> None:
+    await message.reply(
+        "🧹 <b>Command types</b>\n<blockquote>admin: sent by admins\n"
+        "user: sent by members\nother: aimed at other bots\n"
+        "all: every type</blockquote>",
+        parse_mode=H,
+    )
+
+
+async def _del(bot: Bot, chat_id: int, message_id: int) -> None:
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
+class CleanCmdMiddleware(BaseMiddleware):
+    """Schedules deletion of group commands matching ax_cleancmd without blocking command execution."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if (
+            isinstance(event, Message)
+            and event.chat.type in ("group", "supergroup")
+            and event.from_user is not None
+            and event.text
+            and event.text.startswith("/")
+        ):
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            scheduler: AsyncIOScheduler | None = data.get("scheduler")
+            if bot is not None and pool is not None and scheduler is not None:
+                k = _cache.get(event.chat.id)
+                if k is None:
+                    k = await kinds(pool, event.chat.id)
+                if k:
+                    first = event.text.split()[0]
+                    uname = (data.get("bot_username") or await get_bot_username(bot)).lower()
+                    me = "@" + uname if uname else ""
+                    if "@" in first and (not me or not first.lower().endswith(me)):
+                        kind = "other"
+                    elif await is_admin(bot, event.chat.id, event.from_user.id):
+                        kind = "admin"
+                    else:
+                        kind = "user"
+                    if kind in k:
+                        run_at = datetime.now(timezone.utc) + timedelta(seconds=3)
+                        scheduler.add_job(
+                            _del,
+                            trigger="date",
+                            run_date=run_at,
+                            args=[bot, event.chat.id, event.message_id],
+                            id=f"cleancmd:{event.chat.id}:{event.message_id}",
+                            replace_existing=True,
+                        )
+        return await handler(event, data)
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(CleanCmdMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_cleanservice.py ===
+"""Delete Telegram service messages (joins, leaves, pins, etc) (aiogram 3.x + APScheduler)."""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, TelegramObject
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from ax_common import cmd_args, is_admin
+
+router = Router(name="ax_cleanservice")
+H = ParseMode.HTML
+TYPES = ("join", "leave", "other", "photo", "pin", "title", "videochat")
+_cache: dict[int, set[str]] = {}
+_CACHE_MAX = 5000
+_middleware_registered = False
+
+
+async def kinds(pool: asyncpg.Pool, chat_id: int) -> set[str]:
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT kind FROM ax_cleanservice WHERE chat_id=$1", chat_id)
+    k = {r["kind"] for r in rows}
+    if len(_cache) >= _CACHE_MAX and chat_id not in _cache:
+        _cache.pop(next(iter(_cache)), None)
+    _cache[chat_id] = k
+    return k
+
+
+async def _gate(message: Message, bot: Bot, pool: asyncpg.Pool):
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return None
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return None
+    return pool, chat.id
+
+
+def _parse(args: list[str]) -> set[str]:
+    out: set[str] = set()
+    for a in args:
+        a = a.lower()
+        if a == "all":
+            out |= set(TYPES)
+        elif a in TYPES:
+            out.add(a)
+    return out
+
+
+@router.message(Command("cleanservice"))
+async def cleanservice(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    want = _parse(cmd_args(message))
+    if not want:
+        cur = await kinds(pool, cid)
+        await message.reply(
+            "🧹 <b>Clean service</b>\n<blockquote>On for: <b>"
+            f"{', '.join(sorted(cur)) or 'nothing'}</b>\n"
+            "Use /cleanservice all, join, leave, other, photo, pin, "
+            "title or videochat</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        for k in want:
+            await c.execute(
+                "INSERT INTO ax_cleanservice VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                cid,
+                k,
+            )
+    await kinds(pool, cid)
+    await message.reply(
+        f"🧹 <b>Cleaning</b> <b>{', '.join(sorted(want))}</b> ✨",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("keepservice", "nocleanservice"))
+async def keepservice(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    want = _parse(cmd_args(message))
+    if not want:
+        await message.reply(
+            "<blockquote>Use /keepservice all, join, leave, other, "
+            "photo, pin, title or videochat</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "DELETE FROM ax_cleanservice WHERE chat_id=$1 AND kind=ANY($2::text[])",
+            cid,
+            list(want),
+        )
+    await kinds(pool, cid)
+    await message.reply(
+        f"✅ <b>Keeping</b> <b>{', '.join(sorted(want))}</b>",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("cleanservicetypes"))
+async def types(message: Message) -> None:
+    await message.reply(
+        "🧹 <b>Service types</b>\n<blockquote>join: new members\n"
+        "leave: members leaving\nphoto: group photo changes\n"
+        "pin: pinned message notices\ntitle: name changes\n"
+        "videochat: video chat notices\nother: everything else\n"
+        "all: every type</blockquote>",
+        parse_mode=H,
+    )
+
+
+def kind_of(m: Message) -> str | None:
+    if m.new_chat_members:
+        return "join"
+    if m.left_chat_member:
+        return "leave"
+    if m.new_chat_photo or m.delete_chat_photo:
+        return "photo"
+    if m.pinned_message:
+        return "pin"
+    if m.new_chat_title:
+        return "title"
+    if (
+        m.video_chat_started
+        or m.video_chat_ended
+        or m.video_chat_scheduled
+        or m.video_chat_participants_invited
+    ):
+        return "videochat"
+    if (
+        m.group_chat_created
+        or m.supergroup_chat_created
+        or m.channel_chat_created
+        or m.message_auto_delete_timer_changed
+        or m.migrate_to_chat_id
+        or m.migrate_from_chat_id
+    ):
+        return "other"
+    return None
+
+
+async def _del(bot: Bot, chat_id: int, message_id: int) -> None:
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
+class CleanServiceMiddleware(BaseMiddleware):
+    """Schedules deletion of group service messages without blocking welcome/captcha/raid."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message) and event.chat.type in ("group", "supergroup"):
+            kind = kind_of(event)
+            if kind:
+                bot: Bot | None = data.get("bot")
+                pool: asyncpg.Pool | None = data.get("pool")
+                scheduler: AsyncIOScheduler | None = data.get("scheduler")
+                if bot is not None and pool is not None and scheduler is not None:
+                    k = _cache.get(event.chat.id)
+                    if k is None:
+                        k = await kinds(pool, event.chat.id)
+                    if kind in k:
+                        run_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+                        scheduler.add_job(
+                            _del,
+                            trigger="date",
+                            run_date=run_at,
+                            args=[bot, event.chat.id, event.message_id],
+                            id=f"cleansvc:{event.chat.id}:{event.message_id}",
+                            replace_existing=True,
+                        )
+        return await handler(event, data)
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(CleanServiceMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_disable.py ===
+"""Disable and enable commands per chat (aiogram 3.x)."""
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, TelegramObject
+
+from ax_common import cmd_args, esc, is_admin
+
+router = Router(name="ax_disable")
+H = ParseMode.HTML
+PROTECTED = {
+    "disable", "enable", "disabled", "disableable",
+    "disabledel", "disableadmin", "start", "help",
+}
+_cache: dict[int, tuple[set[str], bool, bool]] = {}
+_CACHE_MAX = 5000
+_middleware_registered = False
+
+
+async def load(pool: asyncpg.Pool, chat_id: int) -> tuple[set[str], bool, bool]:
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT cmd FROM ax_disabled WHERE chat_id=$1", chat_id)
+        s = await c.fetchrow(
+            "SELECT del_msg, admin_too FROM ax_disable_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    d = (
+        {r["cmd"] for r in rows},
+        bool(s and s["del_msg"]),
+        bool(s and s["admin_too"]),
+    )
+    if len(_cache) >= _CACHE_MAX and chat_id not in _cache:
+        _cache.pop(next(iter(_cache)), None)
+    _cache[chat_id] = d
+    return d
+
+
+async def _gate(message: Message, bot: Bot, pool: asyncpg.Pool):
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return None
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return None
+    return pool, chat.id
+
+
+def _name(args: list[str]) -> str:
+    return args[0].lower().lstrip("/").split("@")[0] if args else ""
+
+
+@router.message(Command("disable"))
+async def disable(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    n = _name(cmd_args(message))
+    if not n:
+        await message.reply("<blockquote>Use /disable command</blockquote>", parse_mode=H)
+        return
+    if n in PROTECTED:
+        await message.reply(
+            "🔒 <b>Protected</b>\n<blockquote>That command cannot be disabled ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_disabled VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            cid,
+            n,
+        )
+    await load(pool, cid)
+    await message.reply(f"🚫 <b>/{esc(n)} disabled</b>", parse_mode=H)
+
+
+@router.message(Command("enable"))
+async def enable(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    n = _name(cmd_args(message))
+    if not n:
+        await message.reply("<blockquote>Use /enable command</blockquote>", parse_mode=H)
+        return
+    async with pool.acquire() as c:
+        await c.execute("DELETE FROM ax_disabled WHERE chat_id=$1 AND cmd=$2", cid, n)
+    await load(pool, cid)
+    await message.reply(f"✅ <b>/{esc(n)} enabled</b>", parse_mode=H)
+
+
+@router.message(Command("disabled"))
+async def disabled(message: Message, pool: asyncpg.Pool) -> None:
+    d, _, _ = await load(pool, message.chat.id)
+    body = "\n".join("/" + esc(x) for x in sorted(d)) or "nothing"
+    await message.reply(
+        f"🚫 <b>Disabled commands</b>\n<blockquote>{body}</blockquote>",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("disableable"))
+async def disableable(message: Message) -> None:
+    await message.reply(
+        "🔒 <b>Cannot be disabled</b>\n<blockquote>"
+        + ", ".join("/" + p for p in sorted(PROTECTED))
+        + "\nEvery other command can ✨</blockquote>",
+        parse_mode=H,
+    )
+
+
+def _flag(col: str, name: str):
+    assert col in ("del_msg", "admin_too")
+
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        g = await _gate(message, bot, pool)
+        if not g:
+            return
+        pool, cid = g
+        args = cmd_args(message)
+        a = args[0].lower() if args else ""
+        if a not in ("on", "off", "yes", "no"):
+            await message.reply(f"<blockquote>Use /{name} on or off</blockquote>", parse_mode=H)
+            return
+        v = a in ("on", "yes")
+        async with pool.acquire() as c:
+            await c.execute(
+                f"INSERT INTO ax_disable_settings (chat_id, {col}) "
+                f"VALUES ($1,$2) ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+                cid,
+                v,
+            )
+        await load(pool, cid)
+        await message.reply(
+            f"{'✅' if v else '🚫'} <b>{name} {'on' if v else 'off'}</b>",
+            parse_mode=H,
+        )
+
+    return cmd
+
+
+class DisableMiddleware(BaseMiddleware):
+    """Blocks disabled commands in groups before command routers run."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if (
+            isinstance(event, Message)
+            and event.chat.type in ("group", "supergroup")
+            and event.from_user is not None
+        ):
+            raw = (event.text or event.caption or "").strip()
+            if raw.startswith("/"):
+                first = raw.split()[0][1:].lower().split("@")[0]
+                if first and first not in PROTECTED:
+                    bot: Bot | None = data.get("bot")
+                    pool: asyncpg.Pool | None = data.get("pool")
+                    if bot is not None and pool is not None:
+                        d = _cache.get(event.chat.id)
+                        if d is None:
+                            d = await load(pool, event.chat.id)
+                        cmds, del_msg, admin_too = d
+                        if first in cmds:
+                            if admin_too or not await is_admin(bot, event.chat.id, event.from_user.id):
+                                if del_msg:
+                                    try:
+                                        await event.delete()
+                                    except Exception:
+                                        pass
+                                return None
+        return await handler(event, data)
+
+
+router.message(Command("disabledel"))(_flag("del_msg", "disabledel"))
+router.message(Command("disableadmin"))(_flag("admin_too", "disableadmin"))
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(DisableMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_funmode.py ===
+"""Admin command: toggle all fun/economy/game commands off or on in one shot (aiogram 3.x)."""
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+
+from ax_common import cmd_args, is_admin
+
+router = Router(name="ax_funmode")
+
+FUN_CMDS = [
+    "work", "spin", "rob", "pay", "guard", "bluff",
+    "mafia", "stopmafia", "ship", "match", "couple", "kill",
+    "hug", "kiss", "pat", "slap", "punch", "bite",
+    "poke", "wink", "cuddle", "bonk", "murder",
+    "love", "crush", "couples", "look", "brain", "stupid_meter",
+]
+H = ParseMode.HTML
+
+
+@router.message(Command("funmode"))
+async def funmode_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None or chat.type == "private":
+        return
+    if not await is_admin(bot, chat.id, user.id):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    args = cmd_args(message)
+    if not args or args[0].lower() not in ("on", "off"):
+        await message.reply("Usage: /funmode off  or  /funmode on")
+        return
+    on = args[0].lower() == "on"
+    async with pool.acquire() as c:
+        if on:
+            await c.execute(
+                "DELETE FROM ax_disabled WHERE chat_id=$1 AND cmd = ANY($2::text[])",
+                chat.id,
+                FUN_CMDS,
+            )
+        else:
+            await c.executemany(
+                "INSERT INTO ax_disabled (chat_id, cmd) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                [(chat.id, cmd) for cmd in FUN_CMDS],
+            )
+    import ax_disable
+
+    ax_disable._cache.pop(chat.id, None)
+    if on:
+        await message.reply(
+            "✅ <b>Fun mode ON</b>\n<blockquote>Economy and games are back.</blockquote>",
+            parse_mode=H,
+        )
+    else:
+        await message.reply(
+            "🔕 <b>Fun mode OFF</b>\n<blockquote>Economy and games are disabled. "
+            "Moderation still works. Use <code>/funmode on</code> to bring them back.</blockquote>",
+            parse_mode=H,
+        )
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_notes.py ===
+"""Notes and filters (aiogram 3.x)."""
+import logging
+import re
+import time
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
+
+import ax_fill
+from ax_common import cmd_args, esc, get_bot_username, is_admin
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_notes")
+
+H = ParseMode.HTML
+KINDS = ("photo", "video", "animation", "sticker", "voice", "audio", "document")
+
+_DM_NOTE_RE = re.compile(r"^/start(?:@\w+)?\s+note_(-?\d+)_(.+)$")
+
+_filter_cache: dict[int, tuple[float, list[dict]]] = {}
+_note_names_cache: dict[int, tuple[float, set[str]]] = {}
+_CACHE_TTL = 30.0
+_CACHE_MAX = 5000
+_middleware_registered = False
+
+
+def _prune_cache(store: dict, now: float) -> None:
+    if len(store) <= _CACHE_MAX:
+        return
+    expired = [cid for cid, (ts, _) in store.items() if now - ts >= _CACHE_TTL]
+    for cid in expired:
+        store.pop(cid, None)
+    if len(store) > _CACHE_MAX:
+        oldest = sorted(store.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            store.pop(cid, None)
+
+
+def invalidate(chat_id: int) -> None:
+    _filter_cache.pop(chat_id, None)
+    _note_names_cache.pop(chat_id, None)
+
+
+async def _get_filters(pool: asyncpg.Pool, chat_id: int) -> list[dict]:
+    now = time.time()
+    hit = _filter_cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    async with pool.acquire() as c:
+        rows = await c.fetch(
+            "SELECT trigger_text, content_type, text_content, file_id FROM ax_filters WHERE chat_id=$1",
+            chat_id,
+        )
+    data = [dict(r) for r in rows]
+    _prune_cache(_filter_cache, now)
+    _filter_cache[chat_id] = (now, data)
+    return data
+
+
+async def _get_note_names(pool: asyncpg.Pool, chat_id: int) -> set[str]:
+    now = time.time()
+    hit = _note_names_cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT name FROM ax_notes WHERE chat_id=$1", chat_id)
+    names = {r["name"] for r in rows}
+    _prune_cache(_note_names_cache, now)
+    _note_names_cache[chat_id] = (now, names)
+    return names
+
+
+async def say(message: Message, text: str):
+    return await message.reply(text, parse_mode=H)
+
+
+async def admin_only(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await say(
+            message,
+            "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+        )
+        return False
+    return True
+
+
+def extract(reply: Message | None, rest: str) -> tuple[str, str | None, str | None]:
+    if reply:
+        for k in KINDS:
+            obj = getattr(reply, k, None)
+            if obj:
+                fid = obj[-1].file_id if k == "photo" else obj.file_id
+                text = None if k == "sticker" else (reply.caption or rest or None)
+                return k, text, fid
+        if reply.text and not rest:
+            return "text", reply.text, None
+    return "text", rest or None, None
+
+
+async def deliver(
+    msg: Message,
+    bot: Bot,
+    ctype: str,
+    text: str | None,
+    fid: str | None,
+    raw: bool = False,
+    cid: int | None = None,
+) -> None:
+    kb = None
+    kw: dict[str, Any] = {}
+    flags: dict[str, bool] = {}
+
+    if text and not raw:
+        body, rows, flags = ax_fill.parse(ax_fill.pick(text))
+        text = ax_fill.fill(body, msg.from_user, msg.chat)
+        target_cid = cid or msg.chat.id
+        un = await get_bot_username(bot)
+        kb = ax_fill.keyboard(
+            rows,
+            note_url=(lambda n: f"https://t.me/{un}?start=note_{target_cid}_{n.lower()}") if un else None,
+        )
+        if flags.get("nonotif"):
+            kw["disable_notification"] = True
+        if flags.get("protect"):
+            kw["protect_content"] = True
+
+    async def go(pm):
+        if ctype == "text":
+            await msg.reply(text or "…", parse_mode=pm, reply_markup=kb, **kw)
+        elif ctype == "sticker":
+            await msg.reply_sticker(fid, reply_markup=kb, **kw)
+        else:
+            extra: dict[str, Any] = {}
+            if ctype in ("photo", "video", "animation") and flags.get("mediaspoiler"):
+                extra["has_spoiler"] = True
+            await getattr(msg, "reply_" + ctype)(
+                fid,
+                caption=text,
+                parse_mode=pm,
+                reply_markup=kb,
+                **kw,
+                **extra,
+            )
+
+    try:
+        await go(None if raw else H)
+    except TelegramBadRequest:
+        if raw:
+            raise
+        await go(None)
+
+
+def make_save(table: str, col: str, label: str, usage: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await admin_only(message, bot) or message.from_user is None:
+            return
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 2:
+            await say(message, f"📝 <b>Save a {label}</b>\n<blockquote>{usage}</blockquote>")
+            return
+        key = parts[1].lower()[:50]
+        rest = parts[2].strip() if len(parts) > 2 else ""
+        ctype, text, fid = extract(message.reply_to_message, rest)
+        if ctype == "text" and not text:
+            await say(message, f"💫 <b>Add some content</b>\n<blockquote>{usage}</blockquote>")
+            return
+        chat_id = message.chat.id
+        async with pool.acquire() as c:
+            await c.execute(
+                f"INSERT INTO {table} (chat_id, {col}, content_type, text_content, file_id, created_by) "
+                f"VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (chat_id, {col}) DO UPDATE SET "
+                f"content_type=$3, text_content=$4, file_id=$5, created_by=$6",
+                chat_id,
+                key,
+                ctype,
+                text,
+                fid,
+                message.from_user.id,
+            )
+        invalidate(chat_id)
+        await say(message, f"✅ <b>{label.title()} saved</b>\n<blockquote>🏷️ <b>{esc(key)}</b></blockquote>")
+
+    return cmd
+
+
+def make_list(table: str, col: str, label: str, prefix: str, addcmd: str):
+    async def cmd(message: Message, pool: asyncpg.Pool) -> None:
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                f"SELECT {col} AS k FROM {table} WHERE chat_id=$1 ORDER BY {col}",
+                message.chat.id,
+            )
+        if not rows:
+            await say(
+                message,
+                f"📭 <b>No {label}s yet</b>\n<blockquote>Admins can add one with /{addcmd} ✨</blockquote>",
+            )
+            return
+        lines = "\n".join(f"• {prefix}{esc(r['k'])}" for r in rows)
+        await say(message, f"📒 <b>Saved {label}s</b>\n<blockquote>{lines}</blockquote>")
+
+    return cmd
+
+
+def make_delete(table: str, col: str, label: str, cmdname: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await admin_only(message, bot):
+            return
+        args = cmd_args(message)
+        if not args:
+            await say(message, f"💫 <b>Which {label}?</b>\n<blockquote>Usage: /{cmdname} name</blockquote>")
+            return
+        chat_id = message.chat.id
+        async with pool.acquire() as c:
+            r = await c.execute(
+                f"DELETE FROM {table} WHERE chat_id=$1 AND {col}=$2",
+                chat_id,
+                args[0].lower(),
+            )
+        invalidate(chat_id)
+        ok = r.endswith("1")
+        await say(
+            message,
+            "🗑️ <b>Removed</b>" if ok else f"🔎 <b>Not found</b>\n<blockquote>No such {label} here 💫</blockquote>",
+        )
+
+    return cmd
+
+
+def make_clear(table: str, label: str):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        if not await admin_only(message, bot):
+            return
+        chat_id = message.chat.id
+        async with pool.acquire() as c:
+            await c.execute(f"DELETE FROM {table} WHERE chat_id=$1", chat_id)
+        invalidate(chat_id)
+        await say(message, f"🗑️ <b>All {label}s cleared</b>")
+
+    return cmd
+
+
+def match_trigger(trig: str, low: str) -> bool:
+    if trig.startswith("exact:"):
+        return low.strip() == trig[6:]
+    if trig.startswith("prefix:"):
+        return low.startswith(trig[7:])
+    return re.search(r"(?<!\w)" + re.escape(trig) + r"(?!\w)", low) is not None
+
+
+def split_tags(text: str | None) -> tuple[str | None, dict[str, bool]]:
+    t = text or ""
+    f: dict[str, bool] = {}
+    for k in ("admin", "private", "noprivate"):
+        f[k] = ("{" + k + "}") in t
+        t = t.replace("{" + k + "}", "")
+    return (t.strip() or None), f
+
+
+async def serve(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    r,
+    name: str,
+    raw: bool = False,
+) -> None:
+    user = message.from_user
+    chat = message.chat
+    if user is None:
+        return
+    text, f = split_tags(r["text_content"])
+    if raw:
+        text = r["text_content"]
+    if f["admin"] and not await is_admin(bot, chat.id, user.id):
+        await say(message, "🔒 <b>Admins only</b>\n<blockquote>This note is for admins ✨</blockquote>")
+        return
+    private = f["private"]
+    if not private and not f["noprivate"]:
+        async with pool.acquire() as c:
+            private = bool(
+                await c.fetchval("SELECT private FROM ax_note_settings WHERE chat_id=$1", chat.id)
+            )
+    param = "note_%d_%s" % (chat.id, name)
+    if private and chat.type != "private" and re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", param):
+        un = await get_bot_username(bot)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📖 Open note", url=f"https://t.me/{un}?start={param}")]
+            ]
+        )
+        await message.reply(
+            "📝 <b>%s</b>\n<blockquote>Tap the button to read this note in private ✨</blockquote>"
+            % esc(name),
+            parse_mode=H,
+            reply_markup=kb,
+        )
+        return
+    await deliver(message, bot, r["content_type"], text, r["file_id"], raw=raw)
+
+
+@router.message(Command("get"))
+async def get_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if message.chat.type == "private":
+        await say(message, "⚠️ <b>Groups only</b>\n<blockquote>Notes live inside groups 💫</blockquote>")
+        return
+    args = cmd_args(message)
+    if not args:
+        await say(message, "💫 <b>Which note?</b>\n<blockquote>Usage: /get name\nSee all with /notes</blockquote>")
+        return
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT content_type, text_content, file_id FROM ax_notes WHERE chat_id=$1 AND name=$2",
+            message.chat.id,
+            args[0].lower(),
+        )
+    if not r:
+        await say(message, "🔎 <b>Not found</b>\n<blockquote>No such note here. Try /notes 💫</blockquote>")
+        return
+    try:
+        await serve(
+            message,
+            bot,
+            pool,
+            r,
+            args[0].lower(),
+            raw=len(args) > 1 and args[1].lower() == "noformat",
+        )
+    except Exception as e:
+        await say(message, f"⚠️ <b>Couldn't send it</b>\n<blockquote>{esc(e)}</blockquote>")
+
+
+@router.message(Command("privatenotes"))
+async def privatenotes_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await admin_only(message, bot):
+        return
+    chat = message.chat
+    args = cmd_args(message)
+    arg = args[0].lower() if args else ""
+    async with pool.acquire() as c:
+        if arg in ("on", "yes", "true", "off", "no", "false"):
+            val = arg in ("on", "yes", "true")
+            await c.execute(
+                "INSERT INTO ax_note_settings (chat_id, private) VALUES ($1,$2) "
+                "ON CONFLICT (chat_id) DO UPDATE SET private=$2",
+                chat.id,
+                val,
+            )
+            if val:
+                await say(
+                    message,
+                    "🔐 <b>Private notes on</b>\n<blockquote>Notes now open in DM with a button ✨</blockquote>",
+                )
+            else:
+                await say(
+                    message,
+                    "📢 <b>Private notes off</b>\n<blockquote>Notes are sent right here in the group ✨</blockquote>",
+                )
+            return
+        cur = bool(await c.fetchval("SELECT private FROM ax_note_settings WHERE chat_id=$1", chat.id))
+    await say(
+        message,
+        "🔐 <b>Private notes: %s</b>\n<blockquote>Use /privatenotes on or off</blockquote>"
+        % ("on" if cur else "off"),
+    )
+
+
+@router.message(F.chat.type == "private", F.text.regexp(r"^/start(?:@\w+)?\s+note_(-?\d+)_(.+)$"))
+async def dm_note(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    user = message.from_user
+    m = _DM_NOTE_RE.match(message.text or "")
+    if not m or user is None:
+        return
+    cid, name = int(m.group(1)), m.group(2).lower()[:50]
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT content_type, text_content, file_id FROM ax_notes "
+            "WHERE chat_id=$1 AND name=$2",
+            cid,
+            name,
+        )
+    if not r:
+        await message.reply(
+            "🔎 <b>Not found</b>\n<blockquote>That note is gone or never existed ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    text, f = split_tags(r["text_content"])
+    if f["admin"] and not await is_admin(bot, cid, user.id):
+        await message.reply(
+            "🔒 <b>Admins only</b>\n<blockquote>This note is for admins ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    try:
+        await deliver(message, bot, r["content_type"], text, r["file_id"], cid=cid)
+    except Exception:
+        pass
+
+
+async def _run_hash_watcher(msg: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not msg.text or not msg.text.startswith("#"):
+        return
+    parts = msg.text[1:].split(None, 1)
+    if not parts:
+        return
+    word = parts[0].lower()[:50]
+    names = await _get_note_names(pool, msg.chat.id)
+    if word not in names:
+        return
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT content_type, text_content, file_id FROM ax_notes "
+            "WHERE chat_id=$1 AND name=$2",
+            msg.chat.id,
+            word,
+        )
+    if not r:
+        return
+    try:
+        await serve(msg, bot, pool, r, word)
+    except Exception:
+        pass
+
+
+async def _run_filter_watcher(msg: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not msg.text or msg.text.startswith("/"):
+        return
+    rows = await _get_filters(pool, msg.chat.id)
+    if not rows:
+        return
+    low = msg.text.lower()
+    for r in rows:
+        if match_trigger(r["trigger_text"], low):
+            try:
+                await deliver(msg, bot, r["content_type"], r["text_content"], r["file_id"])
+            except Exception:
+                pass
+            break
+
+
+class NotesFiltersMiddleware(BaseMiddleware):
+    """Non-blocking watcher for group filters and #notename triggers."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if (
+            isinstance(event, Message)
+            and event.chat.type in ("group", "supergroup")
+            and event.text
+            and event.from_user is not None
+            and not event.from_user.is_bot
+        ):
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            if bot is not None and pool is not None:
+                if not event.text.startswith("/"):
+                    await _run_filter_watcher(event, bot, pool)
+                if event.text.startswith("#"):
+                    await _run_hash_watcher(event, bot, pool)
+        return await handler(event, data)
+
+
+_N = ("ax_notes", "name", "note")
+_F = ("ax_filters", "trigger_text", "filter")
+
+router.message(Command("save"))(
+    make_save(*_N, "/save name your text\nOr reply to any media with /save name")
+)
+router.message(Command("notes"))(make_list(*_N, "/get ", "save"))
+router.message(Command("clear"))(make_delete(*_N, "clear"))
+router.message(Command("clearallnotes"))(make_clear("ax_notes", "note"))
+router.message(Command("filter"))(
+    make_save(*_F, "/filter word your reply\nOr reply to any media with /filter word")
+)
+router.message(Command("filters"))(make_list(*_F, "", "filter"))
+router.message(Command("stop"))(make_delete(*_F, "stop"))
+router.message(Command("clearfilters"))(make_clear("ax_filters", "filter"))
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(NotesFiltersMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_rules.py ===
+"""Rules: /rules /setrules /privaterules /resetrules /setrulesbutton /resetrulesbutton (aiogram 3.x)."""
+import re
+import time
+
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+
+import ax_mod
+from ax_common import cmd_args, esc, is_admin
+
+router = Router(name="ax_rules")
+
+DEFAULT = "No rules have been set yet. Admins can add them with /setrules"
+COLS = ("rules_text", "private", "button_text")
+_DM_RULES_RE = re.compile(r"^/start(?:@\w+)?\s+rules_(-?\d+)$")
+
+_cache: dict[int, tuple[float, dict]] = {}
+_CACHE_TTL = 60.0
+_CACHE_MAX = 5000
+
+
+def _prune_cache(now: float) -> None:
+    if len(_cache) <= _CACHE_MAX:
+        return
+    expired = [cid for cid, (ts, _) in _cache.items() if now - ts >= _CACHE_TTL]
+    for cid in expired:
+        _cache.pop(cid, None)
+    if len(_cache) > _CACHE_MAX:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            _cache.pop(cid, None)
+
+
+def invalidate(chat_id: int) -> None:
+    _cache.pop(chat_id, None)
+
+
+async def get(pool: asyncpg.Pool, chat_id: int) -> dict:
+    now = time.time()
+    hit = _cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return dict(hit[1])
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT * FROM ax_rules WHERE chat_id=$1", chat_id)
+    val = dict(r) if r else {"rules_text": None, "private": False, "button_text": None}
+    _prune_cache(now)
+    _cache[chat_id] = (now, val)
+    return dict(val)
+
+
+async def _set(pool: asyncpg.Pool, chat_id: int, col: str, val) -> None:
+    assert col in COLS
+    async with pool.acquire() as c:
+        await c.execute(
+            f"INSERT INTO ax_rules (chat_id, {col}) VALUES ($1,$2) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            chat_id,
+            val,
+        )
+    invalidate(chat_id)
+
+
+async def _gate(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private":
+        await ax_mod.say(
+            message,
+            "⚠️ <b>Groups only</b>\n<blockquote>Use this inside your group 💫</blockquote>",
+            bot=bot,
+        )
+        return False
+    if not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>Admins only</b>\n<blockquote>You need admin rights for this ✨</blockquote>",
+            bot=bot,
+        )
+        return False
+    return True
+
+
+def _body(message: Message) -> str:
+    parts = (message.text or "").split(None, 1)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+@router.message(F.chat.type == "private", F.text.regexp(r"^/start(?:@\w+)?\s+rules_(-?\d+)$"))
+async def dm_rules(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    user = message.from_user
+    m = _DM_RULES_RE.match(message.text or "")
+    if not m or user is None:
+        return
+    cid = int(m.group(1))
+    r = await get(pool, cid)
+    title = "this group"
+    try:
+        title = (await bot.get_chat(cid)).title or title
+    except Exception:
+        pass
+    text = r["rules_text"] or DEFAULT
+    await message.reply(
+        f"📜 <b>Rules of {esc(title)}</b>\n<blockquote>{esc(text)}</blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(Command("rules"))
+async def rules_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type == "private":
+        await ax_mod.say(
+            message,
+            "⚠️ <b>Groups only</b>\n<blockquote>Use /rules inside a group 💫</blockquote>",
+            bot=bot,
+        )
+        return
+    r = await get(pool, chat.id)
+    text = r["rules_text"] or DEFAULT
+    args = cmd_args(message)
+    if args and args[0].lower() == "noformat":
+        await message.reply(text)
+        return
+    card = f"📜 <b>Rules of {esc(chat.title or 'this group')}</b>\n<blockquote>{esc(text)}</blockquote>"
+    if r["private"]:
+        try:
+            await bot.send_message(user.id, card, parse_mode=ParseMode.HTML)
+            await ax_mod.say(
+                message,
+                "📩 <b>Rules sent</b>\n<blockquote>Check your private chat with me 💜</blockquote>",
+                bot=bot,
+            )
+        except Exception:
+            await ax_mod.say(
+                message,
+                "💫 <b>Open a chat with me first</b>\n<blockquote>Send me /start in private, then try /rules again</blockquote>",
+                bot=bot,
+            )
+        return
+    await ax_mod.say(message, card, bot=bot)
+
+
+@router.message(Command("setrules"))
+async def setrules_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    body = _body(message)
+    if not body and message.reply_to_message:
+        body = message.reply_to_message.text or message.reply_to_message.caption or ""
+    if not body:
+        await ax_mod.say(
+            message,
+            "💫 <b>Rules?</b>\n<blockquote>Example: /setrules 1. Be kind\n2. No spam</blockquote>",
+            bot=bot,
+        )
+        return
+    await _set(pool, message.chat.id, "rules_text", body)
+    await ax_mod.say(
+        message,
+        "✅ <b>Rules saved</b>\n<blockquote>Members can read them with /rules 📜</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("resetrules"))
+async def resetrules_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    await _set(pool, message.chat.id, "rules_text", None)
+    await ax_mod.say(
+        message,
+        "✅ <b>Rules cleared</b>\n<blockquote>Back to the default message</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("privaterules"))
+async def privaterules_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    chat_id = message.chat.id
+    args = cmd_args(message)
+    arg = args[0].lower() if args else ""
+    if arg not in ("on", "off", "yes", "no"):
+        r = await get(pool, chat_id)
+        await ax_mod.say(
+            message,
+            f"⚙️ <b>Private rules</b>\n<blockquote>Currently <b>{'on' if r['private'] else 'off'}</b>\n"
+            "Use /privaterules on or off</blockquote>",
+            bot=bot,
+        )
+        return
+    val = arg in ("on", "yes")
+    await _set(pool, chat_id, "private", val)
+    await ax_mod.say(
+        message,
+        f"✅ <b>Private rules {'on' if val else 'off'}</b>\n<blockquote>"
+        f"/rules now goes {'to their PM' if val else 'in the group'}</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("setrulesbutton"))
+async def setbutton_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    body = _body(message)
+    if not body:
+        await ax_mod.say(
+            message,
+            "💫 <b>Button text?</b>\n<blockquote>Example: /setrulesbutton Read the rules</blockquote>",
+            bot=bot,
+        )
+        return
+    await _set(pool, message.chat.id, "button_text", body[:40])
+    await ax_mod.say(
+        message,
+        "✅ <b>Rules button renamed</b>\n<blockquote>Used by the {rules} tag in welcomes 💜</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("resetrulesbutton"))
+async def resetbutton_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _gate(message, bot):
+        return
+    await _set(pool, message.chat.id, "button_text", None)
+    await ax_mod.say(
+        message,
+        "✅ <b>Button name reset</b>\n<blockquote>Back to the default</blockquote>",
+        bot=bot,
+    )
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_pins.py ===
+"""Pins: /pin /permapin /unpin /unpinall /pinned /antichannelpin /cleanlinked (aiogram 3.x)."""
+import logging
+import time
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, ReplyParameters, TelegramObject
+
+import ax_mod
+from ax_common import cmd_args, esc, is_admin
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_pins")
+
+_cache: dict[int, tuple[float, dict]] = {}
+_CACHE_TTL = 60.0
+_CACHE_MAX = 5000
+_middleware_registered = False
+
+
+def _prune_cache(now: float) -> None:
+    if len(_cache) <= _CACHE_MAX:
+        return
+    expired = [cid for cid, (ts, _) in _cache.items() if now - ts >= _CACHE_TTL]
+    for cid in expired:
+        _cache.pop(cid, None)
+    if len(_cache) > _CACHE_MAX:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            _cache.pop(cid, None)
+
+
+def invalidate(chat_id: int) -> None:
+    _cache.pop(chat_id, None)
+
+
+async def _gate(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type == "private":
+        await ax_mod.say(
+            message,
+            "⚠️ <b>Groups only</b>\n<blockquote>Use this inside your group 💫</blockquote>",
+            bot=bot,
+        )
+        return False
+    if not await is_admin(bot, chat.id, user.id, "can_pin_messages"):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>Admins only</b>\n<blockquote>You need admin rights for this ✨</blockquote>",
+            bot=bot,
+        )
+        return False
+    return True
+
+
+async def _settings(pool: asyncpg.Pool, chat_id: int) -> dict:
+    now = time.time()
+    hit = _cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return dict(hit[1])
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT * FROM ax_pin_settings WHERE chat_id=$1", chat_id)
+    val = dict(r) if r else {"antichannelpin": False, "cleanlinked": False}
+    _prune_cache(now)
+    _cache[chat_id] = (now, val)
+    return dict(val)
+
+
+@router.message(Command("pin"))
+async def pin_cmd(message: Message, bot: Bot) -> None:
+    if not await _gate(message, bot):
+        return
+    if not message.reply_to_message:
+        await ax_mod.say(
+            message,
+            "💫 <b>Reply needed</b>\n<blockquote>Reply to the message to pin. Add loud to notify everyone: /pin loud</blockquote>",
+            bot=bot,
+        )
+        return
+    args = cmd_args(message)
+    loud = bool(args) and args[0].lower() in ("loud", "notify")
+    try:
+        await bot.pin_chat_message(
+            chat_id=message.chat.id,
+            message_id=message.reply_to_message.message_id,
+            disable_notification=not loud,
+        )
+    except Exception as e:
+        await ax_mod.say(
+            message,
+            f"⚠️ <b>Couldn't pin</b>\n<blockquote>{esc(str(e))}\nI need the Pin messages permission</blockquote>",
+            bot=bot,
+        )
+        return
+    await ax_mod.say(message, "📌 <b>Pinned</b>\n<blockquote>Message pinned ✨</blockquote>", bot=bot)
+
+
+@router.message(Command("permapin"))
+async def permapin_cmd(message: Message, bot: Bot) -> None:
+    if not await _gate(message, bot):
+        return
+    parts = (message.text or "").split(None, 1)
+    body = parts[1].strip() if len(parts) > 1 else ""
+    if not body:
+        await ax_mod.say(
+            message,
+            "💫 <b>Text?</b>\n<blockquote>Example: /permapin Meeting at 8pm</blockquote>",
+            bot=bot,
+        )
+        return
+    try:
+        sent = await bot.send_message(message.chat.id, esc(body), parse_mode=ParseMode.HTML)
+        await bot.pin_chat_message(
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            disable_notification=True,
+        )
+    except Exception as e:
+        await ax_mod.say(
+            message,
+            f"⚠️ <b>Couldn't pin</b>\n<blockquote>{esc(str(e))}</blockquote>",
+            bot=bot,
+        )
+
+
+@router.message(Command("unpin"))
+async def unpin_cmd(message: Message, bot: Bot) -> None:
+    if not await _gate(message, bot):
+        return
+    try:
+        if message.reply_to_message:
+            await bot.unpin_chat_message(
+                chat_id=message.chat.id,
+                message_id=message.reply_to_message.message_id,
+            )
+        else:
+            await bot.unpin_chat_message(chat_id=message.chat.id)
+    except Exception as e:
+        await ax_mod.say(
+            message,
+            f"⚠️ <b>Couldn't unpin</b>\n<blockquote>{esc(str(e))}</blockquote>",
+            bot=bot,
+        )
+        return
+    await ax_mod.say(message, "📌 <b>Unpinned</b>\n<blockquote>Done ✨</blockquote>", bot=bot)
+
+
+@router.message(Command("unpinall"))
+async def unpinall_cmd(message: Message, bot: Bot) -> None:
+    if not await _gate(message, bot):
+        return
+    try:
+        await bot.unpin_all_chat_messages(chat_id=message.chat.id)
+    except Exception as e:
+        await ax_mod.say(
+            message,
+            f"⚠️ <b>Couldn't unpin</b>\n<blockquote>{esc(str(e))}</blockquote>",
+            bot=bot,
+        )
+        return
+    await ax_mod.say(
+        message,
+        "📌 <b>All unpinned</b>\n<blockquote>Every pinned message was removed</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("pinned"))
+async def pinned_cmd(message: Message, bot: Bot) -> None:
+    chat = message.chat
+    if chat.type == "private":
+        return
+    full = await bot.get_chat(chat.id)
+    p = full.pinned_message
+    if not p:
+        await ax_mod.say(
+            message,
+            "📌 <b>Nothing pinned</b>\n<blockquote>No pinned message here</blockquote>",
+            bot=bot,
+        )
+        return
+    await bot.send_message(
+        chat.id,
+        "📌 Pinned message:",
+        reply_parameters=ReplyParameters(
+            message_id=p.message_id,
+            allow_sending_without_reply=True,
+        ),
+    )
+
+
+async def _toggle(
+    message: Message,
+    bot: Bot,
+    pool: asyncpg.Pool,
+    col: str,
+    label: str,
+    detail: str,
+) -> None:
+    if not await _gate(message, bot):
+        return
+    chat_id = message.chat.id
+    args = cmd_args(message)
+    arg = args[0].lower() if args else ""
+    if arg not in ("on", "off", "yes", "no"):
+        s = await _settings(pool, chat_id)
+        await ax_mod.say(
+            message,
+            f"⚙️ <b>{label}</b>\n<blockquote>Currently <b>{'on' if s[col] else 'off'}</b>\nUse on or off</blockquote>",
+            bot=bot,
+        )
+        return
+    val = arg in ("on", "yes")
+    assert col in ("antichannelpin", "cleanlinked")
+    async with pool.acquire() as c:
+        await c.execute(
+            f"INSERT INTO ax_pin_settings (chat_id, {col}) VALUES ($1,$2) "
+            f"ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            chat_id,
+            val,
+        )
+    invalidate(chat_id)
+    await ax_mod.say(
+        message,
+        f"✅ <b>{label} {'on' if val else 'off'}</b>\n<blockquote>{detail}</blockquote>",
+        bot=bot,
+    )
+
+
+@router.message(Command("antichannelpin"))
+async def antichannelpin_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await _toggle(
+        message,
+        bot,
+        pool,
+        "antichannelpin",
+        "Anti channel pin",
+        "Telegram's auto-pin of linked channel posts is undone",
+    )
+
+
+@router.message(Command("cleanlinked"))
+async def cleanlinked_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await _toggle(
+        message,
+        bot,
+        pool,
+        "cleanlinked",
+        "Clean linked",
+        "Messages from the linked channel are deleted",
+    )
+
+
+class LinkedChannelMiddleware(BaseMiddleware):
+    """Handles automatic forwards from linked channels (unpin and/or delete)."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message) and event.is_automatic_forward:
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            if bot is not None and pool is not None:
+                s = await _settings(pool, event.chat.id)
+                deleted = False
+                try:
+                    if s["antichannelpin"]:
+                        await bot.unpin_chat_message(
+                            chat_id=event.chat.id,
+                            message_id=event.message_id,
+                        )
+                    if s["cleanlinked"]:
+                        await event.delete()
+                        deleted = True
+                except Exception as e:
+                    log.warning("linked watch failed: %s", e)
+                if deleted:
+                    return None
+        return await handler(event, data)
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(LinkedChannelMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_reports.py ===
+"""Reports: /report, @admin (as a reply) and /reports on|off (aiogram 3.x)."""
+import time
+
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, ReplyParameters
+
+import ax_mod
+from ax_common import cmd_args, esc, is_admin
+
+router = Router(name="ax_reports")
+
+_cache: dict[int, tuple[float, bool]] = {}
+_CACHE_TTL = 60.0
+_CACHE_MAX = 5000
+
+
+def _prune_cache(now: float) -> None:
+    if len(_cache) <= _CACHE_MAX:
+        return
+    expired = [cid for cid, (ts, _) in _cache.items() if now - ts >= _CACHE_TTL]
+    for cid in expired:
+        _cache.pop(cid, None)
+    if len(_cache) > _CACHE_MAX:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            _cache.pop(cid, None)
+
+
+def invalidate(chat_id: int) -> None:
+    _cache.pop(chat_id, None)
+
+
+async def enabled(pool: asyncpg.Pool, chat_id: int) -> bool:
+    now = time.time()
+    hit = _cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    async with pool.acquire() as c:
+        v = await c.fetchval("SELECT enabled FROM ax_report_settings WHERE chat_id=$1", chat_id)
+    val = True if v is None else bool(v)
+    _prune_cache(now)
+    _cache[chat_id] = (now, val)
+    return val
+
+
+async def _do_report(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type == "private" or not message.reply_to_message:
+        if chat.type != "private":
+            await ax_mod.say(
+                message,
+                "💫 <b>Reply needed</b>\n<blockquote>Reply to the message you want to report</blockquote>",
+                bot=bot,
+            )
+        return
+    if not await enabled(pool, chat.id):
+        return
+    target = message.reply_to_message.from_user
+    if target is None or target.is_bot:
+        return
+    if await is_admin(bot, chat.id, user.id):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>You are an admin</b>\n<blockquote>Admins can act directly, no report needed ✨</blockquote>",
+            bot=bot,
+        )
+        return
+    if await is_admin(bot, chat.id, target.id):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>Can't report an admin</b>\n<blockquote>Admins are trusted here ✨</blockquote>",
+            bot=bot,
+        )
+        return
+
+    try:
+        admins = await bot.get_chat_administrators(chat.id)
+    except Exception:
+        admins = []
+    tags = "".join(
+        f'<a href="tg://user?id={a.user.id}">\u200b</a>'
+        for a in admins
+        if not a.user.is_bot
+    )
+    await bot.send_message(
+        chat.id,
+        f"🚨 <b>Reported</b>\n<blockquote>👤 <b>{esc(target.first_name or 'Member')}</b> was reported to the admins by "
+        f"<b>{esc(user.first_name or 'Member')}</b>. They will take a look 💜</blockquote>{tags}",
+        parse_mode=ParseMode.HTML,
+        reply_parameters=ReplyParameters(
+            message_id=message.reply_to_message.message_id,
+            allow_sending_without_reply=True,
+        ),
+    )
+
+
+@router.message(Command("report"))
+async def report_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await _do_report(message, bot, pool)
+
+
+@router.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    F.reply_to_message,
+    F.text.regexp(r"(?i)^\s*@admins?\b"),
+)
+async def atadmin_watch(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await _do_report(message, bot, pool)
+
+
+@router.message(Command("reports"))
+async def reports_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await ax_mod.say(
+            message,
+            "🛡️ <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            bot=bot,
+        )
+        return
+    args = cmd_args(message)
+    arg = args[0].lower() if args else ""
+    if arg not in ("on", "off", "yes", "no"):
+        cur = await enabled(pool, chat.id)
+        await ax_mod.say(
+            message,
+            f"⚙️ <b>Reports</b>\n<blockquote>Currently <b>{'on' if cur else 'off'}</b>\nUse /reports on or off</blockquote>",
+            bot=bot,
+        )
+        return
+    val = arg in ("on", "yes")
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_report_settings (chat_id, enabled) VALUES ($1,$2) "
+            "ON CONFLICT (chat_id) DO UPDATE SET enabled=$2",
+            chat.id,
+            val,
+        )
+    invalidate(chat.id)
+    await ax_mod.say(
+        message,
+        f"✅ <b>Reports {'on' if val else 'off'}</b>\n<blockquote>Members {'can' if val else 'can no longer'} report messages</blockquote>",
+        bot=bot,
+    )
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_log.py ===
+"""Log channel support: send mod actions to a linked channel (aiogram 3.x)."""
+import time
+
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+
+from ax_common import cmd_args, esc, is_admin
+
+router = Router(name="ax_log")
+H = ParseMode.HTML
+CATS = ("ban", "mute", "kick", "warn", "lock", "blocklist", "flood", "settings")
+
+_cache: dict[int, tuple[float, int | None, set[str]]] = {}
+_CACHE_TTL = 60.0
+_CACHE_MAX = 5000
+
+
+def _prune_cache(now: float) -> None:
+    if len(_cache) <= _CACHE_MAX:
+        return
+    expired = [cid for cid, (ts, _, _) in _cache.items() if now - ts >= _CACHE_TTL]
+    for cid in expired:
+        _cache.pop(cid, None)
+    if len(_cache) > _CACHE_MAX:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[: _CACHE_MAX // 5]
+        for cid, _ in oldest:
+            _cache.pop(cid, None)
+
+
+def invalidate(chat_id: int) -> None:
+    _cache.pop(chat_id, None)
+
+
+async def _row(pool: asyncpg.Pool, chat_id: int) -> tuple[int | None, set[str]]:
+    now = time.time()
+    hit = _cache.get(chat_id)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1], set(hit[2])
+    async with pool.acquire() as c:
+        r = await c.fetchrow(
+            "SELECT log_chat, off_cats FROM ax_log_settings WHERE chat_id=$1",
+            chat_id,
+        )
+    if not r:
+        lc, off = None, set()
+    else:
+        lc = r["log_chat"]
+        off = {x for x in (r["off_cats"] or "").split(",") if x}
+    _prune_cache(now)
+    _cache[chat_id] = (now, lc, set(off))
+    return lc, off
+
+
+async def send_log(bot: Bot, pool: asyncpg.Pool, chat_id: int, cat: str, text: str) -> None:
+    """Send one log line. Never raises."""
+    try:
+        log_chat, off = await _row(pool, chat_id)
+        if not log_chat or cat in off:
+            return
+        title = ""
+        try:
+            title = (await bot.get_chat(chat_id)).title or ""
+        except Exception:
+            pass
+        await bot.send_message(
+            log_chat,
+            f"📋 <b>{esc(title)}</b> · <i>{cat}</i>\n<blockquote>{text}</blockquote>",
+            parse_mode=H,
+        )
+    except Exception:
+        pass
+
+
+async def _gate(message: Message, bot: Bot, pool: asyncpg.Pool):
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return None
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return None
+    return pool, chat.id
+
+
+@router.message(Command("setlog"))
+async def setlog(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    target = None
+    fwd = getattr(message, "forward_origin", None)
+    if fwd is not None and getattr(fwd, "chat", None):
+        target = fwd.chat.id
+    elif message.reply_to_message:
+        rfwd = getattr(message.reply_to_message, "forward_origin", None)
+        if rfwd is not None and getattr(rfwd, "chat", None):
+            target = rfwd.chat.id
+    if target is None:
+        args = cmd_args(message)
+        if args:
+            try:
+                target = int(args[0])
+            except ValueError:
+                target = None
+    if not target:
+        await message.reply(
+            "📋 <b>Set log channel</b>\n<blockquote>Use /setlog "
+            "-100123... (channel id)\nThe bot must be admin there ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    try:
+        await bot.send_message(target, "✅ Log channel linked ✨")
+    except Exception:
+        await message.reply(
+            "⚠️ <b>Cannot post there</b>\n<blockquote>Add me as an admin in that channel first ✨</blockquote>",
+            parse_mode=H,
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_log_settings (chat_id, log_chat) VALUES "
+            "($1,$2) ON CONFLICT (chat_id) DO UPDATE SET log_chat=$2",
+            cid,
+            target,
+        )
+    invalidate(cid)
+    await message.reply("✅ <b>Log channel set</b>", parse_mode=H)
+
+
+@router.message(Command("unsetlog"))
+async def unsetlog(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    async with pool.acquire() as c:
+        await c.execute("UPDATE ax_log_settings SET log_chat=NULL WHERE chat_id=$1", cid)
+    invalidate(cid)
+    await message.reply("🚫 <b>Log channel removed</b>", parse_mode=H)
+
+
+@router.message(Command("logchannel"))
+async def logchannel(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    g = await _gate(message, bot, pool)
+    if not g:
+        return
+    pool, cid = g
+    lc, off = await _row(pool, cid)
+    await message.reply(
+        f"📋 <b>Log channel</b>\n<blockquote>Linked: "
+        f"<b>{lc or 'none'}</b>\nOff: <b>{', '.join(sorted(off)) or 'none'}</b></blockquote>",
+        parse_mode=H,
+    )
+
+
+def _toggle(turn_on: bool):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        g = await _gate(message, bot, pool)
+        if not g:
+            return
+        pool, cid = g
+        args = cmd_args(message)
+        a = args[0].lower() if args else ""
+        if a not in CATS:
+            await message.reply("<blockquote>Pick one: " + ", ".join(CATS) + "</blockquote>", parse_mode=H)
+            return
+        _, off = await _row(pool, cid)
+        if turn_on:
+            off.discard(a)
+        else:
+            off.add(a)
+        async with pool.acquire() as c:
+            await c.execute(
+                "INSERT INTO ax_log_settings (chat_id, off_cats) VALUES "
+                "($1,$2) ON CONFLICT (chat_id) DO UPDATE SET off_cats=$2",
+                cid,
+                ",".join(sorted(off)),
+            )
+        invalidate(cid)
+        await message.reply(
+            f"{'✅' if turn_on else '🚫'} <b>{a} logs {'on' if turn_on else 'off'}</b>",
+            parse_mode=H,
+        )
+
+    return cmd
+
+
+@router.message(Command("logcategories"))
+async def logcategories(message: Message) -> None:
+    await message.reply(
+        "📋 <b>Log categories</b>\n<blockquote>" + "\n".join(CATS) + "</blockquote>",
+        parse_mode=H,
+    )
+
+
+router.message(Command("log"))(_toggle(True))
+router.message(Command("nolog"))(_toggle(False))
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_misc3.py ===
+"""anonadmin, adminerror, silentactions + admin cache clearing (aiogram 3.x + APScheduler)."""
+import logging
+from datetime import datetime, timedelta, timezone
+
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+import ax_common
+from ax_common import cmd_args, is_admin
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_misc3")
+
+H = ParseMode.HTML
+SILENT: set[int] = set()
+QUIET: set[int] = set()
+_COLS = ("anon_admin", "admin_error", "silent_actions")
+
+
+async def load(pool: asyncpg.Pool) -> None:
+    try:
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT chat_id, anon_admin, admin_error, silent_actions FROM ax_misc_settings"
+            )
+        ax_common.ANON_ON.clear()
+        SILENT.clear()
+        QUIET.clear()
+        for r in rows:
+            if r["anon_admin"]:
+                ax_common.ANON_ON.add(r["chat_id"])
+            if r["silent_actions"]:
+                SILENT.add(r["chat_id"])
+            if not r["admin_error"]:
+                QUIET.add(r["chat_id"])
+    except Exception as e:
+        log.warning("ax_misc3 load failed: %s", e)
+
+
+async def _gate(message: Message, bot: Bot, pool: asyncpg.Pool):
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return None
+    if chat.type == "private" or not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await message.reply(
+            "🛡 <b>Admins only</b>\n<blockquote>Use this in your group as an admin ✨</blockquote>",
+            parse_mode=H,
+        )
+        return None
+    return pool, chat.id
+
+
+def _yn(args: list[str]) -> bool | None:
+    a = args[0].lower() if args else ""
+    if a in ("on", "yes"):
+        return True
+    if a in ("off", "no"):
+        return False
+    return None
+
+
+async def _save(pool: asyncpg.Pool, cid: int, col: str, v: bool) -> None:
+    assert col in _COLS
+    async with pool.acquire() as c:
+        await c.execute(
+            f"INSERT INTO ax_misc_settings (chat_id, {col}) VALUES "
+            f"($1,$2) ON CONFLICT (chat_id) DO UPDATE SET {col}=$2",
+            cid,
+            v,
+        )
+
+
+def make(col: str, name: str, store: set[int], invert: bool = False):
+    async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+        g = await _gate(message, bot, pool)
+        if not g:
+            return
+        pool, cid = g
+        v = _yn(cmd_args(message))
+        cur = (cid not in store) if invert else (cid in store)
+        if v is None:
+            await message.reply(
+                f"{'✅' if cur else '🚫'} <b>{name} is {'on' if cur else 'off'}</b>\n"
+                f"<blockquote>Use /{name} on or off to change it</blockquote>",
+                parse_mode=H,
+            )
+            return
+        if name == "silentactions" and v:
+            async with pool.acquire() as c:
+                r = await c.fetchrow("SELECT log_chat FROM ax_log_settings WHERE chat_id=$1", cid)
+            if not r or not r["log_chat"]:
+                await message.reply(
+                    "⚠️ <b>Needs a log channel</b>\n<blockquote>Link one with /setlog first ✨</blockquote>",
+                    parse_mode=H,
+                )
+                return
+        await _save(pool, cid, col, v)
+        on = (not v) if invert else v
+        (store.add if on else store.discard)(cid)
+        await message.reply(
+            f"{'✅' if v else '🚫'} <b>{name} {'on' if v else 'off'}</b>",
+            parse_mode=H,
+        )
+
+    return cmd
+
+
+def clear_cache() -> None:
+    ax_common._ADMIN_CACHE.clear()
+
+
+router.message(Command("anonadmin"))(make("anon_admin", "anonadmin", ax_common.ANON_ON))
+router.message(Command("adminerror"))(make("admin_error", "adminerror", QUIET, True))
+router.message(Command("silentactions"))(make("silent_actions", "silentactions", SILENT))
+
+
+async def on_startup(bot: Bot, dispatcher) -> None:
+    pool: asyncpg.Pool = dispatcher["pool"]
+    scheduler: AsyncIOScheduler | None = dispatcher.get("scheduler")
+    await load(pool)
+    if scheduler is not None:
+        scheduler.add_job(
+            load,
+            trigger="date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=5),
+            args=[pool],
+            id="ax_misc3:load",
+            replace_existing=True,
+        )
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_actiontopic.py ===
+"""Action topic: send moderation messages into one forum topic (aiogram 3.x + APScheduler)."""
+import logging
+from datetime import datetime, timedelta, timezone
+
+import asyncpg
+from aiogram import Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from ax_common import cmd_args, is_admin
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_actiontopic")
+H = ParseMode.HTML
+MAP: dict[int, int] = {}
+
+
+async def _say(message: Message, text: str):
+    return await message.reply(text, parse_mode=H)
+
+
+async def _load(pool: asyncpg.Pool) -> None:
+    try:
+        async with pool.acquire() as c:
+            rows = await c.fetch("SELECT chat_id, thread_id FROM ax_action_topics")
+        MAP.clear()
+        for r in rows:
+            MAP[r["chat_id"]] = r["thread_id"]
+        log.info("action topics loaded: %d", len(rows))
+    except Exception as e:
+        log.warning("action topic load failed: %s", e)
+
+
+async def _check(message: Message, bot: Bot) -> bool:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return False
+    if chat.type != "supergroup" or not getattr(chat, "is_forum", False):
+        await _say(
+            message,
+            "<b>Topics only</b>\n<blockquote>This works in groups that have Topics turned on \u2728</blockquote>",
+        )
+        return False
+    if not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await _say(
+            message,
+            "\U0001F512 <b>Admins only</b>\n<blockquote>Only admins can choose the action topic \u2728</blockquote>",
+        )
+        return False
+    return True
+
+
+@router.message(Command("setactiontopic"))
+async def set_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _check(message, bot):
+        return
+    chat = message.chat
+    tid = message.message_thread_id if message.is_topic_message else None
+    if not tid:
+        await _say(
+            message,
+            "\U0001F4CC <b>Use it inside a topic</b>\n<blockquote>Send /setactiontopic in the topic where you want moderation messages \U0001F4AB</blockquote>",
+        )
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_action_topics (chat_id, thread_id) VALUES ($1, $2) "
+            "ON CONFLICT (chat_id) DO UPDATE SET thread_id = EXCLUDED.thread_id",
+            chat.id,
+            tid,
+        )
+    MAP[chat.id] = tid
+    await _say(
+        message,
+        "\u2705 <b>Action topic set</b>\n<blockquote>Bans, warns, mutes and other moderation messages will now appear in this topic \u2728</blockquote>",
+    )
+
+
+@router.message(Command("actiontopic"))
+async def show_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _check(message, bot):
+        return
+    chat = message.chat
+    args = cmd_args(message)
+    if args and args[0].lower() == "off":
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM ax_action_topics WHERE chat_id = $1", chat.id)
+        MAP.pop(chat.id, None)
+        await _say(
+            message,
+            "\U0001F9F9 <b>Action topic cleared</b>\n<blockquote>Moderation messages will appear where the command is used \u2728</blockquote>",
+        )
+        return
+    tid = MAP.get(chat.id)
+    if tid:
+        await _say(
+            message,
+            "\U0001F4CC <b>Action topic is ON</b>\n<blockquote>Moderation messages go to the topic you chose.\nTurn it off with /actiontopic off \u2728</blockquote>",
+        )
+    else:
+        await _say(
+            message,
+            "\U0001F4CC <b>Action topic is OFF</b>\n<blockquote>Open a topic and send /setactiontopic there to choose it \u2728</blockquote>",
+        )
+
+
+async def on_startup(bot: Bot, dispatcher) -> None:
+    pool: asyncpg.Pool = dispatcher["pool"]
+    scheduler: AsyncIOScheduler | None = dispatcher.get("scheduler")
+    await _load(pool)
+    if scheduler is not None:
+        scheduler.add_job(
+            _load,
+            trigger="date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=5),
+            args=[pool],
+            id="ax_actiontopic:load",
+            replace_existing=True,
+        )
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_afk.py ===
+"""AFK status (long notes, stickers, GIFs, voice notes, photos, videos) and /info (aiogram 3.x)."""
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message, TelegramObject
+
+import config
+import ui
+from ax_common import cmd_args, esc, find_user_by_username, resolve_target
+
+log = logging.getLogger(__name__)
+router = Router(name="ax_afk")
+
+H = ParseMode.HTML
+_notice: dict[tuple[int, int], float] = {}
+_NOTICE_MAX = 5000
+
+MAXLEN = 1024        # longest AFK note (characters)
+CAPTION = 1024       # Telegram's caption limit for GIF / voice / photo / video
+TEXT_LIMIT = 4000    # Telegram's message limit is 4096
+LABELS = {
+    "sticker": "Sticker",
+    "animation": "GIF",
+    "voice": "Voice note",
+    "photo": "Photo",
+    "video": "Video",
+}
+
+ROLES = {
+    "creator": "👑 Owner",
+    "administrator": "🛡️ Admin",
+    "member": "👤 Member",
+    "restricted": "🚫 Restricted",
+    "left": "🚪 Left",
+    "kicked": "⛔ Banned",
+}
+
+_afk_ids: set[int] = set()
+_afk_loaded = False
+_load_lock = asyncio.Lock()
+_middleware_registered = False
+
+
+def dur(start: datetime) -> str:
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    s = max(0, int((datetime.now(timezone.utc) - start).total_seconds()))
+    h, r = divmod(s, 3600)
+    m, sec = divmod(r, 60)
+    parts = ([f"{h}h"] if h else []) + ([f"{m}m"] if m else []) + [f"{sec}s"]
+    return " ".join(parts)
+
+
+def media_of(m: Message | None) -> tuple[str | None, str | None]:
+    """(type, file_id) of the first supported media in a message, else (None, None)."""
+    if m is None:
+        return None, None
+    if m.sticker:
+        return "sticker", m.sticker.file_id
+    if m.animation:  # GIFs (check before video)
+        return "animation", m.animation.file_id
+    if m.voice:
+        return "voice", m.voice.file_id
+    if m.photo:
+        return "photo", m.photo[-1].file_id
+    if m.video:
+        return "video", m.video.file_id
+    return None, None
+
+
+def quote(inner: str, reason: str | None) -> str:
+    """Long notes go in a collapsed (tap to expand) quote so the chat stays tidy."""
+    tag = "blockquote expandable" if reason and len(reason) > 300 else "blockquote"
+    return f"<{tag}>{inner}</blockquote>"
+
+
+def fit(build, reason: str | None, limit: int) -> str:
+    """build(reason) -> html. Shortens the reason until the whole text fits `limit`."""
+    r = reason
+    text = build(r)
+    while len(text) > limit and r:
+        r = r[: max(0, int(len(r) * 0.8) - 1)].rstrip()
+        text = build((r + "…") if r else None)
+    return text
+
+
+def afk_text(name: str, start: datetime, reason: str | None) -> str:
+    extra = f"\n📝 {esc(reason)}" if reason else ""
+    return (
+        f"💤 <b>{esc(name)} is AFK</b>\n"
+        + quote(f"⏳ Away for <b>{dur(start)}</b>{extra}", reason)
+    )
+
+
+_SEND = {
+    "animation": lambda m, f, c: m.reply_animation(animation=f, caption=c, parse_mode=H),
+    "voice": lambda m, f, c: m.reply_voice(voice=f, caption=c, parse_mode=H),
+    "photo": lambda m, f, c: m.reply_photo(photo=f, caption=c, parse_mode=H),
+    "video": lambda m, f, c: m.reply_video(video=f, caption=c, parse_mode=H),
+}
+
+
+async def send_notice(msg: Message, mtype: str | None, mid: str | None, name: str, start: datetime, reason: str | None) -> None:
+    """Tell the group that someone is AFK, with their note and attached sticker/GIF/voice."""
+    build = lambda r: afk_text(name, start, r)
+    if mtype in _SEND and mid:
+        try:  # media with the note as its caption
+            await _SEND[mtype](msg, mid, fit(build, reason, CAPTION))
+            return
+        except Exception:
+            pass  # e.g. group blocks media: fall back to text
+    elif mtype == "sticker" and mid:
+        try:  # stickers can't have captions: sticker, then text
+            await msg.reply_sticker(sticker=mid)
+        except Exception:
+            pass
+    await msg.reply(fit(build, reason, TEXT_LIMIT), parse_mode=H)
+
+
+def _prune_notice(now: float) -> None:
+    if len(_notice) <= _NOTICE_MAX:
+        return
+    stale = [k for k, ts_val in _notice.items() if now - ts_val >= 60.0]
+    for k in stale:
+        _notice.pop(k, None)
+    if len(_notice) > _NOTICE_MAX:
+        _notice.clear()
+
+
+async def _load_afk(pool: asyncpg.Pool) -> None:
+    global _afk_loaded
+    if _afk_loaded:
+        return
+    async with _load_lock:
+        if _afk_loaded:
+            return
+        async with pool.acquire() as c:
+            await c.execute("ALTER TABLE ax_afk ADD COLUMN IF NOT EXISTS media_type TEXT")
+            await c.execute("ALTER TABLE ax_afk ADD COLUMN IF NOT EXISTS media_id TEXT")
+            rows = await c.fetch("SELECT user_id FROM ax_afk")
+        _afk_ids.clear()
+        _afk_ids.update(r["user_id"] for r in rows)
+        _afk_loaded = True
+
+
+@router.message(Command("afk"))
+async def afk_cmd(message: Message, pool: asyncpg.Pool) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    try:
+        await _load_afk(pool)
+    except Exception as e:
+        log.warning("afk load error: %s", e)
+
+    parts = (message.text or "").split(None, 1)  # keep the line breaks of a long note
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    if arg.lower() == "off":
+        _afk_ids.discard(user.id)
+        async with pool.acquire() as c:
+            r = await c.execute("DELETE FROM ax_afk WHERE user_id=$1", user.id)
+        await message.reply(
+            "✅ <b>AFK removed</b>" if r.endswith("1") else "💫 <b>You're not AFK</b>",
+            parse_mode=H,
+        )
+        return
+
+    mtype, mid = media_of(message.reply_to_message)  # reply to a sticker/GIF/voice to attach it
+    reason = arg[:MAXLEN] or None
+    _afk_ids.add(user.id)
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_afk (user_id, reason, media_type, media_id) VALUES ($1,$2,$3,$4) "
+            "ON CONFLICT (user_id) DO UPDATE SET reason=$2, media_type=$3, media_id=$4, "
+            "start_time=now(), msg_count=0",
+            user.id,
+            reason,
+            mtype,
+            mid,
+        )
+
+    def build(r):
+        extra = (f"\n📝 {esc(r)}" if r else "") + (f"\n📎 {LABELS[mtype]} attached" if mtype else "")
+        return (
+            "💤 <b>AFK on</b>\n"
+            + quote(f"👤 <b>{esc(user.first_name or 'User')}</b> is away{extra}", r)
+        )
+
+    await message.reply(fit(build, reason, TEXT_LIMIT), parse_mode=H)
+
+
+async def _handle_afk_watcher(msg: Message, pool: asyncpg.Pool) -> None:
+    user = msg.from_user
+    chat = msg.chat
+    if user is None or user.is_bot or chat.type == "private":
+        return
+
+    raw = msg.text or msg.caption or ""
+    try:
+        await _load_afk(pool)
+    except Exception as e:
+        log.warning("afk load error: %s", e)
+        return
+    if not _afk_ids:
+        return
+
+    if not raw.lower().startswith("/afk") and user.id in _afk_ids:
+        _afk_ids.discard(user.id)
+        async with pool.acquire() as c:
+            r = await c.fetchrow(
+                "DELETE FROM ax_afk WHERE user_id=$1 RETURNING reason, start_time, msg_count",
+                user.id,
+            )
+        if r:
+            note = r["reason"] or ""
+            short = note[:200] + ("…" if len(note) > 200 else "")
+            extra = f"\n📝 {esc(short)}" if short else ""
+            try:
+                await msg.reply(
+                    f"👋 <b>Welcome back, {esc(user.first_name or 'friend')}!</b>\n<blockquote>"
+                    f"⏳ Away for <b>{dur(r['start_time'])}</b>{extra}\n"
+                    f"💌 Mentions while away: <b>{r['msg_count']}</b></blockquote>",
+                    parse_mode=H,
+                )
+            except Exception:
+                pass
+
+    if raw.startswith("/"):
+        return
+
+    targets: set[int] = set()
+    rp = msg.reply_to_message
+    if rp and rp.from_user and not rp.from_user.is_bot:
+        targets.add(rp.from_user.id)
+
+    su = getattr(getattr(msg, "forward_origin", None), "sender_user", None)
+    if su and not su.is_bot:
+        targets.add(su.id)
+
+    ents = msg.entities if msg.text else (msg.caption_entities or [])
+    src_text = msg.text if msg.text else (msg.caption or "")
+    for e in ents or []:
+        if e.type == "text_mention" and e.user and not e.user.is_bot:
+            targets.add(e.user.id)
+        elif e.type == "mention" and src_text:
+            name = e.extract_from(src_text).lstrip("@")
+            if name:
+                row = await find_user_by_username(pool, name)
+                if row:
+                    targets.add(row["id"])
+
+    now = time.time()
+    _prune_notice(now)
+    for tid in (targets & _afk_ids) - {user.id}:
+        async with pool.acquire() as c:  # one round trip: count the mention and fetch everything
+            r = await c.fetchrow(
+                "WITH u AS (UPDATE ax_afk SET msg_count = msg_count + 1 WHERE user_id=$1 "
+                "RETURNING reason, start_time, msg_count, media_type, media_id) "
+                "SELECT u.reason, u.start_time, u.msg_count, u.media_type, u.media_id, "
+                "(SELECT first_name FROM users WHERE id=$1) AS first_name FROM u",
+                tid,
+            )
+        if not r:
+            _afk_ids.discard(tid)
+            continue
+        key = (chat.id, tid)
+        if now - _notice.get(key, 0.0) < 15.0:
+            continue
+        _notice[key] = now
+        try:
+            await send_notice(
+                msg,
+                r["media_type"],
+                r["media_id"],
+                r["first_name"] or "This user",
+                r["start_time"],
+                r["reason"],
+            )
+        except Exception:
+            pass
+
+
+class AfkMiddleware(BaseMiddleware):
+    """Non-blocking watcher for AFK returns and AFK mentions in groups."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message) and event.chat.type != "private":
+            pool: asyncpg.Pool | None = data.get("pool")
+            if pool is not None:
+                await _handle_afk_watcher(event, pool)
+        return await handler(event, data)
+
+
+def ts(t: datetime | None) -> str:
+    return t.strftime("%d %b %Y, %H:%M UTC") if t else "—"
+
+
+@router.message(Command("info"))
+async def info_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    me = message.from_user
+    if me is None:
+        return
+    args = cmd_args(message)
+    target = await resolve_target(message, bot, pool, args=args)
+    if target is None:
+        if args:
+            await message.reply(
+                "🔎 <b>Not found</b>\n<blockquote>I haven't seen that person yet 💫</blockquote>",
+                parse_mode=H,
+            )
+            return
+        target = me
+
+    user, role, title = target, "—", None
+    if chat.type != "private":
+        try:
+            m = await bot.get_chat_member(chat.id, target.id)
+            user = m.user
+            st_val = m.status.value if hasattr(m.status, "value") else str(m.status)
+            role = ROLES.get(st_val, "—")
+            title = getattr(m, "custom_title", None)
+        except Exception:
+            pass
+
+    async with pool.acquire() as c:
+        st = await c.fetchrow(
+            "SELECT first_seen, last_seen, message_count FROM ax_user_stats WHERE user_id=$1",
+            target.id,
+        )
+        w = await c.fetchrow(
+            "SELECT level, xp, cash, gems FROM wallets WHERE user_id=$1",
+            target.id,
+        )
+        afk = await c.fetchrow(
+            "SELECT reason, start_time FROM ax_afk WHERE user_id=$1",
+            target.id,
+        )
+
+    first = getattr(user, "first_name", None) or "User"
+    name = esc(first + (" " + user.last_name if getattr(user, "last_name", None) else ""))
+    uname = f"@{esc(user.username)}" if getattr(user, "username", None) else "—"
+    kind = "🤖 Bot" if getattr(user, "is_bot", False) else "🧑 Human"
+    text = (
+        f"🪪 <b>User Info</b>\n<blockquote>"
+        f"👤 <b>{name}</b>\n🔗 {uname}\n🆔 <code>{target.id}</code>\n{kind}\n"
+        f"🎭 {role}" + (f" · 🏷️ {esc(title)}" if title else "") + "</blockquote>\n"
+    )
+    if w:
+        text += (
+            f"🌙 <b>Rumi Profile</b>\n<blockquote>⭐ Level <b>{w['level']}</b> · ✨ {w['xp']} XP\n"
+            f"💰 {config.CURRENCY_SYMBOL}{ui.format_number(w['cash'])} · 💎 {w['gems']}</blockquote>\n"
+        )
+    if st:
+        text += (
+            f"📊 <b>Activity</b>\n<blockquote>💬 Messages: <b>{st['message_count']}</b>\n"
+            f"🌱 First seen: {ts(st['first_seen'])}\n🕒 Last seen: {ts(st['last_seen'])}</blockquote>\n"
+        )
+    if afk:
+        r = afk["reason"] or ""
+        why = f" · {esc(r[:100])}{'…' if len(r) > 100 else ''}" if r else ""
+        text += f"💤 <b>AFK</b> for {dur(afk['start_time'])}{why}"
+    else:
+        text += "🟢 <b>Active</b>"
+    await message.reply(text, parse_mode=H)
+
+
+async def on_startup(bot: Bot, dispatcher) -> None:
+    pool: asyncpg.Pool = dispatcher["pool"]
+    await _load_afk(pool)
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if not _middleware_registered:
+        _middleware_registered = True
+        dp.message.outer_middleware(AfkMiddleware())
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_backup.py ===
+"""Group settings backup: /export /import /reset (aiogram 3.x)."""
+import io
+import json
+
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ChatMemberStatus, ParseMode
+from aiogram.filters import Command
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from ax_common import esc, is_admin
+
+router = Router(name="ax_backup")
+H = ParseMode.HTML
+
+TABLES = [
+    "ax_settings", "ax_notes", "ax_filters", "ax_rules", "ax_locks",
+    "ax_lock_settings", "ax_blocklist", "ax_blocklist_settings",
+    "ax_allowlist", "ax_raid_settings", "ax_report_settings",
+    "ax_pin_settings", "ax_captcha_settings", "ax_cleancmd",
+    "ax_cleanservice", "ax_disabled", "ax_disable_settings",
+    "ax_log_settings", "ax_misc_settings", "ax_note_settings",
+    "ax_warn_settings",
+]
+SKIP = {"chat_id", "created_at", "raid_until", "last_welcome_id"}
+
+
+async def _say(message: Message, text: str, **kw):
+    return await message.reply(text, parse_mode=H, **kw)
+
+
+async def _is_creator(bot: Bot, chat_id: int, user_id: int) -> bool:
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+    except Exception:
+        return False
+    return m.status == ChatMemberStatus.CREATOR
+
+
+def _invalidate_all_caches(chat_id: int) -> None:
+    """Clear per-chat settings caches after import/reset so changes take effect immediately."""
+    for mod_name, fn_or_dict in (
+        ("ax_lockcore", "invalidate"),
+        ("ax_blocklist", "invalidate"),
+        ("ax_notes", "invalidate"),
+        ("ax_rules", "invalidate"),
+        ("ax_pins", "invalidate"),
+        ("ax_reports", "invalidate"),
+        ("ax_log", "invalidate"),
+    ):
+        try:
+            mod = __import__(mod_name)
+            fn = getattr(mod, fn_or_dict, None)
+            if callable(fn):
+                fn(chat_id)
+        except Exception:
+            pass
+    for mod_name, attr in (
+        ("ax_settings", "_cache"),
+        ("ax_raid", "_SC"),
+        ("ax_captcha", "_SC"),
+        ("ax_cleancmd", "_cache"),
+        ("ax_cleanservice", "_cache"),
+        ("ax_disable", "_cache"),
+        ("ax_warn", "_SCACHE"),
+    ):
+        try:
+            mod = __import__(mod_name)
+            store = getattr(mod, attr, None)
+            if isinstance(store, dict):
+                store.pop(chat_id, None)
+        except Exception:
+            pass
+
+
+@router.message(Command("export"))
+async def export_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type not in ("group", "supergroup"):
+        await _say(message, "<b>Groups only</b>\n<blockquote>Use this inside a group ✨</blockquote>")
+        return
+    if not await is_admin(bot, chat.id, user.id, "can_change_info"):
+        await _say(message, "🔒 <b>Admins only</b>\n<blockquote>Only admins can export ✨</blockquote>")
+        return
+
+    out = {}
+    async with pool.acquire() as c:
+        for t in TABLES:
+            rows = await c.fetch("SELECT * FROM %s WHERE chat_id=$1" % t, chat.id)
+            if rows:
+                out[t] = [
+                    {
+                        k: v
+                        for k, v in dict(r).items()
+                        if k not in SKIP and (v is None or isinstance(v, (str, int, float, bool)))
+                    }
+                    for r in rows
+                ]
+    data = json.dumps({"rumi_backup": 1, "tables": out}, ensure_ascii=False, indent=1).encode("utf-8")
+    await message.reply_document(
+        document=BufferedInputFile(data, filename="rumi_backup_%d.json" % abs(chat.id)),
+        caption="📦 <b>Backup ready</b>\n<blockquote>Reply to this file with /import in any group to load it 💫</blockquote>",
+        parse_mode=H,
+    )
+
+
+@router.message(Command("import"))
+async def import_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type not in ("group", "supergroup"):
+        await _say(message, "<b>Groups only</b>\n<blockquote>Use this inside a group ✨</blockquote>")
+        return
+    if not await _is_creator(bot, chat.id, user.id):
+        await _say(message, "👑 <b>Creator only</b>\n<blockquote>Only the group creator can import ✨</blockquote>")
+        return
+
+    doc = message.reply_to_message.document if message.reply_to_message else None
+    if not doc or (doc.file_size or 0) > 1_000_000:
+        await _say(
+            message,
+            "📎 <b>Reply to a backup file</b>\n<blockquote>Reply to a Rumi backup .json file with /import 💫</blockquote>",
+        )
+        return
+    try:
+        f = await bot.get_file(doc.file_id)
+        buf = io.BytesIO()
+        await bot.download_file(f.file_path, destination=buf)
+        d = json.loads(buf.getvalue().decode("utf-8"))
+        tabs = d["tables"]
+        assert d.get("rumi_backup") == 1 and isinstance(tabs, dict)
+    except Exception:
+        await _say(
+            message,
+            "⚠️ <b>Not a Rumi backup</b>\n<blockquote>That file could not be read ✨</blockquote>",
+        )
+        return
+
+    done = 0
+    try:
+        async with pool.acquire() as c:
+            async with c.transaction():
+                for t in TABLES:
+                    if t not in tabs:
+                        continue
+                    got = await c.fetch(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name=$1",
+                        t,
+                    )
+                    cols = {r["column_name"] for r in got}
+                    await c.execute("DELETE FROM %s WHERE chat_id=$1" % t, chat.id)
+                    for row in tabs[t]:
+                        keys = [k for k in row if k in cols and k not in SKIP]
+                        names = ",".join(["chat_id"] + keys)
+                        ph = ",".join("$%d" % (i + 1) for i in range(len(keys) + 1))
+                        await c.execute(
+                            "INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING" % (t, names, ph),
+                            chat.id,
+                            *[row[k] for k in keys],
+                        )
+                        done += 1
+    except Exception as e:
+        await _say(
+            message,
+            "⚠️ <b>Import failed</b>\n<blockquote>Nothing was changed: %s</blockquote>" % esc(str(e)[:150]),
+        )
+        return
+
+    _invalidate_all_caches(chat.id)
+    await _say(
+        message,
+        "✅ <b>Imported</b>\n<blockquote>%d entries loaded, %s 💫</blockquote>"
+        % (done, esc(user.first_name or "friend")),
+    )
+
+
+@router.message(Command("reset"))
+async def reset_cmd(message: Message, bot: Bot) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if chat.type not in ("group", "supergroup"):
+        await _say(message, "<b>Groups only</b>\n<blockquote>Use this inside a group ✨</blockquote>")
+        return
+    if not await _is_creator(bot, chat.id, user.id):
+        await _say(message, "👑 <b>Creator only</b>\n<blockquote>Only the group creator can reset ✨</blockquote>")
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Yes, reset", callback_data="axrst_yes"),
+                InlineKeyboardButton(text="Cancel", callback_data="axrst_no"),
+            ]
+        ]
+    )
+    await _say(
+        message,
+        "⚠️ <b>Reset all settings?</b>\n<blockquote>This clears notes, filters, rules, locks and every Rumi setting of this group. Wallets and warns stay safe.</blockquote>",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("axrst_"))
+async def reset_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+    if query.message is None:
+        await query.answer()
+        return
+    chat = query.message.chat
+    if not await _is_creator(bot, chat.id, query.from_user.id):
+        await query.answer("Only the group creator can press this", show_alert=True)
+        return
+    await query.answer()
+    if query.data == "axrst_no":
+        try:
+            await query.message.edit_text("Cancelled, nothing changed ✨")
+        except Exception:
+            pass
+        return
+    async with pool.acquire() as c:
+        async with c.transaction():
+            for t in TABLES:
+                await c.execute("DELETE FROM %s WHERE chat_id=$1" % t, chat.id)
+    _invalidate_all_caches(chat.id)
+    try:
+        await query.message.edit_text("✅ Group settings were reset 💫")
+    except Exception:
+        pass
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_connect.py ===
+"""Connections: /connect /disconnect /reconnect /connection (use in DM) (aiogram 3.x)."""
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+
+from ax_common import cmd_args, esc, is_admin
+
+router = Router(name="ax_connect")
+H = ParseMode.HTML
+
+
+async def _say(message: Message, text: str, **kw):
+    return await message.reply(text, parse_mode=H, **kw)
+
+
+async def _dm_only(message: Message) -> bool:
+    if message.chat.type != "private":
+        await _say(
+            message,
+            "📩 <b>Use it in private</b>\n<blockquote>Send this to me in a private chat ✨</blockquote>",
+        )
+        return False
+    return True
+
+
+async def _title(bot: Bot, chat_id: int) -> str:
+    try:
+        return (await bot.get_chat(chat_id)).title or str(chat_id)
+    except Exception:
+        return str(chat_id)
+
+
+def _invalidate_proxy_cache(user_id: int) -> None:
+    try:
+        import ax_dmproxy
+
+        ax_dmproxy.invalidate(user_id)
+    except Exception:
+        pass
+
+
+async def _link(pool: asyncpg.Pool, user, chat_id: int) -> None:
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_connections (user_id, chat_id, last_chat_id) "
+            "VALUES ($1,$2,$2) ON CONFLICT (user_id) DO UPDATE "
+            "SET chat_id=$2, last_chat_id=$2",
+            user.id,
+            chat_id,
+        )
+    _invalidate_proxy_cache(user.id)
+
+
+@router.message(Command("connect"))
+async def connect_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _dm_only(message):
+        return
+    user = message.from_user
+    if user is None:
+        return
+    args = cmd_args(message)
+    if not args:
+        await _say(
+            message,
+            "🔗 <b>Connect to a group</b>\n<blockquote>Send /connect followed by the group id.\n"
+            "Example: /connect -1001234567890\nTip: send /id inside the group to see its id.</blockquote>",
+        )
+        return
+    try:
+        cid = int(args[0])
+    except ValueError:
+        await _say(
+            message,
+            "⚠️ <b>That is not a group id</b>\n<blockquote>It looks like a number starting with -100 ✨</blockquote>",
+        )
+        return
+    if not await is_admin(bot, cid, user.id):
+        await _say(
+            message,
+            "🔒 <b>Admins only</b>\n<blockquote>You must be an admin of that group, and I must be inside it ✨</blockquote>",
+        )
+        return
+    await _link(pool, user, cid)
+    name = await _title(bot, cid)
+    await _say(
+        message,
+        "✅ <b>Connected</b>\n<blockquote>%s, you are linked to %s 💫</blockquote>"
+        % (esc(user.first_name or "friend"), esc(name)),
+    )
+
+
+@router.message(Command("connection"))
+async def connection_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _dm_only(message):
+        return
+    user = message.from_user
+    if user is None:
+        return
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT chat_id FROM ax_connections WHERE user_id=$1", user.id)
+    if not r or not r["chat_id"]:
+        await _say(
+            message,
+            "🔌 <b>Not connected</b>\n<blockquote>Use /connect with a group id to link one ✨</blockquote>",
+        )
+        return
+    name = await _title(bot, r["chat_id"])
+    await _say(message, "🔗 <b>Connected to</b>\n<blockquote>%s</blockquote>" % esc(name))
+
+
+@router.message(Command("disconnect"))
+async def disconnect_cmd(message: Message, pool: asyncpg.Pool) -> None:
+    if not await _dm_only(message):
+        return
+    user = message.from_user
+    if user is None:
+        return
+    async with pool.acquire() as c:
+        await c.execute(
+            "UPDATE ax_connections SET chat_id=0 WHERE user_id=$1 AND chat_id<>0",
+            user.id,
+        )
+    _invalidate_proxy_cache(user.id)
+    await _say(
+        message,
+        "✅ <b>Disconnected</b>\n<blockquote>Use /reconnect to link your last group again 💫</blockquote>",
+    )
+
+
+@router.message(Command("reconnect"))
+async def reconnect_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    if not await _dm_only(message):
+        return
+    user = message.from_user
+    if user is None:
+        return
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT last_chat_id FROM ax_connections WHERE user_id=$1", user.id)
+    if not r or not r["last_chat_id"]:
+        await _say(
+            message,
+            "🔌 <b>No earlier group</b>\n<blockquote>Use /connect with a group id first ✨</blockquote>",
+        )
+        return
+    name = await _title(bot, r["last_chat_id"])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Connect to " + name[:30],
+                    callback_data="axcn_" + str(r["last_chat_id"]),
+                )
+            ]
+        ]
+    )
+    await _say(
+        message,
+        "🔁 <b>Reconnect</b>\n<blockquote>Tap to link %s again 💫</blockquote>" % esc(name),
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("axcn_"))
+async def reconnect_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+    try:
+        cid = int((query.data or "")[5:])
+    except ValueError:
+        await query.answer()
+        return
+    if not await is_admin(bot, cid, query.from_user.id):
+        await query.answer("You are not an admin there", show_alert=True)
+        return
+    await _link(pool, query.from_user, cid)
+    await query.answer()
+    if query.message:
+        try:
+            await query.message.edit_text("✅ Connected again 💫")
+        except Exception:
+            pass
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_connect2.py ===
+"""One-tap connect: group button -> DM deep link (aiogram 3.x)."""
+import asyncio
+import re
+
+import asyncpg
+from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+import ax_connect
+from ax_common import btn, esc, get_bot_username, is_admin
+
+router = Router(name="ax_connect2")
+H = ParseMode.HTML
+
+_CONNECT_START_RE = re.compile(r"^/start(?:@\w+)?\s+connect_(-?\d+)\s*$")
+
+
+@router.message(Command("connect"), F.chat.type.in_({"group", "supergroup"}))
+async def group_connect(message: Message, bot: Bot) -> None:
+    chat = message.chat
+    user = message.from_user
+    if user is None:
+        return
+    if not await is_admin(bot, chat.id, user.id):
+        await message.reply(
+            "\U0001F512 <b>Admins only</b>\n<blockquote>Only admins can connect this group \u2728</blockquote>",
+            parse_mode=H,
+        )
+        return
+    un = await get_bot_username(bot)
+    url = f"https://t.me/{un}?start=connect_{chat.id}"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[btn("\U0001F517 Manage in private", url=url, style="success")]]
+    )
+    await message.reply(
+        "\U0001F517 <b>Connect this group</b>\n"
+        "<blockquote>Tap the button to open a private chat with me, already linked to "
+        f"<b>{esc(chat.title or 'this group')}</b> \u2728</blockquote>",
+        parse_mode=H,
+        reply_markup=kb,
+    )
+
+
+@router.message(F.chat.type == "private", F.text.regexp(r"^/start(?:@\w+)?\s+connect_-?\d+\s*$"))
+async def start_payload(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    user = message.from_user
+    m = _CONNECT_START_RE.match(message.text or "")
+    if not m or user is None:
+        return
+    cid = int(m.group(1))
+    if not await is_admin(bot, cid, user.id):
+        await message.reply(
+            "\U0001F512 <b>Admins only</b>\n<blockquote>You need to be an admin of that group, "
+            "and I must be inside it \u2728</blockquote>",
+            parse_mode=H,
+        )
+        return
+    await ax_connect._link(pool, user, cid)
+    name = await ax_connect._title(bot, cid)
+    await message.reply(
+        "\u2705 <b>Connected</b>\n<blockquote>%s, you are linked to <b>%s</b> \U0001F4AB\n"
+        "Now you can send these here and they change your group:\n"
+        "/settings /notes /save /filters /filter /rules /setrules /locks /warnings\n"
+        "Use /connection to check, /disconnect to unlink.</blockquote>"
+        % (esc(user.first_name or "friend"), esc(name)),
+        parse_mode=H,
+    )
+
+
+@router.message(
+    Command("connect"),
+    F.chat.type == "private",
+    ~F.text.regexp(r"^/connect(?:@\w+)?\s+\S"),
+)
+async def dm_connect(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT chat_id, title FROM ax_groups ORDER BY title LIMIT 60")
+
+    found = []
+    batch_size = 15
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        results = await asyncio.gather(
+            *(is_admin(bot, r["chat_id"], user.id) for r in batch),
+            return_exceptions=True,
+        )
+        for r, ok in zip(batch, results):
+            if ok is True:
+                found.append(r)
+                if len(found) >= 10:
+                    break
+        if len(found) >= 10:
+            break
+
+    if not found:
+        un = await get_bot_username(bot)
+        url = f"https://t.me/{un}?startgroup=true"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[btn("\u2795 Add Rumi to your group", url=url, style="success")]]
+        )
+        await message.reply(
+            "\U0001F517 <b>No groups found</b>\n"
+            "<blockquote>I could not find a group where you are an admin and I am present.\n"
+            "Add me to your group, make me admin, then send /connect inside it. "
+            "Or send /connect followed by the group id \u2728</blockquote>",
+            parse_mode=H,
+            reply_markup=kb,
+        )
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [btn("\U0001F465 " + (r["title"] or "Group")[:40], f"axcc:{r['chat_id']}", style="primary")]
+            for r in found
+        ]
+    )
+    await message.reply(
+        "\U0001F517 <b>Pick your group</b>\n"
+        "<blockquote>Tap a group to manage it from here \u2728</blockquote>",
+        parse_mode=H,
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("axcc:"))
+async def pick_cb(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> None:
+    user = query.from_user
+    try:
+        cid = int((query.data or "").split(":", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer()
+        return
+    if not await is_admin(bot, cid, user.id):
+        await query.answer("You are not an admin there", show_alert=True)
+        return
+    await ax_connect._link(pool, user, cid)
+    name = await ax_connect._title(bot, cid)
+    await query.answer("Connected \u2728")
+    if query.message:
+        try:
+            await query.message.edit_text(
+                "\u2705 <b>Connected</b>\n<blockquote>%s, you are linked to <b>%s</b> \U0001F4AB\n"
+                "Now you can send these here and they change your group:\n"
+                "/settings /notes /save /filters /filter /rules /setrules /locks /warnings\n"
+                "Use /connection to check, /disconnect to unlink.</blockquote>"
+                % (esc(user.first_name or "friend"), esc(name)),
+                parse_mode=H,
+            )
+        except Exception:
+            pass
+
+
+def register(dp) -> None:
+    if router.parent_router is None:
+        dp.include_router(router)
+
+=== ax_dmproxy.py ===
+"""DM commands and settings callbacks act on the connected group (aiogram 3.x middleware)."""
+import logging
+import time
+from typing import Any, Awaitable, Callable
+
+import asyncpg
+from aiogram import BaseMiddleware, Bot
+from aiogram.enums import ParseMode
+from aiogram.types import CallbackQuery, Chat, Message, TelegramObject
+from pydantic import PrivateAttr
+
+from ax_common import is_admin
+
+log = logging.getLogger(__name__)
+H = ParseMode.HTML
+
+CMDS = {
+    "save", "get", "notes", "clear", "clearallnotes",
+    "filter", "filters", "stop", "clearfilters",
+    "lock", "unlock", "locks", "rules", "setrules", "resetrules",
+    "warnings", "warnlimit", "warnmode", "warntime",
+    "welcome", "setwelcome", "resetwelcome",
+    "goodbye", "setgoodbye", "resetgoodbye",
+    "setflood", "flood", "settings",
+}
+
+_conn_cache: dict[int, tuple[float, int | None]] = {}
+_CONN_TTL = 60.0
+_CONN_MAX = 5000
+_middleware_registered = False
+
+
+def invalidate(user_id: int) -> None:
+    _conn_cache.pop(user_id, None)
+
+
+def _prune_conn_cache(now: float) -> None:
+    if len(_conn_cache) <= _CONN_MAX:
+        return
+    expired = [uid for uid, (ts, _) in _conn_cache.items() if now - ts >= _CONN_TTL]
+    for uid in expired:
+        _conn_cache.pop(uid, None)
+    if len(_conn_cache) > _CONN_MAX:
+        oldest = sorted(_conn_cache.items(), key=lambda kv: kv[1][0])[: _CONN_MAX // 5]
+        for uid, _ in oldest:
+            _conn_cache.pop(uid, None)
+
+
+async def _connected(pool: asyncpg.Pool, user_id: int) -> int | None:
+    now = time.time()
+    hit = _conn_cache.get(user_id)
+    if hit and now - hit[0] < _CONN_TTL:
+        return hit[1]
+    cid = None
+    try:
+        async with pool.acquire() as c:
+            r = await c.fetchrow("SELECT chat_id FROM ax_connections WHERE user_id=$1", user_id)
+        if r and r["chat_id"]:
+            cid = int(r["chat_id"])
+    except Exception:
+        pass
+    _prune_conn_cache(now)
+    _conn_cache[user_id] = (now, cid)
+    return cid
+
+
+def _extract_cmd(message: Message) -> str | None:
+    raw = (message.text or message.caption or "").strip()
+    if not raw.startswith("/"):
+        return None
+    first = raw.split(None, 1)[0][1:]
+    return first.split("@", 1)[0].lower()
+
+
+class _DMProxyMessage(Message):
+    """Message subclass whose .chat points to the connected group while all replies/edits target the DM."""
+
+    _orig_msg: Message = PrivateAttr()
+
+    def answer(self, *args, **kwargs):
+        return self._orig_msg.answer(*args, **kwargs)
+
+    def reply(self, *args, **kwargs):
+        return self._orig_msg.reply(*args, **kwargs)
+
+    def answer_photo(self, *args, **kwargs):
+        return self._orig_msg.answer_photo(*args, **kwargs)
+
+    def reply_photo(self, *args, **kwargs):
+        return self._orig_msg.reply_photo(*args, **kwargs)
+
+    def answer_video(self, *args, **kwargs):
+        return self._orig_msg.answer_video(*args, **kwargs)
+
+    def reply_video(self, *args, **kwargs):
+        return self._orig_msg.reply_video(*args, **kwargs)
+
+    def answer_animation(self, *args, **kwargs):
+        return self._orig_msg.answer_animation(*args, **kwargs)
+
+    def reply_animation(self, *args, **kwargs):
+        return self._orig_msg.reply_animation(*args, **kwargs)
+
+    def answer_sticker(self, *args, **kwargs):
+        return self._orig_msg.answer_sticker(*args, **kwargs)
+
+    def reply_sticker(self, *args, **kwargs):
+        return self._orig_msg.reply_sticker(*args, **kwargs)
+
+    def answer_voice(self, *args, **kwargs):
+        return self._orig_msg.answer_voice(*args, **kwargs)
+
+    def reply_voice(self, *args, **kwargs):
+        return self._orig_msg.reply_voice(*args, **kwargs)
+
+    def answer_audio(self, *args, **kwargs):
+        return self._orig_msg.answer_audio(*args, **kwargs)
+
+    def reply_audio(self, *args, **kwargs):
+        return self._orig_msg.reply_audio(*args, **kwargs)
+
+    def answer_document(self, *args, **kwargs):
+        return self._orig_msg.answer_document(*args, **kwargs)
+
+    def reply_document(self, *args, **kwargs):
+        return self._orig_msg.reply_document(*args, **kwargs)
+
+    def edit_text(self, *args, **kwargs):
+        return self._orig_msg.edit_text(*args, **kwargs)
+
+    def edit_caption(self, *args, **kwargs):
+        return self._orig_msg.edit_caption(*args, **kwargs)
+
+    def edit_reply_markup(self, *args, **kwargs):
+        return self._orig_msg.edit_reply_markup(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._orig_msg.delete(*args, **kwargs)
+
+
+def _proxy_message(msg: Message, cid: int, title: str | None = None) -> _DMProxyMessage:
+    fake_chat = Chat(id=cid, type="supergroup", title=title, is_forum=False, username=None)
+    field_data = {name: getattr(msg, name) for name in Message.model_fields}
+    field_data["chat"] = fake_chat
+    proxy = _DMProxyMessage.model_construct(_fields_set=set(msg.model_fields_set), **field_data)
+    proxy._orig_msg = msg
+    if msg.bot is not None:
+        proxy.as_(msg.bot)
+    return proxy
+
+
+class DMProxyMessageMiddleware(BaseMiddleware):
+    """Proxies DM commands in CMDS so they operate on the user's connected group."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if (
+            isinstance(event, Message)
+            and event.chat.type == "private"
+            and event.from_user is not None
+        ):
+            cmd = _extract_cmd(event)
+            if cmd in CMDS:
+                bot: Bot | None = data.get("bot")
+                pool: asyncpg.Pool | None = data.get("pool")
+                if bot is not None and pool is not None:
+                    cid = await _connected(pool, event.from_user.id)
+                    if not cid:
+                        await event.reply(
+                            "\U0001F517 <b>Connect a group first</b>\n"
+                            "<blockquote>Send /connect inside your group and tap the button. "
+                            "After that, these commands work here and change that group \u2728</blockquote>",
+                            parse_mode=H,
+                        )
+                        return None
+                    if not await is_admin(bot, cid, event.from_user.id):
+                        await event.reply(
+                            "\U0001F512 <b>Admins only</b>\n"
+                            "<blockquote>You are no longer an admin of the connected group. "
+                            "Use /disconnect or /connect again \u2728</blockquote>",
+                            parse_mode=H,
+                        )
+                        return None
+                    title = None
+                    try:
+                        title = await pool.fetchval("SELECT title FROM ax_groups WHERE chat_id=$1", cid)
+                    except Exception:
+                        pass
+                    proxy = _proxy_message(event, cid, title=title)
+                    return await handler(proxy, data)
+        return await handler(event, data)
+
+
+class DMProxyCallbackMiddleware(BaseMiddleware):
+    """Proxies DM ^axs: settings callbacks so they operate on the user's connected group."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if (
+            isinstance(event, CallbackQuery)
+            and event.data
+            and event.data.startswith("axs:")
+            and isinstance(event.message, Message)
+            and event.message.chat.type == "private"
+        ):
+            bot: Bot | None = data.get("bot")
+            pool: asyncpg.Pool | None = data.get("pool")
+            if bot is not None and pool is not None:
+                cid = await _connected(pool, event.from_user.id)
+                if not cid:
+                    await event.answer("Send /connect in your group first", show_alert=True)
+                    return None
+                if not await is_admin(bot, cid, event.from_user.id):
+                    await event.answer("You are no longer an admin there", show_alert=True)
+                    return None
+                proxy_msg = _proxy_message(event.message, cid)
+                proxy_q = event.model_copy(update={"message": proxy_msg})
+                if event.bot is not None:
+                    proxy_q.as_(event.bot)
+                return await handler(proxy_q, data)
+        return await handler(event, data)
+
+
+def register(dp) -> None:
+    global _middleware_registered
+    if _middleware_registered:
+        return
+    _middleware_registered = True
+    dp.message.outer_middleware(DMProxyMessageMiddleware())
+    dp.callback_query.outer_middleware(DMProxyCallbackMiddleware())
+    log.info("DM proxy middleware registered for %d commands + ^axs: callbacks", len(CMDS))
+

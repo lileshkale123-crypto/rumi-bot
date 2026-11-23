@@ -1,4 +1,4 @@
-"""Gifts: /giftshop (buy), /items (inventory), /sendgift <name> (reply to someone) (aiogram 3.x, bot_id aware)."""
+"""Gifts: /giftshop (buy), /items (inventory), /gift <name> (reply to someone) (aiogram 3.x, bot_id aware)."""
 import logging
 import os
 import random
@@ -213,7 +213,7 @@ async def _shop_view(
         f"🎁 <b>{esc(brand.name)} Gift Shop</b>\n\n<b>{esc(name)}</b>, tap a gift to buy it 💜\n\n"
         f"<blockquote>{chr(10).join(lines)}</blockquote>\n"
         f"You have <code>{money(cash)}</code>\n"
-        f"Send one: reply to someone with <code>/sendgift rose</code>\n"
+        f"Send one: reply to someone with <code>/gift rose</code>\n"
         f"See what you own: /items"
     )
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
@@ -266,7 +266,7 @@ async def gift_cb(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext)
         await query.answer(f"Not enough cash 💔 You have {money(cash)}", show_alert=True)
         return
     await query.answer(
-        f"Bought {e} {n} 💜 You now have {row['qty']}. Send it with /sendgift {iid}",
+        f"Bought {e} {n} 💜 You now have {row['qty']}. Send it with /gift {iid}",
         show_alert=True,
     )
     text, kb = await _shop_view(pool, uid, query.from_user.first_name or "Friend", bot_id=bid)
@@ -303,11 +303,11 @@ async def items_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
     text += f"<b>To send</b>\n<blockquote>{own or 'Nothing yet. Visit /giftshop'}</blockquote>\n"
     text += f"<b>Received</b>\n<blockquote>{rec or 'No gifts received yet'}</blockquote>"
     if target.id == u.id:
-        text += "\nSend one: reply to someone with <code>/sendgift rose</code>"
+        text += "\nSend one: reply to someone with <code>/gift rose</code>"
     await message.reply(text, parse_mode=H)
 
 
-@router.message(Command("sendgift"))
+@router.message(Command("gift"))
 async def sendgift_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     a = message.from_user
     if a is None:
@@ -316,7 +316,7 @@ async def sendgift_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext
     r = message.reply_to_message
     if not args or not r or not r.from_user:
         await message.reply(
-            "🎁 <b>Reply to someone</b> with <code>/sendgift rose</code>\n"
+            "🎁 <b>Reply to someone</b> with <code>/gift rose</code>\n"
             "See all gifts: /giftshop   Your gifts: /items",
             parse_mode=H,
         )

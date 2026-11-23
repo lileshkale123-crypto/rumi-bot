@@ -50,7 +50,7 @@ NEW["kill"] = ("⚔️", "Kill and Revive",
 NEW["gifts"] = ("🎁", "Gifts",
     "Buy gifts and send them to friends.\n\n"
     "<b>/giftshop</b>: open the shop and tap a gift to buy it\n"
-    "<b>/sendgift rose</b>: reply to someone to send them a gift. If you don't own one, it is bought for you.\n"
+    "<b>/gift rose</b>: reply to someone to send them a gift. If you don't own one, it is bought for you.\n"
     "<b>/items</b>: your gifts, and the ones you received (reply to see someone else's)\n\n"
     "<b>Prices</b>\n"
     "🌹 Rose $1,500 • 🌷 Tulip $2,500 • 💌 Love Letter $4,000\n"

@@ -69,6 +69,7 @@ POLLING_UPDATES = [
 ]
 
 MODULE_ORDER = [
+    "ax_alias",
     "ax_errors",
     "ax_perf",
     "ax_i18n",
