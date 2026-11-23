@@ -8,6 +8,7 @@ The result is sent as a real voice note (ogg/opus through ffmpeg); if ffmpeg is 
 the mp3 is sent instead.
 """
 import asyncio
+import html
 import io
 import logging
 import re
@@ -81,25 +82,66 @@ def clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-async def _synth(text: str, voice: str) -> bytes:
-    last = None
-    for attempt in range(TTS_TRIES):
-        try:
-            async def run() -> bytes:
-                buf = io.BytesIO()
-                async for chunk in edge_tts.Communicate(text, voice).stream():
-                    if chunk["type"] == "audio":
-                        buf.write(chunk["data"])
-                return buf.getvalue()
+def _chunks(text: str, limit: int = 180) -> list[str]:
+    out, cur = [], ""
+    for word in text.split():
+        if cur and len(cur) + 1 + len(word) > limit:
+            out.append(cur)
+            cur = word
+        else:
+            cur = (cur + " " + word).strip()
+    if cur:
+        out.append(cur)
+    return out
 
-            data = await asyncio.wait_for(run(), TTS_TIMEOUT)
-            if data:
-                return data
-            last = RuntimeError("no audio returned")
-        except Exception as exc:  # network, timeout, service refused
-            last = exc
-        await asyncio.sleep(0.6 * (attempt + 1))
-    raise last or RuntimeError("tts failed")
+
+async def _google_tts(text: str, lang: str) -> bytes:
+    """Backup voice (one female voice) when the main service refuses this server."""
+    import httpx
+
+    host = "translate.google.co.in" if lang == "en" else "translate.google.com"
+    parts = _chunks(text)
+    data = b""
+    async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "Mozilla/5.0"}) as cli:
+        for i, part in enumerate(parts):
+            r = await cli.get(
+                "https://%s/translate_tts" % host,
+                params={
+                    "ie": "UTF-8", "q": part, "tl": lang, "client": "tw-ob",
+                    "total": len(parts), "idx": i, "textlen": len(part),
+                },
+            )
+            if r.status_code != 200 or not r.content:
+                raise RuntimeError("google tts http %s" % r.status_code)
+            data += r.content
+    return data
+
+
+async def _edge(text: str, voice: str) -> bytes:
+    buf = io.BytesIO()
+    async for chunk in edge_tts.Communicate(text, voice).stream():
+        if chunk["type"] == "audio":
+            buf.write(chunk["data"])
+    if not buf.tell():
+        raise RuntimeError("no audio returned")
+    return buf.getvalue()
+
+
+async def _synth(text: str, voice: str, lang: str = "en") -> bytes:
+    errors = []
+    for attempt in range(2):
+        try:
+            return await asyncio.wait_for(_edge(text, voice), TTS_TIMEOUT)
+        except Exception as exc:  # network, timeout, service refused this server
+            errors.append("edge: %s %s" % (type(exc).__name__, str(exc)[:60]))
+            log.warning("edge-tts try %d failed: %r", attempt + 1, exc)
+        await asyncio.sleep(0.5)
+    try:
+        return await asyncio.wait_for(_google_tts(text, lang), 40.0)
+    except Exception as exc:
+        errors.append("google: %s %s" % (type(exc).__name__, str(exc)[:60]))
+        log.warning("google tts failed: %r", exc)
+    raise RuntimeError(" | ".join(errors))
 
 
 async def _to_ogg(mp3: bytes) -> bytes | None:
@@ -167,17 +209,18 @@ async def voice_cmd(message: Message, bot: Bot) -> None:
             await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.RECORD_VOICE)
         except Exception:
             pass
-        mp3 = await _synth(text, voice)
+        mp3 = await _synth(text, voice, lang)
         ogg = await _to_ogg(mp3)
         if ogg:
             await message.reply_voice(voice=BufferedInputFile(ogg, filename="voice.ogg"))
         else:
             await message.reply_voice(voice=BufferedInputFile(mp3, filename="voice.mp3"))
-    except Exception:
+    except Exception as exc:
         log.exception("voice failed")
         _last_use.pop(user.id, None)
         await message.reply(
-            "\U0001F63F <b>My voice slipped.</b> Please try again in a moment.",
+            "\U0001F63F <b>My voice slipped.</b> Please try again in a moment.\n"
+            "<i>" + html.escape(str(exc)[:160]) + "</i>",
             parse_mode=ParseMode.HTML,
         )
 
