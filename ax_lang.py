@@ -151,7 +151,7 @@ _MENU = [
     ("qcolors", "Quote sticker colour names"),
     ("mypacks", "Your sticker packs"),
     ("kang", "Add a sticker or photo to your pack"),
-    ("speak", "Convert text to voice"),
+    ("voice", "Convert text to voice"),
     ("afk", "Mark yourself away"),
     ("info", "Info about a user"),
     ("id", "Show user and chat IDs"),

@@ -89,7 +89,7 @@ PAGES["more"] = ("\u2728", "More Commands",
     "/topgroups: see the top groups\n"
     "/tagall: mention everyone (admins)\n"
     "/admins: call the group admins\n"
-    "/speak: Rumi speaks\n"
+    "/voice: text to voice (hi/en, male/female)\n"
     "/kang: take a sticker for yourself\n/mypacks: see your sticker packs\n"
     "/id: get a user or chat ID\n"
     "/ping: check if Rumi is awake\n"
