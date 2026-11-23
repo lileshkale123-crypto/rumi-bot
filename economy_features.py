@@ -1,4 +1,4 @@
-"""Vault, /work, /spin, /convert, /toplegends and /mafiatop (aiogram 3.x, bot_id & brand aware)."""
+"""Vault, /convert, /toplegends and /mafiatop (aiogram 3.x, bot_id & brand aware)."""
 
 import asyncio
 import random

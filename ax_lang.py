@@ -93,8 +93,6 @@ _MENU = [
     # --- Economy ---
     ("wallet", "Check your cash, gems & level"),
     ("claim", "Claim your daily reward"),
-    ("work", "Complete a contract for coins"),
-    ("spin", "Spin the daily Wheel of Fate"),
     ("pay", "Send coins to someone (reply)"),
     ("rob", "Attempt a heist on someone (reply)"),
     ("guard", "Raise a protective guard shield"),

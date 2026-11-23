@@ -28,7 +28,7 @@ PAGES["chat"] = ("💬", "Chat and Economy",
     "I also react to messages with emojis.\n\n"
     "/start: your snapshot and games\n"
     "/wallet /claim /pay /guard /rob /rankings\n"
-    "/vault /deposit /withdraw /work /spin\n"
+    "/vault /deposit /withdraw\n"
     "/bluff /mafia /stopmafia /mafiatop")
 
 PAGES["shop"] = ("🛍", "Title Shop",
