@@ -117,6 +117,59 @@ async def _ai_chat_inner(
     _remember_key(_ai_msgs, (chat.id, sent.message_id), _MAX_AI_MSGS)
 
 
+# ---- instant replies for a bare call like "Rumi", "hey rumi", "rumi?" (no AI, no quota) ----
+_INSTANT = (
+    "Haan? \U0001F338",
+    "Bolo!",
+    "Hmm?",
+    "Yes yes?",
+    "Haan bolo, main yahin hu \U0001F338",
+    "Hey! Kya chal raha hai aaj kal?",
+    "Arre, yaad kiya mujhe? Kaise ho tum? \U0001F60A",
+    "Hii! Aaj ka din kaisa gaya?",
+    "Boliye boliye, sun rahi hu \U0001F440",
+    "Mera naam liya aur main haazir! Kya hua?",
+)
+_FILLER = {
+    "hey", "hi", "hii", "hiii", "hello", "hlo", "hola", "yo", "oye", "oi", "o", "arre",
+    "are", "ji", "sup", "namaste", "ho", "hai", "there", "bolo", "aao", "aa", "ok", "okay",
+}
+_WORDS = re.compile("[a-z0-9" + chr(0x900) + "-" + chr(0x97F) + "]+")
+_INSTANT_GAP = 3.0  # seconds between instant replies in one chat
+_last_instant: OrderedDict[int, tuple[float, int]] = OrderedDict()  # chat -> (time, last index)
+_MAX_INSTANT = 3000
+
+
+def _is_bare_call(text: str) -> bool:
+    t = re.sub(r"@\w+", " ", text.lower())
+    if len(t) > 30:
+        return False
+    words = _WORDS.findall(t)
+    if not words or len(words) > 4:
+        return False
+    triggers = {w.lower() for w in config.AI_TRIGGER_WORDS}
+    if not any(w in triggers for w in words):
+        return False
+    return all(w in triggers or w in _FILLER for w in words)
+
+
+def _instant_reply(chat_id: int) -> str | None:
+    """A random canned line, never the same one twice in a row, or None when it is too soon."""
+    import random
+
+    now = time.monotonic()
+    last_t, last_i = _last_instant.get(chat_id, (-1e9, -1))
+    if now - last_t < _INSTANT_GAP:
+        return None
+    choices = [i for i in range(len(_INSTANT)) if i != last_i]
+    idx = random.choice(choices)
+    _last_instant[chat_id] = (now, idx)
+    _last_instant.move_to_end(chat_id)
+    while len(_last_instant) > _MAX_INSTANT:
+        _last_instant.popitem(last=False)
+    return _INSTANT[idx]
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def ai_chat(
     message: Message,
@@ -124,6 +177,16 @@ async def ai_chat(
     pool: asyncpg.Pool,
     bot_username: str = "",
 ) -> None:
+    if message.text and message.from_user and not message.from_user.is_bot and _is_bare_call(message.text):
+        line = _instant_reply(message.chat.id)
+        if line:
+            try:
+                sent = await message.reply(line)
+                # a reply to this message continues as a normal AI chat
+                _remember_key(_ai_msgs, (message.chat.id, sent.message_id), _MAX_AI_MSGS)
+            except Exception:
+                pass
+        return
     # Spawn as background task so slow LLM calls never block other updates
     ax_common.fire(_ai_chat_inner(message, bot, pool, bot_username))
 
