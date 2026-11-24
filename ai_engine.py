@@ -56,10 +56,21 @@ class GeminiError(RuntimeError):
         self.status = status
 
 
+_blocked_until = 0.0  # monotonic time until which Gemini is skipped (quota used up)
+BLOCK_SECONDS = 90.0
+
+
+def _gemini_keys() -> list[str]:
+    """GEMINI_API_KEY may hold one key or several keys separated by commas."""
+    raw = os.environ.get("GEMINI_API_KEY", "")
+    return [k.strip() for k in raw.replace("\n", ",").split(",") if k.strip()]
+
+
 async def gemini_chat(
     history: list[tuple[str, str]],
     text: str,
     model: str | None = None,
+    key: str | None = None,
 ) -> str | None:
     """history = [(role, text)] with role 'user' or 'model'. Returns reply text or None."""
     contents = [{"role": r, "parts": [{"text": t}]} for r, t in history]
@@ -75,11 +86,13 @@ async def gemini_chat(
         "generationConfig": gen,
     }
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise GeminiError(401, "GEMINI_API_KEY not set")
+    if key is None:
+        keys = _gemini_keys()
+        if not keys:
+            raise GeminiError(401, "GEMINI_API_KEY not set")
+        key = keys[0]
 
-    headers = {"x-goog-api-key": api_key}
+    headers = {"x-goog-api-key": key}
     client = _get_client()
     r = await client.post(URL.format(model=model or config.AI_MODEL), json=body, headers=headers)
     if r.status_code != 200:
@@ -94,32 +107,49 @@ async def gemini_chat(
 
 
 async def _gemini_chat_all(history: list[tuple[str, str]], text: str) -> str | None:
-    """Tries each model in config.AI_MODELS, retrying transient server errors."""
+    """Tries every key and every model in config.AI_MODELS. When all fail only because the
+    quota is used up (429), Gemini is skipped for a short while so the backup answers fast."""
+    global _blocked_until
+    import time
+
+    if time.monotonic() < _blocked_until:
+        raise GeminiError(429, "gemini cooling down")
+    keys = _gemini_keys()
+    if not keys:
+        raise GeminiError(401, "GEMINI_API_KEY not set")
     last: Exception | None = None
-    for model in config.AI_MODELS:
-        for attempt in range(2):
-            try:
-                out = await gemini_chat(history, text, model)
-                if out:
-                    return out
-                break
-            except GeminiError as e:
-                last = e
-                log.warning("model %s failed: status %s", model, e.status)
-                if e.status == 429:
+    only_quota = True
+    for key in keys:
+        for model in config.AI_MODELS:
+            for attempt in range(2):
+                try:
+                    out = await gemini_chat(history, text, model, key)
+                    if out:
+                        return out
+                    only_quota = False
                     break
-                if e.status in (500, 502, 503, 504) and attempt == 0:
-                    await asyncio.sleep(1)
-                    continue
-                break
-            except httpx.HTTPError as e:
-                last = e
-                log.warning("model %s HTTP error: %s", model, e)
-                if attempt == 0:
-                    await asyncio.sleep(2)
-                    continue
-                break
+                except GeminiError as e:
+                    last = e
+                    log.warning("model %s failed: status %s %s", model, e.status, str(e)[:120])
+                    if e.status != 429:
+                        only_quota = False
+                    if e.status == 429:
+                        break
+                    if e.status in (500, 502, 503, 504) and attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                    break
+                except httpx.HTTPError as e:
+                    last = e
+                    only_quota = False
+                    log.warning("model %s HTTP error: %r", model, e)
+                    if attempt == 0:
+                        await asyncio.sleep(2)
+                        continue
+                    break
     if last is not None:
+        if only_quota:
+            _blocked_until = time.monotonic() + BLOCK_SECONDS
         raise last
     return None
 
@@ -166,6 +196,8 @@ async def chat(history: list[tuple[str, str]], text: str) -> str:
         last = ex
         log.warning("all Gemini models failed, trying Groq")
 
+    if not os.environ.get("GROQ_API_KEY"):
+        log.warning("GROQ_API_KEY is not set, so there is no backup AI")
     for model in config.GROQ_MODELS:
         try:
             out = await groq_chat(history, text, model)
@@ -176,3 +208,34 @@ async def chat(history: list[tuple[str, str]], text: str) -> str:
             log.warning("groq model %s failed: %s", model, getattr(ex, "status", ex))
 
     raise last
+
+
+async def status() -> list[str]:
+    """One line per model: OK or the error. Used by /aistatus (owner only)."""
+    import time
+
+    lines: list[str] = []
+    keys = _gemini_keys()
+    left = _blocked_until - time.monotonic()
+    lines.append("Gemini keys: %d%s" % (len(keys), "  (cooling %ds)" % left if left > 0 else ""))
+    lines.append("Groq key: %s" % ("set" if os.environ.get("GROQ_API_KEY") else "NOT SET"))
+
+    async def one(label: str, coro) -> str:
+        try:
+            out = await asyncio.wait_for(coro, 20.0)
+            return "%s: OK" % label if out else "%s: empty reply" % label
+        except GeminiError as e:
+            body = str(e).split(": ", 1)[-1].replace("\n", " ")
+            return "%s: %s %s" % (label, e.status, body[:70])
+        except Exception as e:
+            return "%s: %s" % (label, type(e).__name__)
+
+    jobs = []
+    for i, key in enumerate(keys[:3]):
+        for model in config.AI_MODELS:
+            jobs.append(one("G%d %s" % (i + 1, model), gemini_chat([], "say hi", model, key)))
+    if os.environ.get("GROQ_API_KEY"):
+        for model in config.GROQ_MODELS:
+            jobs.append(one("Groq %s" % model, groq_chat([], "say hi", model)))
+    lines.extend(await asyncio.gather(*jobs))
+    return lines

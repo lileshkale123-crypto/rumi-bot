@@ -172,6 +172,7 @@ MODULE_ORDER = [
     "ax_reel",
     "ax_reports",
     "ai_handlers",
+    "ax_aistatus",
     "auto_react",
 ]
 
