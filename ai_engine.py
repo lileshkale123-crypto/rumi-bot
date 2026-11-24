@@ -94,7 +94,12 @@ async def gemini_chat(
 
     headers = {"x-goog-api-key": key}
     client = _get_client()
-    r = await client.post(URL.format(model=model or config.AI_MODEL), json=body, headers=headers)
+    url = URL.format(model=model or config.AI_MODEL)
+    r = await client.post(url, json=body, headers=headers)
+    if r.status_code == 400 and "thinkingConfig" in gen:
+        # retry without thinking settings: some models refuse them
+        gen2 = {k: v for k, v in gen.items() if k != "thinkingConfig"}
+        r = await client.post(url, json={**body, "generationConfig": gen2}, headers=headers)
     if r.status_code != 200:
         raise GeminiError(r.status_code, r.text[:200])
 
