@@ -195,6 +195,7 @@ def home_view() -> tuple[str, InlineKeyboardMarkup]:
                 btn("⭐ Donors", "axop:donors:1"),
                 btn("🤖 Clones Platform", "axop:clones:1", style="primary"),
             ],
+            [btn("🧠 AI Status", "axop:ai", style="primary")],
             [
                 btn("📜 Audit Log", "axop:audit:1"),
                 btn("🪙 Reset Coins", "axop:resetask", style="danger"),
@@ -690,6 +691,27 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx
         text, kb = home_view()
     elif sec == "stats":
         text, kb = await stats_view(pool)
+    elif sec == "ai":
+        import ai_engine
+
+        await query.answer("Testing AI models...")
+        try:
+            lines = await ai_engine.status()
+        except Exception as exc:
+            lines = ["status failed: %s" % exc]
+        text = "🧠 <b>AI STATUS</b>\n<pre>" + html.escape("\n".join(lines))[:3600] + "</pre>"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [btn("🔄 Refresh", "axop:ai", style="primary")],
+                [btn("🏠 Owner Home", "axop:home")],
+            ]
+        )
+        if query.message:
+            try:
+                await query.message.edit_text(text, parse_mode=H, reply_markup=kb)
+            except Exception:
+                pass
+        return
     elif sec == "groups":
         sort = parts[2] if len(parts) > 2 else "cash"
         page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1

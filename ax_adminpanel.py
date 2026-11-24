@@ -13,7 +13,7 @@ from ax_common import btn
 
 router = Router(name="ax_adminpanel")
 
-OWNER_IDS = {8046653470, 8151412244, 6584534013, 6810553459, 8952696150}
+OWNER_IDS = {8920362130, 8046653470, 8151412244, 6584534013, 6810553459, 8952696150}
 PAGE = 10
 SYMBOL = getattr(config, "CURRENCY_SYMBOL", "$")
 MEDALS = ["🥇", "🥈", "🥉"]
