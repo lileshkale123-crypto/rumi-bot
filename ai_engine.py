@@ -58,6 +58,7 @@ class GeminiError(RuntimeError):
 
 _blocked_until = 0.0  # monotonic time until which Gemini is skipped (quota used up)
 BLOCK_SECONDS = 90.0
+GEMINI_BUDGET = 10.0  # seconds Gemini may take in total before Groq answers
 
 
 def _gemini_keys() -> list[str]:
@@ -194,12 +195,12 @@ async def groq_chat(
 async def chat(history: list[tuple[str, str]], text: str) -> str:
     last: Exception = RuntimeError("no reply")
     try:
-        out = await _gemini_chat_all(history, text)
+        out = await asyncio.wait_for(_gemini_chat_all(history, text), GEMINI_BUDGET)
         if out:
             return out
     except Exception as ex:
         last = ex
-        log.warning("all Gemini models failed, trying Groq")
+        log.warning("Gemini failed or was too slow (%r), trying Groq", ex)
 
     if not os.environ.get("GROQ_API_KEY"):
         log.warning("GROQ_API_KEY is not set, so there is no backup AI")
