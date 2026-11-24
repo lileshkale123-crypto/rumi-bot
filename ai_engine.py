@@ -58,6 +58,7 @@ class GeminiError(RuntimeError):
 
 _blocked_until = 0.0  # monotonic time until which Gemini is skipped (quota used up)
 BLOCK_SECONDS = 90.0
+GROQ_BUDGET = 12.0  # seconds Groq may take in total
 GEMINI_BUDGET = 10.0  # seconds Gemini may take in total before Groq answers
 
 
@@ -160,14 +161,23 @@ async def _gemini_chat_all(history: list[tuple[str, str]], text: str) -> str | N
     return None
 
 
+def _groq_keys() -> list[str]:
+    """GROQ_API_KEY may hold one key or several keys separated by commas."""
+    raw = os.environ.get("GROQ_API_KEY", "")
+    return [k.strip() for k in raw.replace("\n", ",").split(",") if k.strip()]
+
+
 async def groq_chat(
     history: list[tuple[str, str]],
     text: str,
     model: str,
+    key: str | None = None,
 ) -> str | None:
-    key = os.environ.get("GROQ_API_KEY")
-    if not key:
-        return None
+    if key is None:
+        keys = _groq_keys()
+        if not keys:
+            return None
+        key = keys[0]
 
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for r, t in history:
@@ -192,27 +202,43 @@ async def groq_chat(
     return out.strip() or None
 
 
-async def chat(history: list[tuple[str, str]], text: str) -> str:
-    last: Exception = RuntimeError("no reply")
-    try:
-        out = await asyncio.wait_for(_gemini_chat_all(history, text), GEMINI_BUDGET)
-        if out:
-            return out
-    except Exception as ex:
-        last = ex
-        log.warning("Gemini failed or was too slow (%r), trying Groq", ex)
-
-    if not os.environ.get("GROQ_API_KEY"):
-        log.warning("GROQ_API_KEY is not set, so there is no backup AI")
+async def _groq_all(history: list[tuple[str, str]], text: str) -> str | None:
+    """Tries each Groq model with each key; a rate limit moves on to the next one."""
+    keys = _groq_keys()
+    if not keys:
+        raise GeminiError(401, "GROQ_API_KEY not set")
+    last: Exception | None = None
     for model in config.GROQ_MODELS:
+        for key in keys:
+            try:
+                out = await groq_chat(history, text, model, key)
+                if out:
+                    return out
+            except Exception as ex:
+                last = ex
+                log.warning("groq model %s failed: %s", model, getattr(ex, "status", ex))
+    if last is not None:
+        raise last
+    return None
+
+
+async def chat(history: list[tuple[str, str]], text: str) -> str:
+    """Groq first (big free limit, fast), Gemini as the backup. Set AI_PRIMARY = "gemini"
+    in config.py to flip the order."""
+    gemini_first = getattr(config, "AI_PRIMARY", "groq") == "gemini"
+    order = ("gemini", "groq") if gemini_first else ("groq", "gemini")
+    last: Exception = RuntimeError("no reply")
+    for name in order:
         try:
-            out = await groq_chat(history, text, model)
+            if name == "gemini":
+                out = await asyncio.wait_for(_gemini_chat_all(history, text), GEMINI_BUDGET)
+            else:
+                out = await asyncio.wait_for(_groq_all(history, text), GROQ_BUDGET)
             if out:
                 return out
         except Exception as ex:
             last = ex
-            log.warning("groq model %s failed: %s", model, getattr(ex, "status", ex))
-
+            log.warning("%s failed or was too slow (%r), trying the next one", name, ex)
     raise last
 
 
