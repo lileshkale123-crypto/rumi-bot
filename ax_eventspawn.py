@@ -40,9 +40,10 @@ GUESS_REWARD = (int(getattr(config, "EVENT_REWARD_MIN", 500)), int(getattr(confi
 GUESS_RANGE = (int(getattr(config, "GUESS_MIN_NUMBER", 100)), int(getattr(config, "GUESS_MAX_NUMBER", 500)))
 GUESS_TRIES = int(getattr(config, "GUESS_MAX_TRIES", 12))
 EVENT_LIFETIME = 24 * 60 * 60     # an event stays until someone wins it (or 24 hours pass)
-ACTIVE_WINDOW = 10 * 60           # chat must have talked this recently
-MIN_RECENT_MSGS = 6               # ...and sent this many messages in that window
-CHANCE_PER_MIN = 0.06             # per minute of activity (random drop time)
+_CTX: dict[int, dict] = {}        # bot_id -> {'bot':..., 'pool':...}
+_LAST: dict[tuple[int, int], float] = {}   # (bot, chat) -> when the last event dropped
+_SKIP: set = set()
+_MSGS_READY = False
 
 FALLBACK_CHARACTERS = [
     "Naruto Uzumaki", "Sasuke Uchiha", "Monkey D. Luffy", "Roronoa Zoro", "Son Goku", "Vegeta",
@@ -212,8 +213,7 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
         text = (
             "🎴 <b>A WILD CHARACTER APPEARED!</b>\n"
             f"<blockquote>Who is this? <code>{esc(_mask(name))}</code>\n"
-            f"Be the first to type <code>/catch name</code> and win <b>${CATCH_REWARD:,}</b>!</blockquote>\n"
-            "<i>It stays until someone catches it (24 hours at most).</i>"
+            f"Be the first to type <code>/catch name</code> and win <b>${CATCH_REWARD:,}</b>!</blockquote>"
         )
         ACTIVE[key] = ev
         sent = await _send(bot, chat_id, text, img)
@@ -226,8 +226,7 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
             "🎯 <b>NUMBER GUESS EVENT!</b>\n"
             f"<blockquote>I'm thinking of a number from <b>{GUESS_RANGE[0]}</b> to <b>{GUESS_RANGE[1]}</b>.\n"
             f"Type <code>/g 250</code> to guess. First to get it wins <b>${reward:,}</b>!\n"
-            f"The whole group shares <b>{GUESS_TRIES}</b> tries.</blockquote>\n"
-            "<i>It stays open until someone wins (24 hours at most).</i>"
+            f"The whole group shares <b>{GUESS_TRIES}</b> tries.</blockquote>"
         )
         ACTIVE[key] = ev
         await _load_img(bid)
@@ -238,21 +237,74 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
         ACTIVE.pop(key, None)
         return False
     ev["bot"] = bot
+    _LAST[key] = now
+    await _track(bid, chat_id, [sent.message_id], now)
     return True
 
 
 async def _expire(bid: int, chat_id: int, ev: dict) -> None:
-    if ACTIVE.get((bid, chat_id)) is not ev:
+    if ACTIVE.get((bid, chat_id)) is ev:
+        ACTIVE.pop((bid, chat_id), None)   # silent: the messages are removed by the cleaner
+
+
+async def _ensure_msgs(pool) -> None:
+    global _MSGS_READY
+    if _MSGS_READY:
         return
-    ACTIVE.pop((bid, chat_id), None)
-    if ev["kind"] == "catch":
-        txt = f"💨 The character ran away. It was <b>{esc(ev['name'])}</b>."
-    else:
-        txt = f"⌛ Time is up! The number was <b>{ev['secret']}</b>."
+    async with pool.acquire() as c:
+        await c.execute("CREATE TABLE IF NOT EXISTS ax_event_msgs (bot_id BIGINT NOT NULL, chat_id BIGINT NOT NULL, "
+                        "message_id BIGINT NOT NULL, delete_at DOUBLE PRECISION NOT NULL, PRIMARY KEY (bot_id, chat_id, message_id))")
+    _MSGS_READY = True
+
+
+async def _track(bid: int, chat_id: int, ids: list, born: float) -> None:
+    ctx = _CTX.get(bid)
+    if not ctx:
+        return
     try:
-        await ev["bot"].send_message(chat_id, txt, parse_mode=H)
+        await _ensure_msgs(ctx["pool"])
+        async with ctx["pool"].acquire() as c:
+            for i in ids:
+                await c.execute("INSERT INTO ax_event_msgs (bot_id, chat_id, message_id, delete_at) VALUES ($1,$2,$3,$4) "
+                                "ON CONFLICT DO NOTHING", bid, chat_id, int(i), born + EVENT_LIFETIME)
     except Exception:
-        pass
+        log.exception("event message tracking failed")
+
+
+async def _r(message: Message, text: str, **kw):
+    """reply, and remember both the user's message and our reply for the 1-day cleanup"""
+    bid = bot_context.resolve_bot_id(None)
+    born = _LAST.get((bid, message.chat.id))
+    sent = await message.reply(text, **kw)
+    if born and time.time() < born + EVENT_LIFETIME:
+        await _track(bid, message.chat.id, [message.message_id, sent.message_id], born)
+    return sent
+
+
+async def _clean(bid: int, ctx: dict) -> None:
+    try:
+        await _ensure_msgs(ctx["pool"])
+        async with ctx["pool"].acquire() as c:
+            rows = await c.fetch("SELECT chat_id, message_id FROM ax_event_msgs WHERE bot_id=$1 AND delete_at<=$2 LIMIT 80",
+                                 bid, time.time())
+            for r in rows:
+                try:
+                    await ctx["bot"].delete_message(r["chat_id"], r["message_id"])
+                except Exception as exc:
+                    if "retry" in type(exc).__name__.lower():
+                        return
+                await c.execute("DELETE FROM ax_event_msgs WHERE bot_id=$1 AND chat_id=$2 AND message_id=$3",
+                                bid, r["chat_id"], r["message_id"])
+                await asyncio.sleep(0.05)
+    except Exception:
+        log.exception("event cleanup failed")
+
+
+def _drop_at(bid: int, chat_id: int, day: str) -> float:
+    """a random but fixed moment of the (IST) day for this group"""
+    sec = random.Random(f"{bid}:{chat_id}:{day}").randint(0, 86399)
+    d = date.fromisoformat(day)
+    return datetime(d.year, d.month, d.day, tzinfo=IST).timestamp() + sec
 
 
 async def _members(bot: Bot, bid: int, chat_id: int) -> int:
@@ -272,40 +324,54 @@ async def _tick() -> None:
     for key, ev in list(ACTIVE.items()):
         if now > ev["ends"]:
             await _expire(key[0], key[1], ev)
-    for key, info in list(SEEN.items()):
-        bid, chat_id = key
-        recent = [t for t in info["msgs"] if now - t < ACTIVE_WINDOW]
-        if not recent:
-            SEEN.pop(key, None)
-            continue
-        if key in ACTIVE or len(recent) < MIN_RECENT_MSGS or random.random() > CHANCE_PER_MIN:
-            continue
-        day = _day()
-        pool = info["pool"]
+    day = _day()
+    for bid, ctx in list(_CTX.items()):
+        await _clean(bid, ctx)
+        pool, bot = ctx["pool"], ctx["bot"]
         try:
             await _ensure(pool)
-            done = _TODAY.get((bid, chat_id, day))
-            if done is None:
-                async with pool.acquire() as c:
-                    done = int(await c.fetchval(
-                        "SELECT COUNT(*) FROM ax_event_log WHERE bot_id=$1 AND chat_id=$2 AND day_key=$3::date",
-                        bid, chat_id, date.fromisoformat(day)))
-                _TODAY[(bid, chat_id, day)] = done
-            if done >= MAX_PER_DAY:
-                continue
-            if await _members(info["bot"], bid, chat_id) < MIN_MEMBERS:
-                continue
-            kind = random.choice(("catch", "guess"))
-            _TODAY[(bid, chat_id, day)] = done + 1          # claim first, so no double drop
-            if await spawn(info["bot"], bid, chat_id, kind):
-                async with pool.acquire() as c:
-                    await c.execute(
-                        "INSERT INTO ax_event_log (bot_id, chat_id, day_key, kind) VALUES ($1,$2,$3::date,$4)",
-                        bid, chat_id, date.fromisoformat(day), kind)
-            else:
-                _TODAY[(bid, chat_id, day)] = done
+            async with pool.acquire() as c:
+                rows = await c.fetch(
+                    "SELECT g.chat_id FROM ax_groups g WHERE g.bot_id=$1 AND g.chat_id < 0 "
+                    "AND NOT EXISTS (SELECT 1 FROM ax_channels ch WHERE ch.chat_id = g.chat_id)", bid)
         except Exception:
-            log.exception("event tick failed for chat %s", chat_id)
+            log.exception("event group list failed")
+            continue
+        started = 0
+        for row in rows:
+            chat_id = row["chat_id"]
+            key = (bid, chat_id)
+            if key in ACTIVE or (bid, chat_id, day) in _SKIP or now < _drop_at(bid, chat_id, day) or started >= 3:
+                continue
+            try:
+                done = _TODAY.get((bid, chat_id, day))
+                if done is None:
+                    async with pool.acquire() as c:
+                        done = int(await c.fetchval(
+                            "SELECT COUNT(*) FROM ax_event_log WHERE bot_id=$1 AND chat_id=$2 AND day_key=$3::date",
+                            bid, chat_id, date.fromisoformat(day)))
+                    _TODAY[(bid, chat_id, day)] = done
+                if done >= MAX_PER_DAY:
+                    _SKIP.add((bid, chat_id, day))
+                    continue
+                if await _members(bot, bid, chat_id) < MIN_MEMBERS:
+                    _SKIP.add((bid, chat_id, day))
+                    continue
+                kind = random.choice(("catch", "guess"))
+                _TODAY[(bid, chat_id, day)] = done + 1
+                _SKIP.add((bid, chat_id, day))      # one try per day, never spam a group that fails
+                if await spawn(bot, bid, chat_id, kind):
+                    started += 1
+                    async with pool.acquire() as c:
+                        await c.execute(
+                            "INSERT INTO ax_event_log (bot_id, chat_id, day_key, kind) VALUES ($1,$2,$3::date,$4)",
+                            bid, chat_id, date.fromisoformat(day), kind)
+                else:
+                    _TODAY[(bid, chat_id, day)] = done
+            except Exception:
+                log.exception("event tick failed for chat %s", chat_id)
+    if len(_SKIP) > 5000:
+        _SKIP.clear()
 
 
 async def _loop() -> None:
@@ -329,9 +395,7 @@ class ActivityMiddleware(BaseMiddleware):
                 bid = data.get("bot_id") or (data.get("bot_ctx").bot_id if data.get("bot_ctx") else event.bot.id)
                 if pool is not None:
                     _POOL[:] = [pool]
-                    info = SEEN.setdefault((bid, event.chat.id), {"msgs": deque(maxlen=40)})
-                    info.update(pool=pool, bot=event.bot)
-                    info["msgs"].append(time.time())
+                    _CTX[bid] = {"bot": event.bot, "pool": pool}
                     if _LOOP is None or _LOOP.done():
                         _LOOP = asyncio.get_running_loop().create_task(_loop())
         except Exception:
@@ -352,22 +416,22 @@ async def catch_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
     ev = ACTIVE.get(key)
     guess = " ".join(cmd_args(message)).strip()
     if not ev or ev["kind"] != "catch":
-        await message.reply("Nothing to catch right now. Wait for a character to appear!")
+        await _r(message, "Nothing to catch right now. Wait for a character to appear!")
         return
     if not guess:
-        await message.reply("Use: <code>/catch character name</code>", parse_mode=H)
+        await _r(message, "Use: <code>/catch character name</code>", parse_mode=H)
         return
     if not _name_matches(guess, ev["name"]):
-        await message.reply("❌ Not them. Try again!")
+        await _r(message, "❌ Not them. Try again!")
         return
     if ACTIVE.pop(key, None) is None:
         return
     ok = await _pay(pool, bot_ctx.bot_id, message.from_user, CATCH_REWARD, "catch", ev["tag"])
     who = esc(message.from_user.first_name or "Player")
     if ok:
-        await message.reply(f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b> and won <code>+${CATCH_REWARD:,}</code>!", parse_mode=H)
+        await _r(message, f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b> and won <code>+${CATCH_REWARD:,}</code>!", parse_mode=H)
     else:
-        await message.reply(f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b>, but the prize could not be paid. Please tell an admin.", parse_mode=H)
+        await _r(message, f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b>, but the prize could not be paid. Please tell an admin.", parse_mode=H)
     await _log_winner(pool, bot_ctx.bot_id, message.chat.id, "catch", message.from_user.id)
 
 
@@ -389,12 +453,12 @@ async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
     key = (bot_ctx.bot_id, message.chat.id)
     ev = ACTIVE.get(key)
     if not ev or ev["kind"] != "guess":
-        await message.reply("No number guess is running right now.")
+        await _r(message, "No number guess is running right now.")
         return
     args = cmd_args(message)
     lo_all, hi_all = GUESS_RANGE
     if not args or not args[0].isdigit() or not (lo_all <= int(args[0]) <= hi_all):
-        await message.reply(f"Use: <code>/g 250</code> (a number from {lo_all} to {hi_all})", parse_mode=H)
+        await _r(message, f"Use: <code>/g 250</code> (a number from {lo_all} to {hi_all})", parse_mode=H)
         return
     val = int(args[0])
     if val == ev["secret"]:
@@ -403,7 +467,7 @@ async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
         ok = await _pay(pool, bot_ctx.bot_id, message.from_user, ev["reward"], "guess", ev["tag"])
         who = esc(message.from_user.first_name or "Player")
         tail = f"won <code>+${ev['reward']:,}</code>!" if ok else "won, but the prize could not be paid. Please tell an admin."
-        await message.reply(f"🎯 Correct! <b>{who}</b> guessed <code>{val}</code> and {tail}", parse_mode=H)
+        await _r(message, f"🎯 Correct! <b>{who}</b> guessed <code>{val}</code> and {tail}", parse_mode=H)
         await _log_winner(pool, bot_ctx.bot_id, message.chat.id, "guess", message.from_user.id)
         return
     ev["tries"] += 1
@@ -416,9 +480,9 @@ async def guess_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
     left = GUESS_TRIES - ev["tries"]
     if left <= 0:
         ACTIVE.pop(key, None)
-        await message.reply(f"{hint}\n💥 No tries left! The number was <b>{ev['secret']}</b>.", parse_mode=H)
+        await _r(message, f"{hint}\n💥 No tries left! The number was <b>{ev['secret']}</b>.", parse_mode=H)
         return
-    await message.reply(f"{hint} It is between <code>{ev['lo']}</code> and <code>{ev['hi']}</code>. Tries left: <b>{left}</b>", parse_mode=H)
+    await _r(message, f"{hint} It is between <code>{ev['lo']}</code> and <code>{ev['hi']}</code>. Tries left: <b>{left}</b>", parse_mode=H)
 
 
 @router.message(Command("spawnevent"))
@@ -468,6 +532,15 @@ async def setimg_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) 
                         "ON CONFLICT (bot_id, key) DO UPDATE SET value=EXCLUDED.value", bid, fid)
     _IMG[bid] = fid
     await message.reply("✅ Saved! The guess event will use this image.\nCode: <code>" + esc(fid) + "</code>", parse_mode=H)
+
+
+async def on_startup(bot: Bot, dispatcher) -> None:
+    global _LOOP
+    pool = dispatcher["pool"]
+    _POOL[:] = [pool]
+    _CTX[bot_context.resolve_bot_id(bot.id)] = {"bot": bot, "pool": pool}
+    if _LOOP is None or _LOOP.done():
+        _LOOP = asyncio.get_running_loop().create_task(_loop())
 
 
 def register(dp) -> None:
