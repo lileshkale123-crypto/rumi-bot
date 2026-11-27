@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, TelegramObject
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from ax_common import cmd_args, get_bot_username, is_admin
+from ax_common import cmd_args, fire, get_bot_username, is_admin
 
 router = Router(name="ax_cleancmd")
 H = ParseMode.HTML
@@ -147,30 +147,36 @@ class CleanCmdMiddleware(BaseMiddleware):
             pool: asyncpg.Pool | None = data.get("pool")
             scheduler: AsyncIOScheduler | None = data.get("scheduler")
             if bot is not None and pool is not None and scheduler is not None:
-                k = _cache.get(event.chat.id)
-                if k is None:
-                    k = await kinds(pool, event.chat.id)
-                if k:
-                    first = event.text.split()[0]
-                    uname = (data.get("bot_username") or await get_bot_username(bot)).lower()
-                    me = "@" + uname if uname else ""
-                    if "@" in first and (not me or not first.lower().endswith(me)):
-                        kind = "other"
-                    elif await is_admin(bot, event.chat.id, event.from_user.id):
-                        kind = "admin"
-                    else:
-                        kind = "user"
-                    if kind in k:
-                        run_at = datetime.now(timezone.utc) + timedelta(seconds=3)
-                        scheduler.add_job(
-                            _del,
-                            trigger="date",
-                            run_date=run_at,
-                            args=[bot, event.chat.id, event.message_id],
-                            id=f"cleancmd:{event.chat.id}:{event.message_id}",
-                            replace_existing=True,
-                        )
+                # decided in the background: the command itself never waits for this
+                fire(_plan_clean(event, bot, pool, scheduler, data.get("bot_username")))
         return await handler(event, data)
+
+
+async def _plan_clean(event: Message, bot: Bot, pool: asyncpg.Pool, scheduler: AsyncIOScheduler, bot_username) -> None:
+    k = _cache.get(event.chat.id)
+    if k is None:
+        k = await kinds(pool, event.chat.id)
+    if not k:
+        return
+    first = event.text.split()[0]
+    uname = (bot_username or await get_bot_username(bot)).lower()
+    me = "@" + uname if uname else ""
+    if "@" in first and (not me or not first.lower().endswith(me)):
+        kind = "other"
+    elif await is_admin(bot, event.chat.id, event.from_user.id):
+        kind = "admin"
+    else:
+        kind = "user"
+    if kind in k:
+        run_at = datetime.now(timezone.utc) + timedelta(seconds=3)
+        scheduler.add_job(
+            _del,
+            trigger="date",
+            run_date=run_at,
+            args=[bot, event.chat.id, event.message_id],
+            id=f"cleancmd:{event.chat.id}:{event.message_id}",
+            replace_existing=True,
+        )
 
 
 def register(dp) -> None:

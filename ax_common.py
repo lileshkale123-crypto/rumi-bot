@@ -26,6 +26,8 @@ ANON_ID = 1087968824  # GroupAnonymousBot
 _ADMIN_CACHE: dict[tuple[int, int, int], tuple[Any, float]] = {}
 _ADMIN_CACHE_MAX = 5000
 ADMIN_TTL = 120  # safe: chat_member updates invalidate instantly (see ax_addprompt)
+ADMIN_LIST_TTL = 600  # whole admin list per group, from ONE getChatAdministrators call
+_ADMIN_LIST_INFLIGHT: dict = {}
 
 _BOT_USERNAMES: dict[int, str] = {}
 _BG_TASKS: set[asyncio.Task] = set()
@@ -126,13 +128,15 @@ def _prune_admin_cache(now: float) -> None:
             _ADMIN_CACHE.pop(k, None)
 
 
-def invalidate(chat_id: int, user_id: int | None = None, bot_id: int | None = None) -> None:
+def invalidate(chat_id: int, user_id: int | None = None, bot_id: int | None = None, admin_change: bool = True) -> None:
     bid = bot_context.resolve_bot_id(bot_id)
     if user_id is None:
         for k in [k for k in _ADMIN_CACHE if k[0] == bid and k[1] == chat_id]:
             _ADMIN_CACHE.pop(k, None)
     else:
         _ADMIN_CACHE.pop((bid, chat_id, user_id), None)
+        if admin_change:
+            _ADMIN_CACHE.pop((bid, chat_id, "list"), None)
     try:
         import ax_lockcore
         ax_lockcore._admin_cache.clear()
@@ -164,6 +168,59 @@ async def get_member(bot: Bot, chat_id: int, user_id: int):
     return member
 
 
+async def _fetch_admin_list(bot: Bot, chat_id: int) -> dict:
+    admins = await bot.get_chat_administrators(chat_id)
+    now = _time.time()
+    found = {a.user.id: a for a in admins}
+    _prune_admin_cache(now)
+    _ADMIN_CACHE[(bot.id, chat_id, "list")] = (found, now)
+    for a in admins:
+        _ADMIN_CACHE[(bot.id, chat_id, a.user.id)] = (a, now)
+    return found
+
+
+def _admin_list_fresh(bot: Bot, chat_id: int) -> bool:
+    hit = _ADMIN_CACHE.get((bot.id, chat_id, "list"))
+    return bool(hit and _time.time() - hit[1] < ADMIN_LIST_TTL)
+
+
+async def admin_list(bot: Bot, chat_id: int):
+    """{user_id: ChatMember} of every admin in a group (cached, one API call shared by everyone).
+    Returns None for private chats or when Telegram can't tell us (callers then fall back)."""
+    if chat_id >= 0:
+        return None
+    key = (bot.id, chat_id, "list")
+    hit = _ADMIN_CACHE.get(key)
+    if hit and _time.time() - hit[1] < ADMIN_LIST_TTL:
+        return hit[0]
+    task = _ADMIN_LIST_INFLIGHT.get(key)
+    if task is None:
+        task = asyncio.ensure_future(_fetch_admin_list(bot, chat_id))
+        _ADMIN_LIST_INFLIGHT[key] = task
+        task.add_done_callback(lambda _t, _k=key: _ADMIN_LIST_INFLIGHT.pop(_k, None))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+
+
+def warm_admins(bot: Bot, chat_id: int) -> None:
+    """Load a group's admin list in the background so the first admin command is instant."""
+    if chat_id < 0 and not _admin_list_fresh(bot, chat_id) and (bot.id, chat_id, "list") not in _ADMIN_LIST_INFLIGHT:
+        fire(admin_list(bot, chat_id))
+
+
+async def admin_member(bot: Bot, chat_id: int, user_id: int):
+    """The user's ChatMember if they are an admin/creator, else None (uses the admin list)."""
+    admins = await admin_list(bot, chat_id)
+    if admins is not None:
+        return admins.get(user_id)
+    m = await get_member(bot, chat_id, user_id)
+    return m if (m is not None and m.status in ADMIN_STATES) else None
+
+
 async def is_admin(bot: Bot, chat_id: int, user_id: int, right: str | None = None) -> bool:
     """True if the user is an admin. If `right` is given (e.g. 'can_restrict_members'),
     the admin must also hold that permission. The group creator holds every permission."""
@@ -177,7 +234,11 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int, right: str | None = Non
         if sc is None or chat_id >= 0:
             return False
         return sc == chat_id or sc == await _linked_chat_id(bot, chat_id)
-    member = await get_member(bot, chat_id, user_id)
+    admins = await admin_list(bot, chat_id)
+    if admins is not None:
+        member = admins.get(user_id)
+    else:
+        member = await get_member(bot, chat_id, user_id)
     if member is None or member.status not in ADMIN_STATES:
         return False
     if right is None or member.status == ChatMemberStatus.CREATOR:
@@ -311,6 +372,13 @@ class _SenderChatMiddleware(BaseMiddleware):
 
     async def __call__(self, handler, event, data):
         sc = getattr(event, "sender_chat", None)
+        try:
+            _b = data.get("bot")
+            _c = getattr(event, "chat", None)
+            if _b is not None and _c is not None and _c.type in ("group", "supergroup"):
+                warm_admins(_b, _c.id)
+        except Exception:
+            pass
         token = _SENDER_CHAT.set(sc.id if sc is not None else None)
         try:
             return await handler(event, data)

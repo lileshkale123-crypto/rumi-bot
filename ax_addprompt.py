@@ -130,7 +130,12 @@ class ChatMemberInvalidateMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         if isinstance(event, ChatMemberUpdated):
-            ax_common.invalidate(event.chat.id, event.new_chat_member.user.id)
+            _adm = ax_common.ADMIN_STATES
+            ax_common.invalidate(
+                event.chat.id,
+                event.new_chat_member.user.id,
+                admin_change=(event.old_chat_member.status in _adm or event.new_chat_member.status in _adm),
+            )
         return await handler(event, data)
 
 

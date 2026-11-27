@@ -17,6 +17,7 @@ from ax_common import (
     cmd_args,
     esc,
     fire,
+    admin_member,
     get_member as ax_common_member,
     invalidate,
     is_admin,
@@ -365,11 +366,16 @@ async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     parts = args if message.reply_to_message else args[1:]
     title = " ".join(parts)[:16] or None
 
-    grant = {}
-    for r in PROMOTE_GRANTS:
-        if await is_admin(bot, chat_id, message.from_user.id, r):
-            grant[r] = True
-            break
+    uid = message.from_user.id
+    checks = await asyncio.gather(
+        *(is_admin(bot, chat_id, uid, r) for r in PROMOTE_GRANTS),
+        *(is_admin(bot, chat_id, bot.id, r) for r in PROMOTE_GRANTS),
+        admin_member(bot, chat_id, target.id),
+    )
+    n = len(PROMOTE_GRANTS)
+    # give every right that BOTH you and the bot hold (old code gave only one)
+    grant = {r: True for i, r in enumerate(PROMOTE_GRANTS) if checks[i] and checks[n + i]}
+    target_admin = checks[-1] is not None
     if not grant:
         await say(
             message,
@@ -377,7 +383,7 @@ async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
             bot=bot,
         )
         return
-    if await is_admin(bot, chat_id, target.id):
+    if target_admin:
         await say(
             message,
             "🛡️ <b>Already an admin</b>\n<blockquote>Their rights stay as they are ✨</blockquote>",
@@ -413,7 +419,7 @@ async def demote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     if target is None:
         return
     chat_id = message.chat.id
-    m = await ax_common_member(bot, chat_id, target.id)
+    m = await admin_member(bot, chat_id, target.id)
     if target.id == bot.id or (m is not None and m.status == ChatMemberStatus.CREATOR):
         await say(
             message,
