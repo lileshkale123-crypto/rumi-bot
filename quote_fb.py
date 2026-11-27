@@ -5,7 +5,9 @@ fallback fonts in assets/fonts are tried one by one. Missing font files are skip
 this works with whatever is installed (run fetch_quote_assets.py to add more).
 Thread-safe, and every cache is bounded so RAM stays small.
 """
+import bisect
 import os
+import struct
 import threading
 import unicodedata
 from collections import OrderedDict
@@ -113,21 +115,146 @@ def _ref(path: str):
     return r
 
 
+_CMAPS: "dict[str, tuple[list[int], list[int]] | None]" = {}
+
+
+def _read_cmap(path: str):
+    """The font's real character table, read straight from the file (standard library only).
+
+    Returns (starts, ends): sorted code point ranges the font really has a glyph for, or None
+    when the file cannot be read (then the old bitmap test is used for that font).
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+            base = 0
+            if head[:4] == b"ttcf":
+                fh.seek(12)
+                base = struct.unpack(">I", fh.read(4))[0]
+                fh.seek(base)
+                head = fh.read(12)
+            num = struct.unpack(">H", head[4:6])[0]
+            fh.seek(base + 12)
+            tab = None
+            for _ in range(num):
+                rec = fh.read(16)
+                if rec[:4] == b"cmap":
+                    tab = struct.unpack(">II", rec[8:16])
+                    break
+            if tab is None:
+                return None
+            fh.seek(tab[0])
+            data = fh.read(tab[1])
+        count = struct.unpack_from(">H", data, 2)[0]
+        pairs: list[tuple[int, int]] = []
+        done: set[int] = set()
+        for i in range(count):
+            plat, enc, off = struct.unpack_from(">HHI", data, 4 + 8 * i)
+            if not (plat == 0 or (plat == 3 and enc in (1, 10))) or off in done:
+                continue
+            done.add(off)
+            fmt = struct.unpack_from(">H", data, off)[0]
+            if fmt == 4:
+                segx2 = struct.unpack_from(">H", data, off + 6)[0]
+                seg = segx2 // 2
+                ends = struct.unpack_from(">%dH" % seg, data, off + 14)
+                starts = struct.unpack_from(">%dH" % seg, data, off + 16 + segx2)
+                deltas = struct.unpack_from(">%dh" % seg, data, off + 16 + 2 * segx2)
+                ro_pos = off + 16 + 3 * segx2
+                ranges = struct.unpack_from(">%dH" % seg, data, ro_pos)
+                for k in range(seg):
+                    a, b = starts[k], ends[k]
+                    if a > b or a == 0xFFFF:
+                        continue
+                    if ranges[k] == 0:
+                        zero = (-deltas[k]) & 0xFFFF  # the one code point that would map to glyph 0
+                        if a <= zero <= b:
+                            if a <= zero - 1:
+                                pairs.append((a, zero - 1))
+                            if zero + 1 <= b:
+                                pairs.append((zero + 1, b))
+                        else:
+                            pairs.append((a, b))
+                    else:
+                        run = None
+                        for c in range(a, b + 1):
+                            pos = ro_pos + 2 * k + ranges[k] + 2 * (c - a)
+                            g = struct.unpack_from(">H", data, pos)[0] if pos + 2 <= len(data) else 0
+                            ok = g != 0 and ((g + deltas[k]) & 0xFFFF) != 0
+                            if ok and run is None:
+                                run = c
+                            elif not ok and run is not None:
+                                pairs.append((run, c - 1))
+                                run = None
+                        if run is not None:
+                            pairs.append((run, b))
+            elif fmt == 6:
+                first, cnt = struct.unpack_from(">HH", data, off + 6)
+                gl = struct.unpack_from(">%dH" % cnt, data, off + 10)
+                for k, g in enumerate(gl):
+                    if g:
+                        pairs.append((first + k, first + k))
+            elif fmt in (12, 13):
+                ng = struct.unpack_from(">I", data, off + 12)[0]
+                for k in range(ng):
+                    a, b, g = struct.unpack_from(">III", data, off + 16 + 12 * k)
+                    if fmt == 12 and g == 0:
+                        a += 1
+                    if fmt == 13 and g == 0:
+                        continue
+                    if a <= b:
+                        pairs.append((a, b))
+        if not pairs:
+            return None
+        pairs.sort()
+        starts_o: list[int] = []
+        ends_o: list[int] = []
+        for a, b in pairs:
+            if ends_o and a <= ends_o[-1] + 1:
+                ends_o[-1] = max(ends_o[-1], b)
+            else:
+                starts_o.append(a)
+                ends_o.append(b)
+        return starts_o, ends_o
+    except Exception:
+        return None
+
+
+def _in_cmap(path: str, cp: int):
+    """True / False from the font's real table, or None if the table could not be read."""
+    if path not in _CMAPS:
+        _CMAPS[path] = _read_cmap(path)
+    cm = _CMAPS[path]
+    if cm is None:
+        return None
+    starts, ends = cm
+    i = bisect.bisect_right(starts, cp) - 1
+    return i >= 0 and cp <= ends[i]
+
+
 def _has(path: str, ch: str) -> bool:
     with _LOCK:
         k = (path, ch)
         r = _COV.get(k)
         if r is None:
-            try:
-                f, notdef = _ref(path)
-                b = _bits(f, ch)
-                r = b != notdef and any(b)
-            except Exception:
-                r = False
+            r = _in_cmap(path, ord(ch[0])) if ch else False
+            if r is None:  # table unreadable: fall back to the old bitmap comparison
+                try:
+                    f, notdef = _ref(path)
+                    b = _bits(f, ch)
+                    r = b != notdef and any(b)
+                except Exception:
+                    r = False
             if len(_COV) >= _COV_MAX:
                 _COV.clear()
             _COV[k] = r
         return r
+
+
+def covers(font, ch: str) -> bool:
+    """True if this exact font file really has a glyph for `ch`."""
+    path = getattr(font, "path", None)
+    return isinstance(path, str) and _has(path, ch)
 
 
 def _sized(path: str, size: int) -> ImageFont.FreeTypeFont:

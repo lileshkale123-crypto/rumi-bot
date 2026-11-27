@@ -62,6 +62,9 @@ ENTITY_TYPES_MENTION = {
     "email", "phone_number", "bot_command", "url", "text_link",
 }
 EMOJI_SCALE = 1.15
+DEFAULT_BG = "#1b1429"   # flat dark bubble (was a lighter grey-purple gradient)
+SHOW_TAG = False         # True brings back the small admin/owner chip next to the name
+PILL_ROOM = 0.15         # empty room under the bubble (share of the sticker) so the time pill never covers it
 
 CJK_RE = re.compile(
     r"[\u1100-\u11ff\u2e80-\u2eff\u3000-\u303f\u3040-\u309f\u30a0-\u30ff"
@@ -188,7 +191,7 @@ def resolve_accent(accent_id: int | None, is_light: bool) -> list[str] | None:
 
 def parse_background_color(background_color: str | None = None) -> dict:
     if not isinstance(background_color, str) or not background_color.strip():
-        background_color = "//#292232"
+        background_color = DEFAULT_BG
     background_color = background_color.strip()
     split = background_color.split("/")
     if len(split) > 1 and split[0] != "":
@@ -281,12 +284,23 @@ def _grapheme_clusters(text: str) -> list[str]:
 
 def _runs_with_fallback(text: str, f: ImageFont.FreeTypeFont) -> list[tuple[str, ImageFont.FreeTypeFont]]:
     out = []
-    for cl in _grapheme_clusters(text):
-        g = qf.pick(f, cl[0])
+    prev = None
+    for ch in text:
+        if ch in qf.ZW:
+            continue
+        cat = unicodedata.category(ch)
+        g = None
+        if prev is not None and cat in ("Mn", "Mc", "Me") and qf.covers(prev, ch):
+            g = prev  # a mark stays on its letter when that same font can draw it
+        if g is None:
+            g = qf.pick(f, ch)
+            if cat == "Cf" and g is f and not qf.covers(f, ch):
+                continue  # invisible format character no font has: draw nothing, never a box
         if out and out[-1][1] is g:
-            out[-1][0] += cl
+            out[-1][0] += ch
         else:
-            out.append([cl, g])
+            out.append([ch, g])
+        prev = g
     return [(s, g) for s, g in out]
 
 
@@ -585,8 +599,9 @@ def draw_avatar(avatar_bytes: bytes | None, name: str, user_id: int, size: int) 
     f_size = int(round(size * (0.38 if len(_grapheme_clusters(letters)) > 1 else 0.48)))
     f = _load_style_font(f_size, ("bold",))
     runs = _runs_with_fallback(letters, f)
-    f_actual = runs[0][1] if runs else f
-    dr.text((size / 2.0, size / 2.0), letters, font=f_actual, fill=(255, 255, 255, 255), anchor="mm")
+    total_w = sum(_DUMMY_DR.textlength(s_, font=g_) for s_, g_ in runs)
+    asc_, desc_ = f.getmetrics()
+    _draw_text_baseline(dr, size / 2.0 - total_w / 2.0, size / 2.0 + (asc_ - desc_) / 2.0, letters, f, (255, 255, 255, 255))
 
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     out.paste(bg, (0, 0), mask)
@@ -1088,6 +1103,22 @@ def prepare_text(text: str, entities: list[dict] | str | None, font_size: int, c
         _pos = _me.end()
     for _m in _TOKEN_RE.finditer(clean_text, _pos):
         token_spans.append((_m.start(), _m.end()))
+
+    # \w does not match combining marks, so each mark became its own token and was drawn
+    # alone (which shows a dotted circle). Glue every mark back onto the letter before it.
+    _glued = []
+    for _a, _b in token_spans:
+        if (
+            _glued
+            and _glued[-1][1] == _a
+            and unicodedata.category(clean_text[_a]).startswith("M")
+            and not clean_text[_glued[-1][1] - 1].isspace()
+            and emoji_at[_glued[-1][0]] is None
+        ):
+            _glued[-1] = (_glued[-1][0], _b)
+        else:
+            _glued.append((_a, _b))
+    token_spans = _glued
 
     segments = []
     for start, end in token_spans:
@@ -1859,7 +1890,7 @@ def _render_stage4_unlocked(
             name_qc = gradient_tint(name_qc, name_color, color_luminance(name_color, 0.25))
 
         via_qc = draw_label(f"via @{str(via_bot).lstrip('@')}", s(P["font_micro"]), name_color, alpha=0.8) if via_bot else None
-        tag_qc = draw_tag(tag, s, text_color) if tag else None
+        tag_qc = draw_tag(tag, s, text_color) if (tag and SHOW_TAG) else None
         via_leaf = leaf(via_qc, role="text") if via_qc else None
         tag_leaf = leaf(tag_qc, role="text") if tag_qc else None
 
@@ -2224,7 +2255,7 @@ def _render_messages_unlocked(messages: list[dict], bg: str | None = None) -> Im
 
         w, h = combined.size
         min_virtual_w = 380 * scale
-        pad_bottom = max(1, round(max(w, h) * 0.06))
+        pad_bottom = max(1, round(max(w, h) * PILL_ROOM))
         target_w = max(w, min_virtual_w) if h > w else w
         padded = Image.new("RGBA", (target_w, h + pad_bottom), (0, 0, 0, 0))
         padded.paste(combined, (0, 0))

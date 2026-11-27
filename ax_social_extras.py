@@ -1,7 +1,7 @@
 """Friends & tagging (/addf, /tag, /t, /ctag, /delf, /allf, /friend, /friends, /all, @all), /setintro, /intro & /detail (aiogram 3.x)."""
 import asyncio, html, json, logging, time
 import asyncpg
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -205,6 +205,58 @@ async def detail_cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: Bo
     unames = json.loads(h["usernames_json"])[-4:] if h else []
     await message.reply(f"🔎 <b>DETAIL</b>\n<blockquote>ID: <code>{uid}</code>\nLast 4 Names: {names}\nLast 4 Usernames: {unames}</blockquote>", parse_mode=H)
 
+# ---- name history: records the last 4 names / usernames so /detail has something to show ----
+TRACK_NAME_HISTORY = True
+_names_seen: dict[tuple[int, int], tuple[str, str]] = {}
+_NH_MW = False
+
+
+async def _save_names(pool, bot_id: int, user_id: int, name: str, username: str) -> None:
+    try:
+        async with pool.acquire() as c:
+            await _ensure_tables(c)
+            row = await c.fetchrow(
+                "SELECT names_json, usernames_json FROM ax_name_history WHERE bot_id=$1 AND user_id=$2",
+                bot_id, user_id)
+            names = json.loads(row["names_json"]) if row else []
+            unames = json.loads(row["usernames_json"]) if row else []
+            n2 = _push_last4(names, name)
+            u2 = _push_last4(unames, username)
+            if row and n2 == names and u2 == unames:
+                return
+            await c.execute(
+                "INSERT INTO ax_name_history (bot_id, user_id, names_json, usernames_json) VALUES ($1,$2,$3,$4) "
+                "ON CONFLICT (bot_id, user_id) DO UPDATE SET names_json=EXCLUDED.names_json, "
+                "usernames_json=EXCLUDED.usernames_json, updated_at=now()",
+                bot_id, user_id, json.dumps(n2, ensure_ascii=False), json.dumps(u2, ensure_ascii=False))
+    except Exception:
+        log.exception("name history save failed")
+
+
+class NameHistoryMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        try:
+            u = getattr(event, "from_user", None)
+            pool = data.get("pool")
+            if TRACK_NAME_HISTORY and u is not None and not u.is_bot and pool is not None:
+                ctx = data.get("bot_ctx")
+                bid = ctx.bot_id if ctx is not None else (data.get("bot_id") or 0)
+                cur = ((u.full_name or "").strip(), (u.username or "").strip())
+                key = (bid, u.id)
+                if _names_seen.get(key) != cur:
+                    if len(_names_seen) > 50000:
+                        _names_seen.clear()
+                    _names_seen[key] = cur
+                    fire(_save_names(pool, bid, u.id, cur[0], cur[1]))
+        except Exception:
+            log.exception("name history watcher failed")
+        return await handler(event, data)
+
+
 def register(dp):
+    global _NH_MW
+    if not _NH_MW:
+        _NH_MW = True
+        dp.message.outer_middleware(NameHistoryMiddleware())
     if router.parent_router is None:
         dp.include_router(router)

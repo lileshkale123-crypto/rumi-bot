@@ -12,7 +12,7 @@ import random
 import re
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import aiohttp
 import asyncpg
@@ -289,7 +289,7 @@ async def _tick() -> None:
                 async with pool.acquire() as c:
                     done = int(await c.fetchval(
                         "SELECT COUNT(*) FROM ax_event_log WHERE bot_id=$1 AND chat_id=$2 AND day_key=$3::date",
-                        bid, chat_id, day))
+                        bid, chat_id, date.fromisoformat(day)))
                 _TODAY[(bid, chat_id, day)] = done
             if done >= MAX_PER_DAY:
                 continue
@@ -301,7 +301,7 @@ async def _tick() -> None:
                 async with pool.acquire() as c:
                     await c.execute(
                         "INSERT INTO ax_event_log (bot_id, chat_id, day_key, kind) VALUES ($1,$2,$3::date,$4)",
-                        bid, chat_id, day, kind)
+                        bid, chat_id, date.fromisoformat(day), kind)
             else:
                 _TODAY[(bid, chat_id, day)] = done
         except Exception:
