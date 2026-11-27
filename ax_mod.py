@@ -18,6 +18,7 @@ from ax_common import (
     esc,
     fire,
     admin_member,
+    warm_admins,
     get_member as ax_common_member,
     invalidate,
     is_admin,
@@ -402,6 +403,7 @@ async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     if not ok:
         return
     invalidate(chat_id, target.id, bot_id=bot.id)
+    warm_admins(bot, chat_id)
     if title:
         try:
             await bot.set_chat_administrator_custom_title(
@@ -435,6 +437,15 @@ async def demote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
         )
         return
 
+    if getattr(m, "can_be_edited", True) is False:
+        await say(
+            message,
+            "🛡️ <b>Can't demote</b>\n<blockquote>Someone else promoted this admin, so Telegram won't let me "
+            "change their rights. Demote them manually from the group settings ✨</blockquote>",
+            bot=bot,
+        )
+        return
+
     ok = await act_and_reply(
         message,
         bot.promote_chat_member(
@@ -461,6 +472,7 @@ async def demote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
     )
     if ok:
         invalidate(chat_id, target.id, bot_id=bot.id)
+        warm_admins(bot, chat_id)
 
 
 def make_temp(kind: str):

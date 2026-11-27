@@ -136,6 +136,10 @@ class ChatMemberInvalidateMiddleware(BaseMiddleware):
                 event.new_chat_member.user.id,
                 admin_change=(event.old_chat_member.status in _adm or event.new_chat_member.status in _adm),
             )
+            if event.old_chat_member.status in _adm or event.new_chat_member.status in _adm:
+                _b = data.get("bot")
+                if _b is not None:
+                    ax_common.warm_admins(_b, event.chat.id)
         return await handler(event, data)
 
 
