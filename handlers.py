@@ -61,8 +61,38 @@ _START_FILE_IDS: "OrderedDict[int, str]" = OrderedDict()  # bot_id -> Telegram f
 _START_FILE_IDS_MAX = 50
 
 
-async def _send_start_card(message: Message, bot_id: int, text: str, keyboard) -> None:
-    """Picture first (cached file_id, then the local file, then the web link), plain text last."""
+_CUSTOM_START_PIC: dict[int, str | None] = {}  # bot_id -> file_id set from /ownerpanel (None = use default)
+
+
+def set_custom_start_pic(bot_id: int, file_id: str | None) -> None:
+    """Called by the owner panel after the start picture is changed or reset."""
+    _CUSTOM_START_PIC[bot_id] = file_id
+    _START_FILE_IDS.pop(bot_id, None)
+
+
+async def _get_custom_start_pic(pool, bot_id: int) -> str | None:
+    if bot_id in _CUSTOM_START_PIC:
+        return _CUSTOM_START_PIC[bot_id]
+    val = None
+    try:
+        async with pool.acquire() as c:
+            val = await c.fetchval("SELECT value FROM ax_owner_settings WHERE key=$1", f"start_pic:{bot_id}")
+    except Exception:
+        logger.warning("could not read custom start pic", exc_info=True)
+        return None
+    _CUSTOM_START_PIC[bot_id] = val or None
+    return _CUSTOM_START_PIC[bot_id]
+
+
+async def _send_start_card(message: Message, bot_id: int, text: str, keyboard, pool=None) -> None:
+    """Picture first (owner's custom pic, cached file_id, local file, web link), plain text last."""
+    custom = await _get_custom_start_pic(pool, bot_id) if pool is not None else None
+    if custom:
+        try:
+            await message.reply_photo(photo=custom, caption=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            return
+        except TelegramBadRequest as e:
+            logger.warning("custom start photo failed, using default: %s", str(e)[:120])
     cached = _START_FILE_IDS.get(bot_id)
     sources: list = []
     if cached:
@@ -102,12 +132,22 @@ async def start_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx:
     uname = bot_ctx.username or await ax_common.get_bot_username(bot)
     await services.ensure_user_and_wallet(pool, user.id, user.username, user.first_name, bot_id=bid)
     wallet = await services.get_wallet(pool, user.id, bot_id=bid)
+    if message.chat.type in ("group", "supergroup"):
+        fn = html.escape(user.first_name or "friend")
+        bname = html.escape(brand.name)
+        short_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            ax_common.btn(f"\U0001F49C Start {brand.name} in DM", url=f"https://t.me/{uname}", style="primary")
+        ]])
+        await message.reply(
+            f"<b>Hey {fn}</b> \U0001F49C\n"
+            f"<blockquote>I'm {bname}. Tap below to start me in DM for your wallet, games and the full guide \u2728</blockquote>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=short_kb,
+        )
+        return
     text = ui.start_card(user.first_name or user.username or "Traveler", wallet, COMMAND_LIST, bot_id=bid)
     kb = ui.start_keyboard(uname, bot_id=bid)
-    if message.chat.type in ("group", "supergroup"):
-        await message.reply(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-        return
-    await _send_start_card(message, bid, text, kb)
+    await _send_start_card(message, bid, text, kb, pool=pool)
 
 
 @router.callback_query(F.data == "noop")
@@ -304,6 +344,29 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: B
     else:
         text = ui.error_card("Could not complete rob attempt.")
     await message.reply(text, parse_mode=ParseMode.HTML)
+    if st == "success":
+        rname = html.escape(robber.first_name or "Someone")
+        if r.get("bounty"):
+            try:
+                await message.reply(
+                    "\U0001F4DC <b>BOUNTY CLAIMED</b>\n<blockquote>\U0001F3AF %s collected <b>%s%s</b> Coins from the underworld board \U0001F61C</blockquote>"
+                    % (rname, S, format(int(r["bounty"]), ",")),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        if int(r.get("amount") or 0) > 2000:
+            try:
+                cname = html.escape(message.chat.title or "a chat")
+                await bot.send_message(
+                    victim.id,
+                    "\U0001F6A8 <b>You were robbed</b>\n"
+                    "<blockquote><b>%s</b> took <b>%s%s</b> from you in %s</blockquote>"
+                    % (rname, S, format(int(r["amount"]), ","), cname),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass  # victim never started the bot in DM, or blocked it
 
 
 # ---------------------------------------------------------------- /rankings

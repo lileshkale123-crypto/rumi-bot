@@ -195,7 +195,10 @@ def home_view() -> tuple[str, InlineKeyboardMarkup]:
                 btn("⭐ Donors", "axop:donors:1"),
                 btn("🤖 Clones Platform", "axop:clones:1", style="primary"),
             ],
-            [btn("🧠 AI Status", "axop:ai", style="primary")],
+            [
+                btn("🧠 AI Status", "axop:ai", style="primary"),
+                btn("🖼 Start Pic", "axop:spic", style="primary"),
+            ],
             [
                 btn("📜 Audit Log", "axop:audit:1"),
                 btn("🪙 Reset Coins", "axop:resetask", style="danger"),
@@ -838,6 +841,34 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx
         await log_audit(pool, owner_id, "maintenance", details="ON" if _maintenance_on else "OFF")
         alert_text = "🛠 Maintenance mode ON" if _maintenance_on else "✅ Maintenance mode OFF"
         text, kb = home_view()
+    elif sec == "spic":
+        _PENDING_START_PIC.pop(owner_id, None)
+        text, kb = await start_pic_view(pool, bot_ctx.bot_id)
+    elif sec == "spicset":
+        _PENDING_START_PIC[owner_id] = bot_ctx.bot_id
+        text = (
+            "🖼 <b>Send the new start picture</b>\n"
+            "<blockquote>Send the photo here in this chat now (as a photo, not as a file).\n"
+            "Send <code>/cancel</code> to stop.</blockquote>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[btn("✖ Cancel", "axop:spic", style="danger")]])
+    elif sec == "spicview":
+        fid = await _read_start_pic(pool, bot_ctx.bot_id)
+        if fid and query.message:
+            try:
+                await query.message.answer_photo(fid, caption="🖼 Current start picture")
+            except Exception:
+                alert_text = "Could not show the picture. Try setting it again."
+        else:
+            alert_text = "No custom picture set. The default picture is used."
+        text, kb = await start_pic_view(pool, bot_ctx.bot_id)
+    elif sec == "spicreset":
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM ax_owner_settings WHERE key=$1", f"start_pic:{bot_ctx.bot_id}")
+        _apply_start_pic(bot_ctx.bot_id, None)
+        await log_audit(pool, owner_id, "start_pic_reset")
+        alert_text = "♻️ Start picture reset to default"
+        text, kb = await start_pic_view(pool, bot_ctx.bot_id)
     elif sec == "uv" and len(parts) >= 3 and parts[2].isdigit():
         uid = int(parts[2])
         text, kb = await user_view(pool, uid)
@@ -991,6 +1022,79 @@ async def owner_panel_callback(query: CallbackQuery, pool: asyncpg.Pool, bot_ctx
     await query.answer(alert_text, show_alert=bool(alert_text))
 
 
+# ---------------------------------------------------------------------------
+# Start picture (set from /ownerpanel -> 🖼 Start Pic)
+# ---------------------------------------------------------------------------
+_PENDING_START_PIC: dict[int, int] = {}  # owner_id -> bot_id waiting for a photo
+
+
+async def _read_start_pic(pool: asyncpg.Pool, bot_id: int) -> str | None:
+    try:
+        async with pool.acquire() as c:
+            return await c.fetchval("SELECT value FROM ax_owner_settings WHERE key=$1", f"start_pic:{bot_id}")
+    except Exception:
+        return None
+
+
+def _apply_start_pic(bot_id: int, file_id: str | None) -> None:
+    try:
+        import handlers
+        handlers.set_custom_start_pic(bot_id, file_id)
+    except Exception:
+        log.warning("could not refresh start pic cache", exc_info=True)
+
+
+async def start_pic_view(pool: asyncpg.Pool, bot_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    fid = await _read_start_pic(pool, bot_id)
+    status = "✅ Custom picture" if fid else "⚪ Default picture"
+    text = (
+        "🖼 <b>START PICTURE</b>\n"
+        f"<blockquote><b>Now using:</b> {status}\n"
+        "This is the picture people see when they send /start in DM.</blockquote>"
+    )
+    rows = [[btn("📤 Change Start Pic", "axop:spicset", style="success")]]
+    if fid:
+        rows.append([
+            btn("👀 Preview", "axop:spicview", style="primary"),
+            btn("♻️ Reset to Default", "axop:spicreset", style="danger"),
+        ])
+    rows.append([btn("🏠 Owner Home", "axop:home")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _waiting_start_pic(message: Message) -> bool:
+    u = message.from_user
+    return bool(u and u.id in OWNER_IDS and u.id in _PENDING_START_PIC)
+
+
+async def _start_pic_photo(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    owner_id = message.from_user.id
+    _PENDING_START_PIC.pop(owner_id, None)
+    file_id = message.photo[-1].file_id
+    bid = bot_ctx.bot_id
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO ax_owner_settings (key, value, updated_at) VALUES ($1, $2, now()) "
+            "ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=now()",
+            f"start_pic:{bid}",
+            file_id,
+        )
+    _apply_start_pic(bid, file_id)
+    await log_audit(pool, owner_id, "start_pic_set")
+    text, kb = await start_pic_view(pool, bid)
+    await message.reply("✅ <b>Start picture saved</b>\n<blockquote>New /start messages will use this picture.</blockquote>", parse_mode=H)
+    await message.answer(text, parse_mode=H, reply_markup=kb)
+
+
+async def _start_pic_file(message: Message) -> None:
+    await message.reply("📎 That was sent as a file. Please send it as a <b>photo</b> (or send /cancel).", parse_mode=H)
+
+
+async def _start_pic_cancel(message: Message) -> None:
+    _PENDING_START_PIC.pop(message.from_user.id, None)
+    await message.reply("✖ Start picture change cancelled.")
+
+
 async def on_startup(bot: Bot, dispatcher) -> None:
     global _maintenance_on
     pool: asyncpg.Pool = dispatcher["pool"]
@@ -1020,5 +1124,12 @@ def register(dp) -> None:
         mw = MaintenanceMiddleware()
         dp.message.outer_middleware(mw)
         dp.callback_query.outer_middleware(mw)
+        dp.message.register(_start_pic_photo, F.photo, _waiting_start_pic)
+        dp.message.register(_start_pic_file, F.document, _waiting_start_pic)
+        dp.message.register(
+            _start_pic_cancel,
+            F.text.func(lambda t: t.strip().lower().split("@")[0] in ("/cancel", "cancel")),
+            _waiting_start_pic,
+        )
     if router.parent_router is None:
         dp.include_router(router)

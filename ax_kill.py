@@ -35,6 +35,19 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) ->
     if not target or target.is_bot or target.id == user.id:
         await message.reply("Reply to another user with <code>/kill</code>.", parse_mode=H)
         return
+    _tw = await services.get_wallet(pool, target.id, bot_id=bid)
+    _sh = _tw["shield_until"] if _tw else None
+    if _sh and _sh > datetime.now(timezone.utc):
+        _left = _sh - datetime.now(timezone.utc)
+        _h, _rem = divmod(int(_left.total_seconds()), 3600)
+        _m = _rem // 60
+        await message.reply(
+            f"\U0001F6E1 <b>{esc(target.first_name or 'They')} is protected</b>\n"
+            f"<blockquote>Their Guard is active, so nobody can kill them right now.\n"
+            f"\u23F3 Guard ends in <code>{_h}h {_m}m</code></blockquote>",
+            parse_mode=H,
+        )
+        return
     import ax_powers, ax_premium
     is_prem = (user.id in OWNER_IDS) or (await ax_premium.get_premium(pool, user.id, bot_id=bid) is not None)
     prem_row = await ax_premium.get_premium(pool, user.id, bot_id=bid)
