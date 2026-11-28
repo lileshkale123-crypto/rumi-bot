@@ -1,4 +1,4 @@
-"""Random group events (min 25 users, 1/day/group: /catch $2k, /guess 100-500) & Dot/Slash Mod (.promote 1/2/3, .warn, .mute, .ban, .kick, .pin, /admin, /report)."""
+"""Random group events (min 25 users, 1/day/group: /catch $2k, /guess 100-500) & Dot/Slash Mod (.promote 1/2/3/4, .warn, .mute, .ban, .kick, .pin, /admin, /report)."""
 import asyncio, html, logging, random
 from datetime import datetime, timedelta, timezone
 import aiohttp, asyncpg
@@ -17,23 +17,9 @@ IST = timezone(timedelta(hours=5, minutes=30))
 _CATCH: dict[tuple[int, int], dict] = {}
 _DOT_SEEN: dict[tuple[int, int, int], float] = {}
 
-def _tier_rights(tier: int) -> dict[str, bool]:
-    if tier == 3:
-        return {"can_manage_chat": True, "can_change_info": False, "can_delete_messages": False, "can_invite_users": False, "can_restrict_members": False, "can_pin_messages": False, "can_promote_members": False}
-    if tier == 2:
-        return {"can_manage_chat": True, "can_change_info": False, "can_delete_messages": True, "can_invite_users": False, "can_restrict_members": True, "can_pin_messages": True, "can_promote_members": False}
-    return {"can_manage_chat": True, "can_change_info": True, "can_delete_messages": True, "can_invite_users": True, "can_restrict_members": True, "can_pin_messages": True, "can_promote_members": False}
-
 async def _do_promote(message: Message, bot: Bot, pool: asyncpg.Pool, raw_args: list[str]) -> None:
-    target = await ax_mod.gate(message, bot, pool, False, "can_promote_members")
-    if not target or not message.from_user or target.id == bot.id:
-        return
-    parts = list(raw_args) if message.reply_to_message else list(raw_args)[1:]
-    tier = int(parts[0]) if (parts and parts[0] in ("1", "2", "3")) else 1
-    rights = _tier_rights(tier)
-    await bot.promote_chat_member(chat_id=message.chat.id, user_id=target.id, **rights)
-    invalidate(message.chat.id, target.id, bot_id=bot.id)
-    await message.reply(f"⬆️ Promoted <b>{esc(target.first_name or 'User')}</b> (Tier <code>{tier}</code>).", parse_mode=H)
+    # PROMOTE4_V1: same 4 levels as /promote
+    await ax_mod.promote_tier(message, bot, pool, list(raw_args))
 
 @router.message(Command("admin"))
 async def admin_cmd(message: Message, bot: Bot) -> None:

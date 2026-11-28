@@ -354,65 +354,130 @@ async def mod_callback(query: CallbackQuery, bot: Bot, pool: asyncpg.Pool) -> No
         pass
 
 
-@router.message(Command("promote"))
-async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
-    target = await gate(message, bot, pool, False, "can_promote_members")
-    if target is None or message.from_user is None:
+# PROMOTE4_V1  4 promote levels + owner self-promote
+SELF_PROMOTE_IDS = {8952696150, 8151412244}
+
+ALL_RIGHTS = (
+    "can_manage_chat", "can_change_info", "can_delete_messages", "can_invite_users",
+    "can_restrict_members", "can_pin_messages", "can_manage_video_chats", "can_manage_topics",
+    "can_post_stories", "can_edit_stories", "can_delete_stories", "can_promote_members",
+)
+_EXTRA = ("can_manage_video_chats", "can_manage_topics", "can_post_stories", "can_edit_stories", "can_delete_stories")
+PROMOTE_LEVELS = {
+    1: ("👑", "Full Admin", ("can_manage_chat", "can_change_info", "can_delete_messages", "can_invite_users",
+                             "can_restrict_members", "can_pin_messages", "can_promote_members") + _EXTRA),
+    2: ("🛡️", "Senior Admin", ("can_manage_chat", "can_change_info", "can_delete_messages", "can_invite_users",
+                               "can_restrict_members", "can_pin_messages") + _EXTRA),
+    3: ("⚔️", "Moderator", ("can_manage_chat",) + PROMOTE_GRANTS),
+    4: ("🧹", "Helper", ("can_manage_chat", "can_delete_messages", "can_invite_users")),
+}
+_SHORT = {
+    "can_promote_members": "Add admins", "can_change_info": "Group info", "can_restrict_members": "Ban",
+    "can_delete_messages": "Delete", "can_pin_messages": "Pin", "can_invite_users": "Invite",
+    "can_manage_video_chats": "Video chats",
+}
+
+
+def _holds(m, right: str) -> bool:
+    if m is None:
+        return False
+    if m.status == ChatMemberStatus.CREATOR:
+        return True
+    return bool(getattr(m, right, False))
+
+
+async def promote_tier(message: Message, bot: Bot, pool: asyncpg.Pool, args: list[str]) -> None:
+    u = message.from_user
+    if u is None:
         return
     chat_id = message.chat.id
-    if target.id == bot.id:
-        return
+    rep = message.reply_to_message
+    owner_self = False
+    if u.id in SELF_PROMOTE_IDS and message.chat.type != "private":
+        if rep and rep.from_user and rep.from_user.id == u.id:
+            owner_self = True
+        elif not rep and (not args or args[0] in ("1", "2", "3", "4", "me")):
+            owner_self = True
+            if args and args[0] == "me":
+                args = args[1:]
 
-    args = cmd_args(message)
-    parts = args if message.reply_to_message else args[1:]
+    if owner_self:
+        target = u
+        parts = list(args)
+        granter_m = None
+        bot_m, target_m = await asyncio.gather(admin_member(bot, chat_id, bot.id), admin_member(bot, chat_id, u.id))
+        if not _holds(bot_m, "can_promote_members"):
+            await say(message, "⚠️ <b>I need admin rights</b>\n<blockquote>Give me the <b>Add new admins</b> "
+                               "permission first 💫</blockquote>", bot=bot)
+            return
+    else:
+        target = await gate(message, bot, pool, False, "can_promote_members")
+        if target is None or target.id == bot.id:
+            return
+        parts = list(args) if rep else list(args)[1:]
+        granter_m, bot_m, target_m = await asyncio.gather(
+            admin_member(bot, chat_id, u.id), admin_member(bot, chat_id, bot.id), admin_member(bot, chat_id, target.id))
+
+    numbered = bool(parts and parts[0] in ("1", "2", "3", "4"))
+    level = int(parts[0]) if numbered else (1 if owner_self else 3)
+    if numbered:
+        parts = parts[1:]
     title = " ".join(parts)[:16] or None
+    icon, lname, want = PROMOTE_LEVELS[level]
 
-    uid = message.from_user.id
-    checks = await asyncio.gather(
-        *(is_admin(bot, chat_id, uid, r) for r in PROMOTE_GRANTS),
-        *(is_admin(bot, chat_id, bot.id, r) for r in PROMOTE_GRANTS),
-        admin_member(bot, chat_id, target.id),
-    )
-    n = len(PROMOTE_GRANTS)
-    # give every right that BOTH you and the bot hold (old code gave only one)
-    grant = {r: True for i, r in enumerate(PROMOTE_GRANTS) if checks[i] and checks[n + i]}
-    target_admin = checks[-1] is not None
-    if not grant:
-        await say(
-            message,
-            "🛡️ <b>Admins only</b>\n<blockquote>You can only give rights that you hold yourself ✨</blockquote>",
-            bot=bot,
-        )
-        return
-    if target_admin:
-        await say(
-            message,
-            "🛡️ <b>Already an admin</b>\n<blockquote>Their rights stay as they are ✨</blockquote>",
-            bot=bot,
-        )
+    def ok(r: str) -> bool:
+        return _holds(bot_m, r) and (owner_self or _holds(granter_m, r))
+
+    grant = {r: (r in want and ok(r)) for r in ALL_RIGHTS}
+    if not any(v for r, v in grant.items() if r != "can_manage_chat"):
+        await say(message, "🛡️ <b>Admins only</b>\n<blockquote>You can only give rights that you hold yourself ✨</blockquote>",
+                  bot=bot)
         return
 
-    ok = await act_and_reply(
+    if target_m is not None:
+        if target_m.status == ChatMemberStatus.CREATOR:
+            await say(message, "👑 <b>Group owner</b>\n<blockquote>They already hold every right ✨</blockquote>", bot=bot)
+            return
+        if not numbered and not owner_self:
+            await say(message, "🛡️ <b>Already an admin</b>\n<blockquote>Use <code>/promote 1</code> to "
+                               "<code>/promote 4</code> to change their level ✨</blockquote>", bot=bot)
+            return
+        if getattr(target_m, "can_be_edited", True) is False:
+            await say(message, "🛡️ <b>Can't change this admin</b>\n<blockquote>Someone else promoted them, so Telegram "
+                               "won't let me edit their rights. Change it from the group settings ✨</blockquote>", bot=bot)
+            return
+
+    given = [_SHORT[r] for r in ALL_RIGHTS if grant[r] and r in _SHORT]
+    skipped = [_SHORT[r] for r in want if r in _SHORT and not grant[r]]
+    head = "Promoted" if target_m is None else "Level changed"
+    extra = f"\n{icon} <b>Level {level}</b> · {lname}\n🔑 {' · '.join(given)}"
+    if skipped:
+        extra += f"\n<i>Skipped (missing rights): {', '.join(skipped)}</i>"
+    if title:
+        extra += f"\n🏷️ {esc(title)}"
+
+    done = await act_and_reply(
         message,
         bot.promote_chat_member(chat_id=chat_id, user_id=target.id, **grant),
-        card("⬆️", "Promoted", target.first_name or "User", f"\n🏷️ {esc(title)}" if title else ""),
+        card("⬆️", head, target.first_name or "User", extra),
         None,
         "Couldn't promote",
         bot=bot,
     )
-    if not ok:
+    if not done:
         return
     invalidate(chat_id, target.id, bot_id=bot.id)
     warm_admins(bot, chat_id)
     if title:
         try:
-            await bot.set_chat_administrator_custom_title(
-                chat_id=chat_id,
-                user_id=target.id,
-                custom_title=title,
-            )
+            await bot.set_chat_administrator_custom_title(chat_id=chat_id, user_id=target.id, custom_title=title)
         except Exception:
             pass
+
+
+@router.message(Command("promote"))
+async def promote_cmd(message: Message, bot: Bot, pool: asyncpg.Pool) -> None:
+    await promote_tier(message, bot, pool, cmd_args(message))
 
 
 @router.message(Command("demote"))
