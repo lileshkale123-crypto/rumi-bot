@@ -133,6 +133,508 @@ CHARACTER_POOL += [
     {"name": n, "title": t, "anime": a, "rarity": _TIER[k][0], "reward": _TIER[k][1]} for n, t, a, k in _MORE
 ]
 
+# SPAWNPOOL2_V1  extra characters, one per line: short|full name|anime|tier (C/M/L/E)
+_MORE2 = """
+Law|Trafalgar Law|One Piece|L
+Kaido|Kaido|One Piece|M
+BigMom|Charlotte Linlin|One Piece|M
+Hancock|Boa Hancock|One Piece|L
+Mihawk|Dracule Mihawk|One Piece|M
+Brook|Brook|One Piece|E
+Franky|Franky|One Piece|E
+Jinbe|Jinbe|One Piece|E
+Yamato|Yamato|One Piece|L
+Blackbeard|Marshall D. Teach|One Piece|M
+Garp|Monkey D. Garp|One Piece|M
+Roger|Gol D. Roger|One Piece|C
+Sabo|Sabo|One Piece|L
+Doflamingo|Donquixote Doflamingo|One Piece|L
+Crocodile|Crocodile|One Piece|E
+Kizaru|Borsalino|One Piece|L
+Akainu|Sakazuki|One Piece|L
+Aokiji|Kuzan|One Piece|L
+Katakuri|Charlotte Katakuri|One Piece|L
+Vivi|Nefertari Vivi|One Piece|E
+Buggy|Buggy|One Piece|E
+Smoker|Smoker|One Piece|E
+Rayleigh|Silvers Rayleigh|One Piece|M
+Kid|Eustass Kid|One Piece|L
+Enel|Enel|One Piece|E
+Lucci|Rob Lucci|One Piece|E
+Imu|Imu|One Piece|C
+Minato|Minato Namikaze|Naruto|M
+Obito|Obito Uchiha|Naruto|M
+Hashirama|Hashirama Senju|Naruto|C
+Tobirama|Tobirama Senju|Naruto|L
+Pain|Nagato|Naruto|M
+Konan|Konan|Naruto|E
+Tsunade|Tsunade|Naruto|L
+Orochimaru|Orochimaru|Naruto|L
+Kisame|Kisame Hoshigaki|Naruto|E
+Deidara|Deidara|Naruto|E
+Sasori|Sasori|Naruto|E
+Hidan|Hidan|Naruto|E
+Kakuzu|Kakuzu|Naruto|E
+RockLee|Rock Lee|Naruto|E
+Neji|Neji Hyuga|Naruto|E
+MightGuy|Might Guy|Naruto|L
+Ino|Ino Yamanaka|Naruto|E
+Tenten|Tenten|Naruto|E
+Kiba|Kiba Inuzuka|Naruto|E
+Shino|Shino Aburame|Naruto|E
+Choji|Choji Akimichi|Naruto|E
+Kurama|Kurama|Naruto|M
+Boruto|Boruto Uzumaki|Boruto|E
+Kawaki|Kawaki|Boruto|E
+Shisui|Shisui Uchiha|Naruto|L
+Otsutsuki|Kaguya Otsutsuki|Naruto|C
+Mei|Mei Terumi|Naruto|E
+KillerBee|Killer Bee|Naruto|E
+Asuma|Asuma Sarutobi|Naruto|E
+Hiruzen|Hiruzen Sarutobi|Naruto|L
+Zabuza|Zabuza Momochi|Naruto|E
+Haku|Haku|Naruto|E
+Byakuya|Byakuya Kuchiki|Bleach|M
+Rukia|Rukia Kuchiki|Bleach|L
+Renji|Renji Abarai|Bleach|E
+Kenpachi|Kenpachi Zaraki|Bleach|M
+Yoruichi|Yoruichi Shihoin|Bleach|L
+Urahara|Kisuke Urahara|Bleach|M
+Toshiro|Toshiro Hitsugaya|Bleach|L
+Ulquiorra|Ulquiorra Cifer|Bleach|L
+Grimmjow|Grimmjow Jaegerjaquez|Bleach|L
+Orihime|Orihime Inoue|Bleach|E
+Uryu|Uryu Ishida|Bleach|E
+Chad|Yasutora Sado|Bleach|E
+Yamamoto|Genryusai Yamamoto|Bleach|C
+Gin|Gin Ichimaru|Bleach|L
+Starrk|Coyote Starrk|Bleach|L
+Unohana|Retsu Unohana|Bleach|L
+Shunsui|Shunsui Kyoraku|Bleach|M
+Mayuri|Mayuri Kurotsuchi|Bleach|E
+SoiFon|Soi Fon|Bleach|E
+Rangiku|Rangiku Matsumoto|Bleach|E
+Nelliel|Nelliel Tu Odelschwanck|Bleach|E
+Gohan|Son Gohan|Dragon Ball|M
+Piccolo|Piccolo|Dragon Ball|L
+Frieza|Frieza|Dragon Ball|M
+Cell|Cell|Dragon Ball|L
+Buu|Majin Buu|Dragon Ball|L
+Trunks|Trunks|Dragon Ball|L
+Goten|Son Goten|Dragon Ball|E
+Krillin|Krillin|Dragon Ball|E
+Bulma|Bulma|Dragon Ball|E
+Broly|Broly|Dragon Ball|C
+Beerus|Beerus|Dragon Ball|C
+Whis|Whis|Dragon Ball|C
+Jiren|Jiren|Dragon Ball|C
+Android18|Android 18|Dragon Ball|E
+Android17|Android 17|Dragon Ball|E
+Zeno|Zeno|Dragon Ball|C
+Hit|Hit|Dragon Ball|E
+Gogeta|Gogeta|Dragon Ball|C
+Vegito|Vegito|Dragon Ball|C
+Yamcha|Yamcha|Dragon Ball|E
+Tien|Tien Shinhan|Dragon Ball|E
+Roshi|Master Roshi|Dragon Ball|E
+Videl|Videl|Dragon Ball|E
+Pan|Pan|Dragon Ball|E
+Yuta|Yuta Okkotsu|Jujutsu Kaisen|M
+Maki|Maki Zenin|Jujutsu Kaisen|L
+Panda|Panda|Jujutsu Kaisen|E
+Inumaki|Toge Inumaki|Jujutsu Kaisen|E
+Nanami|Kento Nanami|Jujutsu Kaisen|L
+Todo|Aoi Todo|Jujutsu Kaisen|L
+Mahito|Mahito|Jujutsu Kaisen|L
+Geto|Suguru Geto|Jujutsu Kaisen|M
+Jogo|Jogo|Jujutsu Kaisen|E
+Choso|Choso|Jujutsu Kaisen|E
+Hakari|Kinji Hakari|Jujutsu Kaisen|L
+Yuki|Yuki Tsukumo|Jujutsu Kaisen|M
+Kenjaku|Kenjaku|Jujutsu Kaisen|M
+MeiMei|Mei Mei|Jujutsu Kaisen|E
+Utahime|Utahime Iori|Jujutsu Kaisen|E
+Higuruma|Hiromi Higuruma|Jujutsu Kaisen|L
+Ishigori|Ryu Ishigori|Jujutsu Kaisen|E
+Kashimo|Hajime Kashimo|Jujutsu Kaisen|L
+Uraume|Uraume|Jujutsu Kaisen|E
+Giyu|Giyu Tomioka|Demon Slayer|L
+Mitsuri|Mitsuri Kanroji|Demon Slayer|L
+Tengen|Tengen Uzui|Demon Slayer|L
+Muichiro|Muichiro Tokito|Demon Slayer|L
+Gyomei|Gyomei Himejima|Demon Slayer|M
+Sanemi|Sanemi Shinazugawa|Demon Slayer|L
+Obanai|Obanai Iguro|Demon Slayer|L
+Kanao|Kanao Tsuyuri|Demon Slayer|E
+Genya|Genya Shinazugawa|Demon Slayer|E
+Akaza|Akaza|Demon Slayer|L
+Doma|Doma|Demon Slayer|L
+Kokushibo|Kokushibo|Demon Slayer|M
+Yoriichi|Yoriichi Tsugikuni|Demon Slayer|C
+Daki|Daki|Demon Slayer|E
+Gyutaro|Gyutaro|Demon Slayer|E
+Kanae|Kanae Kocho|Demon Slayer|E
+Urokodaki|Sakonji Urokodaki|Demon Slayer|E
+Tamayo|Tamayo|Demon Slayer|E
+Annie|Annie Leonhart|Attack on Titan|E
+Reiner|Reiner Braun|Attack on Titan|L
+Bertholdt|Bertholdt Hoover|Attack on Titan|E
+Historia|Historia Reiss|Attack on Titan|E
+Jean|Jean Kirstein|Attack on Titan|E
+Sasha|Sasha Blouse|Attack on Titan|E
+Connie|Connie Springer|Attack on Titan|E
+Zeke|Zeke Yeager|Attack on Titan|M
+Ymir|Ymir Fritz|Attack on Titan|M
+Pieck|Pieck Finger|Attack on Titan|E
+Porco|Porco Galliard|Attack on Titan|E
+Kenny|Kenny Ackerman|Attack on Titan|E
+Gabi|Gabi Braun|Attack on Titan|E
+Falco|Falco Grice|Attack on Titan|E
+Netero|Isaac Netero|Hunter x Hunter|C
+Chrollo|Chrollo Lucilfer|Hunter x Hunter|M
+Illumi|Illumi Zoldyck|Hunter x Hunter|L
+Feitan|Feitan|Hunter x Hunter|E
+Ging|Ging Freecss|Hunter x Hunter|M
+Alluka|Alluka Zoldyck|Hunter x Hunter|E
+Biscuit|Biscuit Krueger|Hunter x Hunter|E
+Leorio|Leorio Paradinight|Hunter x Hunter|E
+Pitou|Neferpitou|Hunter x Hunter|L
+Komugi|Komugi|Hunter x Hunter|E
+Machi|Machi Komacine|Hunter x Hunter|E
+Silva|Silva Zoldyck|Hunter x Hunter|L
+Kite|Kite|Hunter x Hunter|E
+Near|Near|Death Note|E
+Mello|Mello|Death Note|E
+Mikami|Teru Mikami|Death Note|E
+AllMight|All Might|My Hero Academia|C
+Endeavor|Endeavor|My Hero Academia|L
+Hawks|Hawks|My Hero Academia|L
+Shigaraki|Tomura Shigaraki|My Hero Academia|M
+Dabi|Dabi|My Hero Academia|L
+Toga|Himiko Toga|My Hero Academia|E
+Uraraka|Ochaco Uraraka|My Hero Academia|E
+Iida|Tenya Iida|My Hero Academia|E
+Kirishima|Eijiro Kirishima|My Hero Academia|E
+Tsuyu|Tsuyu Asui|My Hero Academia|E
+Momo|Momo Yaoyorozu|My Hero Academia|E
+Aizawa|Shota Aizawa|My Hero Academia|E
+AllForOne|All For One|My Hero Academia|C
+Mirio|Mirio Togata|My Hero Academia|L
+Stain|Stain|My Hero Academia|E
+Denki|Denki Kaminari|My Hero Academia|E
+Overhaul|Kai Chisaki|My Hero Academia|L
+Tokoyami|Fumikage Tokoyami|My Hero Academia|E
+Gray|Gray Fullbuster|Fairy Tail|L
+Wendy|Wendy Marvell|Fairy Tail|E
+Gajeel|Gajeel Redfox|Fairy Tail|E
+Juvia|Juvia Lockser|Fairy Tail|E
+Laxus|Laxus Dreyar|Fairy Tail|L
+Mirajane|Mirajane Strauss|Fairy Tail|L
+Happy|Happy|Fairy Tail|E
+Zeref|Zeref Dragneel|Fairy Tail|C
+Makarov|Makarov Dreyar|Fairy Tail|L
+Gildarts|Gildarts Clive|Fairy Tail|M
+Jellal|Jellal Fernandes|Fairy Tail|L
+Mavis|Mavis Vermillion|Fairy Tail|M
+Yuno|Yuno|Black Clover|L
+Noelle|Noelle Silva|Black Clover|E
+Yami|Yami Sukehiro|Black Clover|L
+Julius|Julius Novachrono|Black Clover|M
+Mereoleona|Mereoleona Vermillion|Black Clover|L
+Luck|Luck Voltia|Black Clover|E
+Liebe|Liebe|Black Clover|E
+Sinon|Sinon|Sword Art Online|E
+Alice|Alice Zuberg|Sword Art Online|L
+Leafa|Leafa|Sword Art Online|E
+Eugeo|Eugeo|Sword Art Online|E
+Yui|Yui|Sword Art Online|E
+Ram|Ram|Re:Zero|E
+Beatrice|Beatrice|Re:Zero|E
+Echidna|Echidna|Re:Zero|L
+Reinhard|Reinhard van Astrea|Re:Zero|M
+Roswaal|Roswaal L. Mathers|Re:Zero|L
+Darkness|Darkness|KonoSuba|E
+Wiz|Wiz|KonoSuba|E
+Vanir|Vanir|KonoSuba|E
+Shalltear|Shalltear Bloodfallen|Overlord|L
+Demiurge|Demiurge|Overlord|L
+Cocytus|Cocytus|Overlord|E
+AuraBella|Aura Bella Fiora|Overlord|E
+Narberal|Narberal Gamma|Overlord|E
+Sebas|Sebas Tian|Overlord|E
+Milim|Milim Nava|Reincarnated as a Slime|C
+Shion|Shion|Reincarnated as a Slime|E
+Benimaru|Benimaru|Reincarnated as a Slime|L
+Shuna|Shuna|Reincarnated as a Slime|E
+Diablo|Diablo|Reincarnated as a Slime|M
+Veldora|Veldora Tempest|Reincarnated as a Slime|C
+Souei|Souei|Reincarnated as a Slime|E
+Meliodas|Meliodas|Seven Deadly Sins|M
+Elizabeth|Elizabeth Liones|Seven Deadly Sins|E
+Ban|Ban|Seven Deadly Sins|L
+King|King|Seven Deadly Sins|L
+Diane|Diane|Seven Deadly Sins|E
+Gowther|Gowther|Seven Deadly Sins|E
+Merlin|Merlin|Seven Deadly Sins|M
+Zeldris|Zeldris|Seven Deadly Sins|L
+Aki|Aki Hayakawa|Chainsaw Man|L
+Kobeni|Kobeni Higashiyama|Chainsaw Man|E
+Reze|Reze|Chainsaw Man|L
+Himeno|Himeno|Chainsaw Man|E
+Kishibe|Kishibe|Chainsaw Man|E
+Pochita|Pochita|Chainsaw Man|M
+Asa|Asa Mitaka|Chainsaw Man|E
+Yoru|Yoru|Chainsaw Man|L
+Quanxi|Quanxi|Chainsaw Man|E
+Bond|Bond Forger|Spy x Family|E
+Yuri|Yuri Briar|Spy x Family|E
+Becky|Becky Blackbell|Spy x Family|E
+Damian|Damian Desmond|Spy x Family|E
+Fiona|Fiona Frost|Spy x Family|E
+CC|C.C.|Code Geass|L
+Suzaku|Suzaku Kururugi|Code Geass|L
+Kallen|Kallen Kozuki|Code Geass|E
+Nunnally|Nunnally Lamperouge|Code Geass|E
+Schneizel|Schneizel el Britannia|Code Geass|E
+Alphonse|Alphonse Elric|Fullmetal Alchemist|L
+Mustang|Roy Mustang|Fullmetal Alchemist|L
+Riza|Riza Hawkeye|Fullmetal Alchemist|E
+Winry|Winry Rockbell|Fullmetal Alchemist|E
+Scar|Scar|Fullmetal Alchemist|E
+Greed|Greed|Fullmetal Alchemist|E
+Envy|Envy|Fullmetal Alchemist|E
+Lust|Lust|Fullmetal Alchemist|E
+Father|Father|Fullmetal Alchemist|M
+Hohenheim|Van Hohenheim|Fullmetal Alchemist|M
+Armstrong|Olivier Mira Armstrong|Fullmetal Alchemist|L
+Bradley|King Bradley|Fullmetal Alchemist|L
+Hughes|Maes Hughes|Fullmetal Alchemist|E
+Faye|Faye Valentine|Cowboy Bebop|E
+Jet|Jet Black|Cowboy Bebop|E
+Ed|Radical Edward|Cowboy Bebop|E
+Vicious|Vicious|Cowboy Bebop|L
+Touka|Touka Kirishima|Tokyo Ghoul|E
+Rize|Rize Kamishiro|Tokyo Ghoul|E
+Juuzou|Juuzou Suzuya|Tokyo Ghoul|E
+Arima|Kishou Arima|Tokyo Ghoul|M
+Tsukiyama|Shuu Tsukiyama|Tokyo Ghoul|E
+Hide|Hideyoshi Nagachika|Tokyo Ghoul|E
+Genos|Genos|One Punch Man|L
+Garou|Garou|One Punch Man|M
+Tatsumaki|Tatsumaki|One Punch Man|M
+Fubuki|Fubuki|One Punch Man|E
+Bang|Silver Fang|One Punch Man|L
+Boros|Boros|One Punch Man|M
+Mumen|Mumen Rider|One Punch Man|E
+Dimple|Dimple|Mob Psycho 100|E
+Ritsu|Ritsu Kageyama|Mob Psycho 100|E
+Teru|Teruki Hanazawa|Mob Psycho 100|E
+Oikawa|Toru Oikawa|Haikyuu!!|E
+Kenma|Kenma Kozume|Haikyuu!!|E
+Kuroo|Tetsuro Kuroo|Haikyuu!!|E
+Bokuto|Kotaro Bokuto|Haikyuu!!|E
+Nishinoya|Yu Nishinoya|Haikyuu!!|E
+Tsukishima|Kei Tsukishima|Haikyuu!!|E
+Ushijima|Wakatoshi Ushijima|Haikyuu!!|E
+Stark|Stark|Frieren|E
+Heiter|Heiter|Frieren|E
+Eisen|Eisen|Frieren|E
+Ubel|Ubel|Frieren|E
+Serie|Serie|Frieren|M
+Flamme|Flamme|Frieren|L
+Denken|Denken|Frieren|E
+Macht|Macht|Frieren|L
+Thorfinn|Thorfinn|Vinland Saga|L
+Askeladd|Askeladd|Vinland Saga|L
+Thorkell|Thorkell|Vinland Saga|L
+Canute|Canute|Vinland Saga|E
+Guts|Guts|Berserk|M
+Griffith|Griffith|Berserk|M
+Casca|Casca|Berserk|E
+Jotaro|Jotaro Kujo|JoJo's Bizarre Adventure|M
+Dio|Dio Brando|JoJo's Bizarre Adventure|C
+Joseph|Joseph Joestar|JoJo's Bizarre Adventure|L
+Jonathan|Jonathan Joestar|JoJo's Bizarre Adventure|L
+Josuke|Josuke Higashikata|JoJo's Bizarre Adventure|L
+Giorno|Giorno Giovanna|JoJo's Bizarre Adventure|M
+Jolyne|Jolyne Cujoh|JoJo's Bizarre Adventure|L
+Kira|Yoshikage Kira|JoJo's Bizarre Adventure|L
+Polnareff|Jean Pierre Polnareff|JoJo's Bizarre Adventure|E
+Kakyoin|Noriaki Kakyoin|JoJo's Bizarre Adventure|E
+Bucciarati|Bruno Bucciarati|JoJo's Bizarre Adventure|E
+Rohan|Rohan Kishibe|JoJo's Bizarre Adventure|E
+Johnny|Johnny Joestar|JoJo's Bizarre Adventure|L
+Gyro|Gyro Zeppeli|JoJo's Bizarre Adventure|L
+Shinji|Shinji Ikari|Evangelion|L
+Rei|Rei Ayanami|Evangelion|L
+Asuka|Asuka Langley Soryu|Evangelion|L
+Misato|Misato Katsuragi|Evangelion|E
+Kaworu|Kaworu Nagisa|Evangelion|L
+Gendo|Gendo Ikari|Evangelion|E
+Okabe|Rintaro Okabe|Steins;Gate|L
+Kurisu|Kurisu Makise|Steins;Gate|L
+Mayushii|Mayuri Shiina|Steins;Gate|E
+Taiga|Taiga Aisaka|Toradora!|E
+Ryuji|Ryuji Takasu|Toradora!|E
+Chizuru|Chizuru Mizuhara|Rent-a-Girlfriend|E
+Miku|Miku Nakano|The Quintessential Quintuplets|E
+Nino|Nino Nakano|The Quintessential Quintuplets|E
+Ichika|Ichika Nakano|The Quintessential Quintuplets|E
+Yotsuba|Yotsuba Nakano|The Quintessential Quintuplets|E
+Itsuki|Itsuki Nakano|The Quintessential Quintuplets|E
+Komi|Shoko Komi|Komi Can't Communicate|E
+Tohru|Tohru Honda|Fruits Basket|E
+Kyo|Kyo Sohma|Fruits Basket|E
+Hachiman|Hachiman Hikigaya|Oregairu|E
+Yukino|Yukino Yukinoshita|Oregairu|E
+Mitsuha|Mitsuha Miyamizu|Your Name|E
+Taki|Taki Tachibana|Your Name|E
+Kaori|Kaori Miyazono|Your Lie in April|E
+Kousei|Kousei Arima|Your Lie in April|E
+Shouko|Shouko Nishimiya|A Silent Voice|E
+Hori|Kyoko Hori|Horimiya|E
+Nagatoro|Hayase Nagatoro|Don't Toy with Me, Miss Nagatoro|E
+Takagi|Takagi|Teasing Master Takagi-san|E
+Shikimori|Shikimori|Shikimori's Not Just a Cutie|E
+Rikka|Rikka Takanashi|Love, Chunibyo & Other Delusions|E
+Kurumi|Kurumi Tokisaki|Date A Live|L
+Tohka|Tohka Yatogami|Date A Live|E
+Shiro|Shiro|No Game No Life|L
+Sora|Sora|No Game No Life|L
+Jibril|Jibril|No Game No Life|L
+Raphtalia|Raphtalia|The Rising of the Shield Hero|E
+Naofumi|Naofumi Iwatani|The Rising of the Shield Hero|L
+Filo|Filo|The Rising of the Shield Hero|E
+Esdeath|Esdeath|Akame ga Kill!|M
+Akame|Akame|Akame ga Kill!|L
+Tatsumi|Tatsumi|Akame ga Kill!|E
+Mine|Mine|Akame ga Kill!|E
+Saber|Artoria Pendragon|Fate|M
+Gilgamesh|Gilgamesh|Fate|C
+Rin|Rin Tohsaka|Fate|L
+Shirou|Shirou Emiya|Fate|L
+Archer|Archer|Fate|L
+Kuroko|Tetsuya Kuroko|Kuroko's Basketball|E
+Kagami|Taiga Kagami|Kuroko's Basketball|E
+Akashi|Seijuro Akashi|Kuroko's Basketball|L
+Aomine|Daiki Aomine|Kuroko's Basketball|E
+Isagi|Yoichi Isagi|Blue Lock|L
+Bachira|Meguru Bachira|Blue Lock|E
+Itoshi|Rin Itoshi|Blue Lock|L
+Nagi|Seishiro Nagi|Blue Lock|L
+Barou|Shoei Barou|Blue Lock|E
+Kaiser|Michael Kaiser|Blue Lock|L
+Sakuragi|Hanamichi Sakuragi|Slam Dunk|E
+Rukawa|Kaede Rukawa|Slam Dunk|E
+Ippo|Ippo Makunouchi|Hajime no Ippo|E
+Yusuke|Yusuke Urameshi|Yu Yu Hakusho|L
+Hiei|Hiei|Yu Yu Hakusho|L
+Kuwabara|Kazuma Kuwabara|Yu Yu Hakusho|E
+Toguro|Toguro|Yu Yu Hakusho|L
+Inuyasha|Inuyasha|Inuyasha|L
+Kagome|Kagome Higurashi|Inuyasha|E
+Sesshomaru|Sesshomaru|Inuyasha|M
+Kenshin|Kenshin Himura|Rurouni Kenshin|L
+Usagi|Usagi Tsukino|Sailor Moon|L
+Yugi|Yugi Muto|Yu-Gi-Oh!|L
+Kaiba|Seto Kaiba|Yu-Gi-Oh!|L
+Gintoki|Gintoki Sakata|Gintama|M
+Kagura|Kagura|Gintama|E
+Shinpachi|Shinpachi Shimura|Gintama|E
+Hijikata|Toshiro Hijikata|Gintama|E
+Okita|Sougo Okita|Gintama|E
+Takasugi|Shinsuke Takasugi|Gintama|L
+Seras|Seras Victoria|Hellsing|E
+Integra|Integra Hellsing|Hellsing|E
+Jinwoo|Sung Jinwoo|Solo Leveling|C
+Igris|Igris|Solo Leveling|L
+Beru|Beru|Solo Leveling|L
+ChaHaeIn|Cha Hae-In|Solo Leveling|E
+Okarun|Ken Takakura|Dandadan|E
+Ayase|Momo Ayase|Dandadan|E
+Kafka|Kafka Hibino|Kaiju No. 8|L
+Mina|Mina Ashiro|Kaiju No. 8|L
+Kikoru|Kikoru Shinomiya|Kaiju No. 8|E
+Narumi|Gen Narumi|Kaiju No. 8|L
+Sakamoto|Taro Sakamoto|Sakamoto Days|L
+Shin|Shin Asakura|Sakamoto Days|E
+Andy|Andy|Undead Unluck|L
+Fuuko|Fuuko Izumo|Undead Unluck|E
+Gabimaru|Gabimaru|Hell's Paradise|L
+Sagiri|Yamada Asaemon Sagiri|Hell's Paradise|E
+Shinra|Shinra Kusakabe|Fire Force|L
+Arthur|Arthur Boyle|Fire Force|E
+Emma|Emma|The Promised Neverland|E
+Norman|Norman|The Promised Neverland|L
+Ray|Ray|The Promised Neverland|E
+Tsukasa|Tsukasa Shishio|Dr. Stone|L
+Chrome|Chrome|Dr. Stone|E
+Gen|Gen Asagiri|Dr. Stone|E
+Korosensei|Koro-sensei|Assassination Classroom|M
+Nagisa|Nagisa Shiota|Assassination Classroom|E
+Karma|Karma Akabane|Assassination Classroom|E
+Yato|Yato|Noragami|L
+Hiyori|Hiyori Iki|Noragami|E
+Yukine|Yukine|Noragami|E
+Dazai|Osamu Dazai|Bungo Stray Dogs|L
+Atsushi|Atsushi Nakajima|Bungo Stray Dogs|E
+Chuuya|Chuuya Nakahara|Bungo Stray Dogs|L
+Akutagawa|Ryunosuke Akutagawa|Bungo Stray Dogs|E
+Akane|Akane Tsunemori|Psycho-Pass|E
+Kogami|Shinya Kogami|Psycho-Pass|E
+Makishima|Shogo Makishima|Psycho-Pass|L
+Shinichi|Shinichi Izumi|Parasyte|E
+Migi|Migi|Parasyte|E
+Riko|Riko|Made in Abyss|E
+Reg|Reg|Made in Abyss|E
+Nanachi|Nanachi|Made in Abyss|E
+Bondrewd|Bondrewd|Made in Abyss|L
+Okumura|Rin Okumura|Blue Exorcist|E
+Mash|Mash Burnedead|Mashle|L
+Caiman|Caiman|Dorohedoro|E
+Nikaido|Nikaido|Dorohedoro|E
+Rudeus|Rudeus Greyrat|Mushoku Tensei|L
+Roxy|Roxy Migurdia|Mushoku Tensei|E
+Eris|Eris Boreas Greyrat|Mushoku Tensei|E
+Sylphiette|Sylphiette|Mushoku Tensei|E
+Ai|Ai Hoshino|Oshi no Ko|L
+Aquamarine|Aqua Hoshino|Oshi no Ko|E
+Ruby|Ruby Hoshino|Oshi no Ko|E
+Kana|Kana Arima|Oshi no Ko|E
+Maomao|Maomao|The Apothecary Diaries|L
+Jinshi|Jinshi|The Apothecary Diaries|E
+David|David Martinez|Cyberpunk: Edgerunners|E
+Miyuki|Miyuki Shirogane|Kaguya-sama: Love is War|E
+Ishigami|Yu Ishigami|Kaguya-sama: Love is War|E
+Hanako|Hanako-kun|Toilet-bound Hanako-kun|E
+Yumeko|Yumeko Jabami|Kakegurui|E
+Hiro|Hiro|Darling in the Franxx|E
+Ayanokoji|Kiyotaka Ayanokoji|Classroom of the Elite|L
+Horikita|Suzune Horikita|Classroom of the Elite|E
+Cid|Cid Kagenou|The Eminence in Shadow|M
+Chisato|Chisato Nishikigi|Lycoris Recoil|E
+Takina|Takina Inoue|Lycoris Recoil|E
+Vash|Vash the Stampede|Trigun|L
+Mugen|Mugen|Samurai Champloo|E
+Jin|Jin|Samurai Champloo|E
+Kamina|Kamina|Gurren Lagann|L
+Simon|Simon|Gurren Lagann|L
+Yoko|Yoko Littner|Gurren Lagann|E
+Ryuko|Ryuko Matoi|Kill la Kill|L
+Satsuki|Satsuki Kiryuin|Kill la Kill|L
+Oreki|Houtarou Oreki|Hyouka|E
+Chitanda|Eru Chitanda|Hyouka|E
+Johan|Johan Liebert|Monster|M
+Tenma|Kenzo Tenma|Monster|E
+Motoko|Motoko Kusanagi|Ghost in the Shell|L
+Kaneda|Shotaro Kaneda|Akira|E
+Tetsuo|Tetsuo Shima|Akira|L
+"""
+CHARACTER_POOL += [
+    {"name": n, "title": t, "anime": a, "rarity": _TIER[k][0], "reward": _TIER[k][1]}
+    for n, t, a, k in (ln.split("|") for ln in _MORE2.strip().splitlines() if ln.strip())
+]
+
 
 def _tier_word(r: str) -> str:
     return (r or "").split(" ", 1)[-1]
