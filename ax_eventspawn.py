@@ -66,6 +66,88 @@ CHARACTER_POOL = [
     {"name": "Yor", "title": "Yor Forger", "anime": "Spy x Family", "rarity": "🌹 Epic", "reward": 1900},
     {"name": "Sukuna", "title": "Ryomen Sukuna", "anime": "Jujutsu Kaisen", "rarity": "🩸 Celestial", "reward": 3200},
 ]
+
+# SPAWNPOOL_V1  ~100 characters. Rarer tiers spawn less often (weights are per tier, not per character).
+_TIER = {
+    "C": ("🔮 Celestial", 3000),
+    "M": ("🌟 Mythic", 2500),
+    "L": ("🔥 Legendary", 2200),
+    "E": ("💎 Epic", 1800),
+}
+TIER_CHANCE = {"Celestial": 5, "Mythic": 15, "Legendary": 30, "Epic": 50}   # percent per spawn
+_MORE = [
+    # Celestial
+    ("Goku", "Son Goku", "Dragon Ball", "C"), ("Saitama", "Saitama", "One Punch Man", "C"),
+    ("Madara", "Madara Uchiha", "Naruto", "C"), ("Aizen", "Sosuke Aizen", "Bleach", "C"),
+    ("Meruem", "Meruem", "Hunter x Hunter", "C"), ("Newgate", "Edward Newgate", "One Piece", "C"),
+    ("Anos", "Anos Voldigoad", "Misfit of Demon King Academy", "C"), ("Rimuru", "Rimuru Tempest", "Reincarnated as a Slime", "C"),
+    ("Yhwach", "Yhwach", "Bleach", "C"), ("Escanor", "Escanor", "Seven Deadly Sins", "C"),
+    # Mythic
+    ("Naruto", "Naruto Uzumaki", "Naruto", "M"), ("Sasuke", "Sasuke Uchiha", "Naruto", "M"),
+    ("Itachi", "Itachi Uchiha", "Naruto", "M"), ("Luffy", "Monkey D. Luffy", "One Piece", "M"),
+    ("Ichigo", "Ichigo Kurosaki", "Bleach", "M"), ("Lelouch", "Lelouch Lamperouge", "Code Geass", "M"),
+    ("Light", "Light Yagami", "Death Note", "M"), ("Eren", "Eren Yeager", "Attack on Titan", "M"),
+    ("Rem", "Rem", "Re:Zero", "M"), ("Asta", "Asta", "Black Clover", "M"),
+    ("Vegeta", "Vegeta", "Dragon Ball", "M"), ("Tanjiro", "Tanjiro Kamado", "Demon Slayer", "M"),
+    ("Shanks", "Shanks", "One Piece", "M"), ("Kaguya", "Kaguya Shinomiya", "Kaguya-sama: Love is War", "M"),
+    ("Albedo", "Albedo", "Overlord", "M"), ("Ainz", "Ainz Ooal Gown", "Overlord", "M"),
+    ("Toji", "Toji Fushiguro", "Jujutsu Kaisen", "M"), ("Muzan", "Muzan Kibutsuji", "Demon Slayer", "M"),
+    # Legendary
+    ("Zoro", "Roronoa Zoro", "One Piece", "L"), ("Sanji", "Vinsmoke Sanji", "One Piece", "L"),
+    ("Nami", "Nami", "One Piece", "L"), ("Robin", "Nico Robin", "One Piece", "L"),
+    ("Ace", "Portgas D. Ace", "One Piece", "L"), ("Kakashi", "Kakashi Hatake", "Naruto", "L"),
+    ("Hinata", "Hinata Hyuga", "Naruto", "L"), ("Gaara", "Gaara", "Naruto", "L"),
+    ("Killua", "Killua Zoldyck", "Hunter x Hunter", "L"), ("Gon", "Gon Freecss", "Hunter x Hunter", "L"),
+    ("Hisoka", "Hisoka Morow", "Hunter x Hunter", "L"), ("Kurapika", "Kurapika", "Hunter x Hunter", "L"),
+    ("Edward", "Edward Elric", "Fullmetal Alchemist", "L"), ("Spike", "Spike Spiegel", "Cowboy Bebop", "L"),
+    ("Kirito", "Kirito", "Sword Art Online", "L"), ("Asuna", "Asuna Yuuki", "Sword Art Online", "L"),
+    ("Deku", "Izuku Midoriya", "My Hero Academia", "L"), ("Bakugo", "Katsuki Bakugo", "My Hero Academia", "L"),
+    ("Todoroki", "Shoto Todoroki", "My Hero Academia", "L"), ("Nezuko", "Nezuko Kamado", "Demon Slayer", "L"),
+    ("Rengoku", "Kyojuro Rengoku", "Demon Slayer", "L"), ("Megumin", "Megumin", "KonoSuba", "L"),
+    ("Mai", "Mai Sakurajima", "Bunny Girl Senpai", "L"), ("Power", "Power", "Chainsaw Man", "L"),
+    ("Denji", "Denji", "Chainsaw Man", "L"), ("Yuji", "Yuji Itadori", "Jujutsu Kaisen", "L"),
+    ("Megumi", "Megumi Fushiguro", "Jujutsu Kaisen", "L"), ("Nobara", "Nobara Kugisaki", "Jujutsu Kaisen", "L"),
+    ("Erza", "Erza Scarlet", "Fairy Tail", "L"),
+    # Epic
+    ("Natsu", "Natsu Dragneel", "Fairy Tail", "E"), ("Lucy", "Lucy Heartfilia", "Fairy Tail", "E"),
+    ("Anya", "Anya Forger", "Spy x Family", "E"), ("Loid", "Loid Forger", "Spy x Family", "E"),
+    ("Usopp", "Usopp", "One Piece", "E"), ("Chopper", "Tony Tony Chopper", "One Piece", "E"),
+    ("Shinobu", "Shinobu Kocho", "Demon Slayer", "E"), ("Zenitsu", "Zenitsu Agatsuma", "Demon Slayer", "E"),
+    ("Inosuke", "Inosuke Hashibira", "Demon Slayer", "E"), ("Sakura", "Sakura Haruno", "Naruto", "E"),
+    ("Jiraiya", "Jiraiya", "Naruto", "E"), ("Shikamaru", "Shikamaru Nara", "Naruto", "E"),
+    ("Armin", "Armin Arlert", "Attack on Titan", "E"), ("Hange", "Hange Zoe", "Attack on Titan", "E"),
+    ("Erwin", "Erwin Smith", "Attack on Titan", "E"), ("Misa", "Misa Amane", "Death Note", "E"),
+    ("L", "L Lawliet", "Death Note", "E"), ("Ryuk", "Ryuk", "Death Note", "E"),
+    ("Emilia", "Emilia", "Re:Zero", "E"), ("Subaru", "Subaru Natsuki", "Re:Zero", "E"),
+    ("Aqua", "Aqua", "KonoSuba", "E"), ("Kazuma", "Kazuma Satou", "KonoSuba", "E"),
+    ("Holo", "Holo", "Spice and Wolf", "E"), ("Violet", "Violet Evergarden", "Violet Evergarden", "E"),
+    ("Frieren", "Frieren", "Frieren", "E"), ("Fern", "Fern", "Frieren", "E"),
+    ("Himmel", "Himmel", "Frieren", "E"), ("Marin", "Marin Kitagawa", "My Dress-Up Darling", "E"),
+    ("Chika", "Chika Fujiwara", "Kaguya-sama: Love is War", "E"), ("Bocchi", "Hitori Gotoh", "Bocchi the Rock!", "E"),
+    ("Shoyo", "Shoyo Hinata", "Haikyuu!!", "E"), ("Kageyama", "Tobio Kageyama", "Haikyuu!!", "E"),
+    ("Mob", "Shigeo Kageyama", "Mob Psycho 100", "E"), ("Reigen", "Arataka Reigen", "Mob Psycho 100", "E"),
+    ("Senku", "Senku Ishigami", "Dr. Stone", "E"), ("Kaneki", "Ken Kaneki", "Tokyo Ghoul", "E"),
+    ("Alucard", "Alucard", "Hellsing", "E"),
+]
+CHARACTER_POOL += [
+    {"name": n, "title": t, "anime": a, "rarity": _TIER[k][0], "reward": _TIER[k][1]} for n, t, a, k in _MORE
+]
+
+
+def _tier_word(r: str) -> str:
+    return (r or "").split(" ", 1)[-1]
+
+
+_TIER_COUNT: dict = {}
+for _c in CHARACTER_POOL:
+    _TIER_COUNT[_tier_word(_c["rarity"])] = _TIER_COUNT.get(_tier_word(_c["rarity"]), 0) + 1
+_WEIGHTS = [TIER_CHANCE.get(_tier_word(c["rarity"]), 10) / _TIER_COUNT[_tier_word(c["rarity"])] for c in CHARACTER_POOL]
+
+
+def _pick_char() -> dict:
+    return random.choices(CHARACTER_POOL, weights=_WEIGHTS, k=1)[0]
+
+
 SYM = getattr(config, "CURRENCY_SYMBOL", "$")
 WINK_FALLBACK = "https://media.giphy.com/media/l4pTdcifPZLpDjL1e/giphy.gif"
 _HAREM_READY = False
@@ -243,7 +325,7 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
         return False
     now = time.time()
     if kind == "catch":
-        char = random.choice(CHARACTER_POOL)
+        char = _pick_char()
         gif = await _wink_gif()
         if key in ACTIVE:
             return False
