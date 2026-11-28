@@ -54,6 +54,42 @@ FALLBACK_CHARACTERS = [
     "Anya Forger", "Loid Forger", "Yor Forger", "Makima", "Denji", "Power", "Zero Two", "Misa Amane",
 ]
 
+# LUNASPAWN_V1  Luna-style catch drop: same pool, same texts, nekos.best wink GIF
+CHARACTER_POOL = [
+    {"name": "Raiden", "title": "Raiden Shogun", "anime": "Genshin Impact", "rarity": "🌟 Mythic", "reward": 2500},
+    {"name": "Gojo", "title": "Satoru Gojo", "anime": "Jujutsu Kaisen", "rarity": "🔮 Celestial", "reward": 3000},
+    {"name": "Makima", "title": "Makima", "anime": "Chainsaw Man", "rarity": "🔥 Legendary", "reward": 2200},
+    {"name": "Mikasa", "title": "Mikasa Ackerman", "anime": "Attack on Titan", "rarity": "💎 Epic", "reward": 1800},
+    {"name": "ZeroTwo", "title": "Zero Two", "anime": "Darling in the Franxx", "rarity": "🌸 Mythic", "reward": 2600},
+    {"name": "Levi", "title": "Levi Ackerman", "anime": "Attack on Titan", "rarity": "⚔️ Legendary", "reward": 2400},
+    {"name": "Yor", "title": "Yor Forger", "anime": "Spy x Family", "rarity": "🌹 Epic", "reward": 1900},
+    {"name": "Sukuna", "title": "Ryomen Sukuna", "anime": "Jujutsu Kaisen", "rarity": "🩸 Celestial", "reward": 3200},
+]
+SYM = getattr(config, "CURRENCY_SYMBOL", "$")
+WINK_FALLBACK = "https://media.giphy.com/media/l4pTdcifPZLpDjL1e/giphy.gif"
+_HAREM_READY = False
+
+
+async def _wink_gif() -> str:
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as s:
+            async with s.get("https://nekos.best/api/v2/wink") as r:
+                if r.status == 200:
+                    return (await r.json())["results"][0]["url"]
+    except Exception:
+        pass
+    return WINK_FALLBACK
+
+
+def _char_matches(guess: str, char: dict) -> bool:
+    g = _norm(guess)
+    if not g:
+        return False
+    if g.replace(" ", "") == _norm(char["name"]).replace(" ", ""):
+        return True
+    return _name_matches(guess, char["title"])
+
+
 # (bot_id, chat_id) -> live event
 ACTIVE: dict[tuple[int, int], dict] = {}
 # (bot_id, chat_id) -> activity info
@@ -206,17 +242,26 @@ async def spawn(bot: Bot, bid: int, chat_id: int, kind: str) -> bool:
         return False
     now = time.time()
     if kind == "catch":
-        name, img = await _pick_character()
+        char = random.choice(CHARACTER_POOL)
+        gif = await _wink_gif()
         if key in ACTIVE:
             return False
-        ev = {"kind": "catch", "name": name, "ends": now + EVENT_LIFETIME, "tag": f"catch:{chat_id}:{int(now)}"}
+        ev = {"kind": "catch", "name": char["title"], "char": char, "ends": now + EVENT_LIFETIME,
+              "tag": f"catch:{chat_id}:{int(now)}"}
         text = (
-            "🎴 <b>A WILD CHARACTER APPEARED!</b>\n"
-            f"<blockquote>Who is this? <code>{esc(_mask(name))}</code>\n"
-            f"Be the first to type <code>/catch name</code> and win <b>${CATCH_REWARD:,}</b>!</blockquote>"
+            f"✨ <b>A WILD CHARACTER APPEARED!</b>\n\n"
+            f"<blockquote>🎭 <b>Series:</b> {char['anime']}\n"
+            f"🌟 <b>Rarity:</b> <code>{char['rarity']}</code>\n"
+            f"💰 <b>Bounty:</b> <code>+{SYM}{char['reward']:,}</code></blockquote>\n"
+            f"⚡ Type <code>/catch &lt;name&gt;</code> first to claim them! <i>(Hint: starts with <b>{char['name'][0]}</b>)</i>"
         )
         ACTIVE[key] = ev
-        sent = await _send(bot, chat_id, text, img)
+        sent = None
+        try:
+            sent = await bot.send_animation(chat_id, animation=gif, caption=text, parse_mode=H)
+        except Exception:
+            log.warning("catch gif failed, sending text instead")
+            sent = await _send(bot, chat_id, text)
     else:
         secret = random.randint(*GUESS_RANGE)
         reward = random.randint(*GUESS_REWARD)
@@ -408,7 +453,7 @@ def _in_group(m: Message) -> bool:
     return m.chat.type in ("group", "supergroup")
 
 
-@router.message(Command("catch"))
+@router.message(Command("catch", "grab", "claimchar"))
 async def catch_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
     if not message.from_user or not _in_group(message):
         return
@@ -416,23 +461,86 @@ async def catch_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -
     ev = ACTIVE.get(key)
     guess = " ".join(cmd_args(message)).strip()
     if not ev or ev["kind"] != "catch":
-        await _r(message, "Nothing to catch right now. Wait for a character to appear!")
+        await _r(message, "💨 No character is currently waiting to be caught!")
         return
     if not guess:
-        await _r(message, "Use: <code>/catch character name</code>", parse_mode=H)
+        await _r(message, "📌 Guess their name! Usage: <code>/catch &lt;name&gt;</code>", parse_mode=H)
         return
-    if not _name_matches(guess, ev["name"]):
-        await _r(message, "❌ Not them. Try again!")
+    char = ev.get("char") or {"name": ev["name"], "title": ev["name"], "rarity": "", "reward": CATCH_REWARD}
+    if not _char_matches(guess, char):
+        await _r(message, "❌ Wrong character name! Keep trying!")
         return
     if ACTIVE.pop(key, None) is None:
         return
-    ok = await _pay(pool, bot_ctx.bot_id, message.from_user, CATCH_REWARD, "catch", ev["tag"])
-    who = esc(message.from_user.first_name or "Player")
-    if ok:
-        await _r(message, f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b> and won <code>+${CATCH_REWARD:,}</code>!", parse_mode=H)
-    else:
-        await _r(message, f"🎉 <b>{who}</b> caught <b>{esc(ev['name'])}</b>, but the prize could not be paid. Please tell an admin.", parse_mode=H)
-    await _log_winner(pool, bot_ctx.bot_id, message.chat.id, "catch", message.from_user.id)
+    user = message.from_user
+    bid = bot_ctx.bot_id
+    text = (
+        f"🎉 <b>CHARACTER CAUGHT!</b>\n\n"
+        f"<blockquote>👤 {user.mention_html()} captured <b>{char['title']}</b>!\n"
+        f"🌟 <b>Rarity:</b> <code>{char['rarity']}</code>\n"
+        f"💰 <b>Reward:</b> <code>+{SYM}{char['reward']:,}</code></blockquote>"
+    )
+    ok, _ = await asyncio.gather(
+        _pay(pool, bid, user, int(char["reward"]), "catch", ev["tag"]),
+        _r(message, text, parse_mode=H),
+        return_exceptions=True,
+    )
+    if ok is not True:
+        try:
+            await message.reply("⚠️ The prize could not be paid. Please tell an admin.")
+        except Exception:
+            pass
+    asyncio.get_running_loop().create_task(_after_catch(pool, bid, message.chat.id, user.id, char))
+
+
+async def _ensure_harem(pool) -> None:
+    global _HAREM_READY
+    if _HAREM_READY:
+        return
+    async with pool.acquire() as c:
+        await c.execute("CREATE TABLE IF NOT EXISTS ax_harem (id BIGSERIAL PRIMARY KEY, bot_id BIGINT NOT NULL, "
+                        "user_id BIGINT NOT NULL, title TEXT NOT NULL, rarity TEXT NOT NULL DEFAULT '', "
+                        "caught_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+        await c.execute("CREATE INDEX IF NOT EXISTS ax_harem_user ON ax_harem (bot_id, user_id, id)")
+    _HAREM_READY = True
+
+
+async def _after_catch(pool, bid, chat_id, uid, char) -> None:
+    try:
+        await _ensure_harem(pool)
+        async with pool.acquire() as c:
+            await c.execute("INSERT INTO ax_harem (bot_id, user_id, title, rarity) VALUES ($1,$2,$3,$4)",
+                            bid, uid, char["title"], char.get("rarity") or "")
+    except Exception:
+        log.exception("harem save failed")
+    await _log_winner(pool, bid, chat_id, "catch", uid)
+
+
+@router.message(Command("harem", "chars"))
+async def harem_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    rep = message.reply_to_message
+    target = rep.from_user if rep and rep.from_user and not rep.from_user.is_bot else message.from_user
+    if not target:
+        return
+    name = esc(target.first_name or "Player")
+    try:
+        await _ensure_harem(pool)
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT title, rarity, COUNT(*) OVER () AS n FROM ax_harem WHERE bot_id=$1 AND user_id=$2 "
+                "ORDER BY id LIMIT 15", bot_ctx.bot_id, target.id)
+    except Exception:
+        log.exception("harem read failed")
+        rows = []
+    if not rows:
+        await message.reply(f"🃏 <b>{name}</b> hasn't caught any characters yet! Use <code>/catch</code>.", parse_mode=H)
+        return
+    total = int(rows[0]["n"])
+    lines = [f"{i}. {esc(r['title'])} ({esc(r['rarity'])})" for i, r in enumerate(rows, 1)]
+    await message.reply(
+        f"🃏 <b>{name.upper()}'S COLLECTION ({total})</b>\n\n<blockquote>" + "\n".join(lines) + "</blockquote>",
+        parse_mode=H,
+    )
 
 
 async def _log_winner(pool, bid, chat_id, kind, uid) -> None:
