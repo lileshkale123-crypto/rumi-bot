@@ -85,20 +85,19 @@ async def pin_cmd(message: Message, bot: Bot) -> None:
         return
     args = cmd_args(message)
     loud = bool(args) and args[0].lower() in ("loud", "notify")
-    try:
-        await bot.pin_chat_message(
+    await ax_mod.act_and_reply(
+        message,
+        bot.pin_chat_message(
             chat_id=message.chat.id,
             message_id=message.reply_to_message.message_id,
             disable_notification=not loud,
-        )
-    except Exception as e:
-        await ax_mod.say(
-            message,
-            f"⚠️ <b>Couldn't pin</b>\n<blockquote>{esc(str(e))}\nI need the Pin messages permission</blockquote>",
-            bot=bot,
-        )
-        return
-    await ax_mod.say(message, "📌 <b>Pinned</b>\n<blockquote>Message pinned ✨</blockquote>", bot=bot)
+        ),
+        "📌 <b>Pinned</b>\n<blockquote>Message pinned ✨</blockquote>",
+        None,
+        "Couldn't pin",
+        "\n💡 I need the <b>Pin messages</b> permission",
+        bot=bot,
+    )
 
 
 @router.message(Command("permapin"))
@@ -133,40 +132,25 @@ async def permapin_cmd(message: Message, bot: Bot) -> None:
 async def unpin_cmd(message: Message, bot: Bot) -> None:
     if not await _gate(message, bot):
         return
-    try:
-        if message.reply_to_message:
-            await bot.unpin_chat_message(
-                chat_id=message.chat.id,
-                message_id=message.reply_to_message.message_id,
-            )
-        else:
-            await bot.unpin_chat_message(chat_id=message.chat.id)
-    except Exception as e:
-        await ax_mod.say(
-            message,
-            f"⚠️ <b>Couldn't unpin</b>\n<blockquote>{esc(str(e))}</blockquote>",
-            bot=bot,
-        )
-        return
-    await ax_mod.say(message, "📌 <b>Unpinned</b>\n<blockquote>Done ✨</blockquote>", bot=bot)
+    if message.reply_to_message:
+        act = bot.unpin_chat_message(chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
+    else:
+        act = bot.unpin_chat_message(chat_id=message.chat.id)
+    await ax_mod.act_and_reply(
+        message, act, "📌 <b>Unpinned</b>\n<blockquote>Done ✨</blockquote>", None, "Couldn't unpin", bot=bot
+    )
 
 
 @router.message(Command("unpinall"))
 async def unpinall_cmd(message: Message, bot: Bot) -> None:
     if not await _gate(message, bot):
         return
-    try:
-        await bot.unpin_all_chat_messages(chat_id=message.chat.id)
-    except Exception as e:
-        await ax_mod.say(
-            message,
-            f"⚠️ <b>Couldn't unpin</b>\n<blockquote>{esc(str(e))}</blockquote>",
-            bot=bot,
-        )
-        return
-    await ax_mod.say(
+    await ax_mod.act_and_reply(
         message,
+        bot.unpin_all_chat_messages(chat_id=message.chat.id),
         "📌 <b>All unpinned</b>\n<blockquote>Every pinned message was removed</blockquote>",
+        None,
+        "Couldn't unpin",
         bot=bot,
     )
 

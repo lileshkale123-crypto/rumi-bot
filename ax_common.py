@@ -96,6 +96,30 @@ async def get_bot_username(bot: Bot) -> str:
     return uname
 
 
+import functools as _functools
+import os as _os
+import threading as _threading
+from concurrent.futures import ThreadPoolExecutor as _TPE
+
+
+def _heavy_thread_init() -> None:
+    # lower CPU priority for render threads only, so the main bot loop always wins the CPU
+    try:
+        _os.setpriority(_os.PRIO_PROCESS, _threading.get_native_id(), 10)
+    except Exception:
+        pass
+
+
+_HEAVY_POOL = _TPE(max_workers=2, thread_name_prefix="heavy", initializer=_heavy_thread_init)
+
+
+async def run_heavy(fn, *args, **kwargs):
+    """Like asyncio.to_thread, but on low-priority threads (picture renders etc.)."""
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_HEAVY_POOL, _functools.partial(ctx.run, fn, *args, **kwargs))
+
+
 def fire(coro):
     """Run a slow side job (log, DB write) in the background so replies are never delayed."""
     async def _run():

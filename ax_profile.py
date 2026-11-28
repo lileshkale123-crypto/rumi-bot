@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 import bot_context
 import config
 import db
+from ax_common import run_heavy
 import services
 from bot_context import BotContext, get_brand
 
@@ -179,7 +180,7 @@ async def profile_cmd(
 
     name = target.first_name or "Player"
     card_name = clean_name(name)
-    png_bytes = await asyncio.to_thread(
+    png_bytes = await run_heavy(
         render,
         card_name,
         services.level_for_xp(w["xp"]),

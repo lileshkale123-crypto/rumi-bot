@@ -1,5 +1,6 @@
 """Warn system with reasons, per-group limit, mode and expiry (aiogram 3.x, bot_id aware).
 /warn /dwarn /swarn /warns /rmwarn /unwarn (+ Remove-warn button)."""
+import asyncio
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
@@ -169,6 +170,29 @@ async def _log_warn(bot: Bot, pool: asyncpg.Pool, chat_id: int, actor, target, d
         pass
 
 
+async def _quiet_delete(m) -> None:
+    try:
+        await m.delete()
+    except Exception:
+        pass
+
+
+async def _clear_warns(pool: asyncpg.Pool, bid: int, chat_id: int, uid: int) -> None:
+    async with pool.acquire() as c:
+        await c.execute("DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3", bid, chat_id, uid)
+
+
+async def _send_plain(message: Message, bot: Bot, text: str, kb=None):
+    """Post in the chat without replying (for when the command message is being deleted)."""
+    return await bot.send_message(
+        message.chat.id,
+        text,
+        parse_mode="HTML",
+        reply_markup=kb,
+        message_thread_id=message.message_thread_id if message.is_topic_message else None,
+    )
+
+
 def make_warn(mode: str):
     async def cmd(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
         if mode == "d" and not message.reply_to_message:
@@ -193,23 +217,8 @@ def make_warn(mode: str):
         limit = s["warn_limit"]
         note = f"\n📝 {esc(reason)}" if reason else ""
 
-        if n >= limit:
-            try:
-                await punish(bot, pool, chat_id, target.id, s["warn_mode"], s["warn_mode_secs"])
-            except Exception as e:
-                await ax_mod.say(
-                    message,
-                    f"⚠️ <b>Couldn't punish</b>\n<blockquote>{esc(str(e))}</blockquote>",
-                    bot=bot,
-                )
-                return
-            async with pool.acquire() as c:
-                await c.execute(
-                    "DELETE FROM ax_warn_log WHERE bot_id=$1 AND chat_id=$2 AND user_id=$3",
-                    bid,
-                    chat_id,
-                    target.id,
-                )
+        limit_hit = n >= limit
+        if limit_hit:
             detail = f"\n📊 <b>{n}/{limit}</b> → <b>{s['warn_mode']}</b>{note}"
             text = ax_mod.card(
                 ICONS.get(s["warn_mode"], "⚠️"),
@@ -227,20 +236,51 @@ def make_warn(mode: str):
 
         fire(_log_warn(bot, pool, chat_id, message.from_user, target, detail))
 
+        # deleting messages runs alongside the punishment + reply, never before them
         if mode == "d":
             for m in (message.reply_to_message, message):
                 if m is not None:
-                    try:
-                        await m.delete()
-                    except Exception:
-                        pass
+                    fire(_quiet_delete(m))
         elif mode == "s":
-            try:
-                await message.delete()
-            except Exception:
-                pass
+            fire(_quiet_delete(message))
+
+        def _punish():
+            return punish(bot, pool, chat_id, target.id, s["warn_mode"], s["warn_mode_secs"])
+
+        def _fail(e) -> str:
+            return f"⚠️ <b>Couldn't punish</b>\n<blockquote>{esc(str(e))}</blockquote>"
+
+        if mode == "s":
+            if limit_hit:
+                try:
+                    await _punish()
+                    fire(_clear_warns(pool, bid, chat_id, target.id))
+                except Exception as e:
+                    await _send_plain(message, bot, _fail(e))
             return
 
+        if mode == "d":
+            if limit_hit:
+                res = await asyncio.gather(_punish(), _send_plain(message, bot, text, kb), return_exceptions=True)
+                if isinstance(res[0], Exception):
+                    try:
+                        await _send_plain(message, bot, _fail(res[0]))
+                    except Exception:
+                        pass
+                else:
+                    fire(_clear_warns(pool, bid, chat_id, target.id))
+            else:
+                try:
+                    await _send_plain(message, bot, text, kb)
+                except Exception:
+                    pass
+            return
+
+        if limit_hit:
+            ok = await ax_mod.act_and_reply(message, _punish(), text, kb, "Couldn't punish", bot=bot)
+            if ok:
+                fire(_clear_warns(pool, bid, chat_id, target.id))
+            return
         await ax_mod.say(message, text, kb, bot=bot)
 
     return cmd

@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 import config, services
 from ax_adminpanel import OWNER_IDS
-from ax_common import esc
+from ax_common import esc, fire
 from bot_context import BotContext
 
 router = Router(name="ax_kill")
@@ -77,7 +77,7 @@ async def kill_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) ->
                 await services.award_xp(c, user.id, xp_g, bot_id=bid)
     try:
         import ax_tasks
-        await ax_tasks.record_task_action(pool, user.id, "kills", bot_id=bid)
+        fire(ax_tasks.record_task_action(pool, user.id, "kills", bot_id=bid))
     except Exception:
         pass
     await message.reply(f"{badge} <b>{esc(user.first_name or 'Player')}</b> killed <b>{esc(target.first_name or 'Target')}</b>!\n<blockquote>💰 Earned: <code>+${amt:,}</code> • ✨ <code>+{xp_g} XP</code></blockquote>", parse_mode=H)

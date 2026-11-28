@@ -22,7 +22,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InputSticker,
 from PIL import Image
 
 import quote_emoji as qe
-from ax_common import btn, cmd_args, get_bot_username
+from ax_common import btn, cmd_args, get_bot_username, run_heavy
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_kang")
@@ -136,7 +136,7 @@ async def _text_source(message: Message, bot: Bot):
         dicts = await aq._build_msg_dicts(bot, [r], roles, include_reply=False)
         if not dicts:
             return None
-        png_bytes = await asyncio.to_thread(_render_text_png, dicts)
+        png_bytes = await run_heavy(_render_text_png, dicts)
         return "static", png_bytes, "\U0001F642", "png"
     except Exception:
         log.exception("kang text failed")

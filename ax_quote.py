@@ -26,7 +26,7 @@ import ax_qextra as qx
 import quote_cache as qc
 import quote_emoji as qe
 import quote_pil as qp
-from ax_common import cmd_args
+from ax_common import cmd_args, run_heavy
 
 log = logging.getLogger(__name__)
 router = Router(name="ax_quote")
@@ -653,7 +653,7 @@ async def quote_cmd(message: Message, bot: Bot) -> None:
             )
             return
         async with _get_sem():  # one heavy render at a time for the whole process
-            webp_bytes = await asyncio.to_thread(_render_webp_bytes, msg_dicts, p["color"])
+            webp_bytes = await run_heavy(_render_webp_bytes, msg_dicts, p["color"])
         msg_dicts.clear()
         await message.reply_sticker(
             sticker=BufferedInputFile(webp_bytes, filename="quote.webp"),

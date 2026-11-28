@@ -210,7 +210,7 @@ async def _execute_claim(user, target_message, bot: Bot, pool: asyncpg.Pool, bot
         )
         try:
             import ax_referral
-            await ax_referral._pay_on_first_claim(pool, bot, user.id, bot_id=bid)
+            ax_common.fire(ax_referral._pay_on_first_claim(pool, bot, user.id, bot_id=bid))
         except Exception:
             pass
     elif status == "cooldown":
@@ -314,7 +314,7 @@ async def rob_command(message: Message, bot: Bot, pool: asyncpg.Pool, bot_ctx: B
     if st == "success":
         try:
             import ax_tasks
-            await ax_tasks.record_task_action(pool, robber.id, "robs", bot_id=bid)
+            ax_common.fire(ax_tasks.record_task_action(pool, robber.id, "robs", bot_id=bid))
         except Exception:
             pass
     if st == "success":
