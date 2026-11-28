@@ -19,7 +19,8 @@ import asyncpg
 from aiogram import BaseMiddleware, Bot, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import F
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import bot_context
 import config
@@ -514,6 +515,192 @@ async def _after_catch(pool, bid, chat_id, uid, char) -> None:
     except Exception:
         log.exception("harem save failed")
     await _log_winner(pool, bid, chat_id, "catch", uid)
+
+
+# COLLECTION_V1  /collection hub with category buttons + pages.
+# To add a new collection type later: write count_fn + items_fn and add one entry to COLLECTIONS.
+COL_PAGE = 8
+_RARITY_ORDER = ["celestial", "mythic", "legendary", "epic", "rare", "common"]
+_POOL_SIZE = len(CHARACTER_POOL)
+
+
+def _rarity_rank(r: str) -> int:
+    low = (r or "").lower()
+    for i, w in enumerate(_RARITY_ORDER):
+        if w in low:
+            return i
+    return len(_RARITY_ORDER)
+
+
+def _bar(have: int, total: int, size: int = 10) -> str:
+    if total <= 0:
+        return ""
+    fill = min(size, round(size * have / total))
+    return "▰" * fill + "▱" * (size - fill)
+
+
+async def _chars_count(pool, bid, uid) -> tuple[int, int]:
+    await _ensure_harem(pool)
+    async with pool.acquire() as c:
+        r = await c.fetchrow("SELECT COUNT(*) AS n, COUNT(DISTINCT title) AS u FROM ax_harem "
+                             "WHERE bot_id=$1 AND user_id=$2", bid, uid)
+    return int(r["n"]), int(r["u"])
+
+
+async def _chars_items(pool, bid, uid) -> list[str]:
+    await _ensure_harem(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT title, rarity, COUNT(*) AS n FROM ax_harem WHERE bot_id=$1 AND user_id=$2 "
+                             "GROUP BY title, rarity", bid, uid)
+    anime = {ch["title"]: ch["anime"] for ch in CHARACTER_POOL}
+    rows = sorted(rows, key=lambda r: (_rarity_rank(r["rarity"]), r["title"]))
+    out = []
+    for r in rows:
+        rar = r["rarity"] or ""
+        icon, _, word = rar.partition(" ")
+        dup = f" <b>×{r['n']}</b>" if r["n"] > 1 else ""
+        series = anime.get(r["title"])
+        sub = f"\n     <i>{esc(word or rar)}{' · ' + esc(series) if series else ''}</i>"
+        out.append(f"{esc(icon) if word else '🎴'} <b>{esc(r['title'])}</b>{dup}{sub}")
+    return out
+
+
+COLLECTIONS = {
+    "ch": {"icon": "🎴", "label": "Characters", "total": _POOL_SIZE,
+           "count": _chars_count, "items": _chars_items, "empty": "Catch one with <code>/catch</code> when a character appears!"},
+}
+
+
+def _col_home_kb(oid, tid, counts) -> InlineKeyboardMarkup:
+    rows, line = [], []
+    for key, col in COLLECTIONS.items():
+        n = counts.get(key, (0, 0))[0]
+        line.append(InlineKeyboardButton(text=f"{col['icon']} {col['label']} ({n})", callback_data=f"cl:{oid}:{tid}:{key}:0"))
+        if len(line) == 2:
+            rows.append(line)
+            line = []
+    if line:
+        rows.append(line)
+    rows.append([InlineKeyboardButton(text="✖️ Close", callback_data=f"cl:{oid}:{tid}:x:0")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _col_home(pool, bid, oid, target) -> tuple[str, InlineKeyboardMarkup]:
+    counts = {}
+    res = await asyncio.gather(*(c["count"](pool, bid, target.id) for c in COLLECTIONS.values()), return_exceptions=True)
+    for key, r in zip(COLLECTIONS, res):
+        counts[key] = r if isinstance(r, tuple) else (0, 0)
+    total = sum(v[0] for v in counts.values())
+    lines = []
+    for key, col in COLLECTIONS.items():
+        n, u = counts[key]
+        t = col.get("total") or 0
+        prog = f"  {_bar(u, t, 8)} <code>{u}/{t}</code>" if t else ""
+        lines.append(f"{col['icon']} <b>{col['label']}:</b> <code>{n}</code>{prog}")
+    name = esc(target.first_name or "Player")
+    text = (
+        f"🗂 <b>{name.upper()}'S COLLECTION</b>\n\n"
+        f"<blockquote>" + "\n".join(lines) + "</blockquote>\n"
+        f"📦 <b>Total items:</b> <code>{total}</code>\n"
+        f"👇 <i>Pick a category to open it</i>"
+    )
+    return text, _col_home_kb(oid, target.id, counts)
+
+
+async def _col_page(pool, bid, oid, tid, tname, key, page) -> tuple[str, InlineKeyboardMarkup]:
+    col = COLLECTIONS[key]
+    items, (n, u) = await asyncio.gather(col["items"](pool, bid, tid), col["count"](pool, bid, tid))
+    pages = max(1, (len(items) + COL_PAGE - 1) // COL_PAGE)
+    page = max(0, min(page, pages - 1))
+    chunk = items[page * COL_PAGE:(page + 1) * COL_PAGE]
+    t = col.get("total") or 0
+    head = f"{col['icon']} <b>{esc(tname).upper()} · {col['label'].upper()}</b>\n"
+    if t:
+        head += f"<code>{_bar(u, t)}</code> <b>{u}/{t}</b> unlocked · <code>{n}</code> caught\n"
+    if chunk:
+        body = "<blockquote>" + "\n".join(chunk) + "</blockquote>"
+    else:
+        body = f"<blockquote>Nothing here yet. {col['empty']}</blockquote>"
+    nav = []
+    if pages > 1:
+        nav = [
+            InlineKeyboardButton(text="◀️", callback_data=f"cl:{oid}:{tid}:{key}:{(page - 1) % pages}"),
+            InlineKeyboardButton(text=f"📄 {page + 1}/{pages}", callback_data=f"cl:{oid}:{tid}:n:0"),
+            InlineKeyboardButton(text="▶️", callback_data=f"cl:{oid}:{tid}:{key}:{(page + 1) % pages}"),
+        ]
+    rows = [nav] if nav else []
+    rows.append([InlineKeyboardButton(text="🔙 Back", callback_data=f"cl:{oid}:{tid}:h:0"),
+                 InlineKeyboardButton(text="✖️ Close", callback_data=f"cl:{oid}:{tid}:x:0")])
+    return head + "\n" + body, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("collection", "col", "mycollection"))
+async def collection_cmd(message: Message, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    u = message.from_user
+    if not u:
+        return
+    rep = message.reply_to_message
+    target = rep.from_user if rep and rep.from_user and not rep.from_user.is_bot else u
+    try:
+        text, kb = await _col_home(pool, bot_ctx.bot_id, u.id, target)
+    except Exception:
+        log.exception("collection failed")
+        await message.reply("⚠️ Could not open the collection right now. Try again.")
+        return
+    await message.reply(text, parse_mode=H, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("cl:"))
+async def collection_cb(call: CallbackQuery, pool: asyncpg.Pool, bot_ctx: BotContext) -> None:
+    try:
+        _, oid, tid, key, page = call.data.split(":")
+        oid, tid, page = int(oid), int(tid), int(page)
+    except Exception:
+        await call.answer()
+        return
+    if call.from_user.id != oid:
+        await call.answer("🔒 This isn't your menu. Use /collection to open yours!", show_alert=True)
+        return
+    if key == "n":
+        await call.answer()
+        return
+    if key == "x":
+        await call.answer()
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+        return
+    bid = bot_ctx.bot_id
+    try:
+        if key == "h" or key not in COLLECTIONS:
+            target = call.from_user
+            if tid != oid:
+                from types import SimpleNamespace
+                target = SimpleNamespace(id=tid, first_name=_col_name(call.message, tid))
+            text, kb = await _col_home(pool, bid, oid, target)
+        else:
+            tname = call.from_user.first_name if tid == oid else _col_name(call.message, tid)
+            text, kb = await _col_page(pool, bid, oid, tid, tname or "Player", key, page)
+    except Exception:
+        log.exception("collection page failed")
+        await call.answer("⚠️ Try again.", show_alert=True)
+        return
+    await asyncio.gather(
+        call.answer(),
+        call.message.edit_text(text, parse_mode=H, reply_markup=kb),
+        return_exceptions=True,
+    )
+
+
+def _col_name(msg, tid) -> str:
+    # target name from the header of the current card ("NAME'S COLLECTION" or "NAME · ...")
+    t = (msg.text or "") if msg else ""
+    first = t.split("\n", 1)[0]
+    for sep in ("'S COLLECTION", " · "):
+        if sep in first:
+            return first.split(sep, 1)[0].lstrip("🗂🎴 ").strip().title()
+    return "Player"
 
 
 @router.message(Command("harem", "chars"))

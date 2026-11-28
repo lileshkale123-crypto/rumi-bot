@@ -100,7 +100,7 @@ NEW["safety"] = ("🔐", "Account Recovery",
 NEW["events"] = ("🎁", "Events and Daily Tasks",
     "<b>Group events</b>\n"
     "Once a day, in groups with 25+ members, an event can pop up while people are chatting.\n"
-    "🎴 <b>/catch name</b>: a wild anime character appears, be the first to type its name and win $1,800 to $3,200. See your collection with /harem.\n"
+    "🎴 <b>/catch name</b>: a wild anime character appears, be the first to type its name and win $1,800 to $3,200. See your collection with /collection.\n"
     "🎯 <b>/g 250</b>: guess the secret number (100 to 500). I tell you higher or lower. Win $500 to $1,000. The group shares 12 tries.\n\n"
     "<b>Daily tasks</b> (/task)\n"
     "Two tasks a day. Finish both to win $9,000.\n"
